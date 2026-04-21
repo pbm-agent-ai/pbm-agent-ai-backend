@@ -1,0 +1,34 @@
+dependencies {
+    // Spring Security
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+
+    // Redis (Refresh Token 저장)
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+
+    // 요청값 검증
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // JWT
+    implementation 'io.jsonwebtoken:jjwt-api:0.12.3'
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.3'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.3'
+
+    // Eureka Client (서비스 디스커버리)
+    implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
+
+    // Spring Security Test
+    testImplementation 'org.springframework.security:spring-security-test'
+
+    // Swagger (SpringDoc OpenAPI)
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0'
+
+    // Testcontainers (PostgreSQL, Redis 통합 테스트)
+    testImplementation platform('org.testcontainers:testcontainers-bom:1.19.7')
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:postgresql'
+    testImplementation 'org.testcontainers:testcontainers'
+
+    // H2 Database (테스트용 인메모리 DB)
+    testRuntimeOnly 'com.h2database:h2'
+}

@@ -1,0 +1,7 @@
+// price-service 빌드 설정
+// 공통 의존성(web, jpa, lombok, postgres)은 루트 build.gradle에서 상속
+
+dependencies {
+    // 네이버 쇼핑 API 등 외부 API 호출 시 JSON 파싱용
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+}

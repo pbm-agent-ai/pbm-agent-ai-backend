@@ -1,0 +1,9 @@
+rootProject.name = 'pbm-agent-ai-backend'
+
+include 'eureka-server'
+include 'gateway'
+include 'auth-service'
+include 'command-service'
+include 'price-service'
+include 'payment-service'
+include 'notification-service'

@@ -7,9 +7,11 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import lombok.extern.slf4j.Slf4j;
 
 // - GlobalExceptionHandler.java: “그 에러를 HTTP 응답으로 어떻게 내려줄지”를 담당하는 클래스
 // - @RestControllerAdvice로 전역 예외 처리
+@Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -21,6 +23,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(AuthException.class)
     public ResponseEntity<ApiResponse<Void>> handleAuthException(AuthException e) {
+        log.error("서버 오류 발생", e);
         return ResponseEntity
                 .status(e.getStatus())
                 .body(ApiResponse.error(e.getMessage()));
@@ -44,6 +47,7 @@ public class GlobalExceptionHandler {
     // - 나머지 예외는 500으로 안전하게 처리
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleException(Exception e) {
+        log.error("서버 오류 발생", e);
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.error("서버 오류가 발생했습니다."));

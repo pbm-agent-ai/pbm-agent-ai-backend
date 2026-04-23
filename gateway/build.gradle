@@ -1,0 +1,28 @@
+configurations {
+    all {
+        // Gateway는 WebFlux 기반 → 루트에서 상속받는 web/jpa 제거 필수
+        /*
+        스프링의 기본 웹 기술(Spring Web MVC)은 톰캣(Tomcat)을 사용하는데, 이건 요청 하나당 스레드를 하나씩 물고 늘어지는 동기식 방식이다.
+        수많은 트래픽이 스쳐지나가는 게이트웨이에게는 무겁다. 그래서 게이트웨이는 기본적으로 비동기식인 WebFlux를 기반으로 돌아가도록 설계되어 있다.
+        만약 starter-web이 껴 있으면 충돌이나서 게이트웨이 서버가 켜지지 않는다.
+         */
+        exclude group: 'org.springframework.boot', module: 'spring-boot-starter-web'
+        /*
+        게이트웨이는 라우팅과 필터링만 하면 되지, 직접 DB에 연결해서 데이터를 만질일이 잆다. 쓸데없이 무거운 DB 커넥션풀을 만들지 않고, 서버를 최대한
+        가볍게 유지하기 위해 DB관련 의존성을 상속받지 않고 잘라낸다.
+         */
+        exclude group: 'org.springframework.boot', module: 'spring-boot-starter-data-jpa'
+        exclude group: 'org.postgresql', module: 'postgresql'
+    }
+}
+
+dependencies {
+    implementation 'org.springframework.cloud:spring-cloud-starter-gateway' // 게이트웨이를 만들기위한 핵심 뼈대
+    // Eureka Server에 자신의 존재를 등록하고, 다른 MSA주소를 찾기 위해 달아놓는 클라이언트 모듈
+    implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
+    implementation 'io.jsonwebtoken:jjwt-api:0.12.3'    // jwt를 다루기 위한 라이브러리들
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.3'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.3'
+    runtimeOnly 'io.netty:netty-resolver-dns-native-macos:4.1.100.Final:osx-aarch_64'  // 추가
+    testImplementation 'io.projectreactor:reactor-test' // WebFlux는 내부적으로 Reactor라는 기술을 쓰기 때문에 이를 테스트하기 위한 전용 테스트 도구
+}

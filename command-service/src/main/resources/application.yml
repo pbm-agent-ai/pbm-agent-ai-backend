@@ -1,39 +1,35 @@
 server:
-  port: 8081
+  port: 8082
 
 spring:
   application:
-    name: auth-service
+    name: command-service
 
   datasource:
-    url: ${AUTH_DB_URL}
-    username: ${AUTH_DB_USERNAME}
-    password: ${AUTH_DB_PASSWORD}
+    url: ${COMMAND_DB_URL}
+    username: ${COMMAND_DB_USERNAME}
+    password: ${COMMAND_DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
   jpa:
     hibernate:
-      ddl-auto: update  # 앱 시작 시 테이블 자동 생성/수정
-    show-sql: true      # 실행 되는 SQL을 콘솔에 출력(개발용)
+      ddl-auto: update
+    show-sql: true
     properties:
       hibernate:
         format_sql: true
-
-  data:
-    redis:
-      host: ${REDIS_HOST}
-      port: ${REDIS_PORT}
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
-
-jwt:
-  secret: ${JWT_SECRET}
-  expiration: ${JWT_EXPIRATION}           # 1800000ms = 30분
-  refresh-expiration: ${JWT_REFRESH_EXPIRATION}  # 604800000ms = 7일
+    consumer:
+      group-id: command-service
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
 
 eureka:
   client:
@@ -43,9 +39,3 @@ eureka:
     fetch-registry: true
   instance:
     prefer-ip-address: true
-
-springdoc:
-  swagger-ui:
-    path: /swagger-ui.html
-  api-docs:
-    path: /v3/api-docs

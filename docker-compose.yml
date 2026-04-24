@@ -23,8 +23,8 @@ services:
 
   kafka:
     image: confluentinc/cp-kafka:7.4.0
-    depends_on:
-      - zookeeper
+    depends_on:     # 서비스들끼리 데이터를 비동기로 주고받는 거대한 큐
+      - zookeeper   # 카프카가 잘 돌아가도록 관리하는 매니저 역할
     ports:
       - "9092:9092"
     environment:
@@ -32,6 +32,9 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true" # 토픽 자동 생성 허용
+      # 컨테이너 시작 시 5개 토픽 자동 생성
+      KAFKA_CREATE_TOPICS: "user-event:1:1,price-topic:1:1,price-alert:1:1,payment-topic:1:1,payment-result:1:1"
 
   eureka-server:
     build:

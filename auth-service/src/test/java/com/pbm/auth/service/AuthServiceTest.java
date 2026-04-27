@@ -61,9 +61,15 @@ class AuthServiceTest {
     @Mock
     private ValueOperations<String, String> valueOperations;
 
+    // Kafka 이벤트 발행을 검증하기 위한 Mock (@Async 메서드를 포함한 컴포넌트)
+    @Mock
+    private KafkaEventPublisher kafkaEventPublisher;
+
     // 우리가 테스트할 AuthService를 만들고 거기에 Mock데이터를 집어넣음
     @InjectMocks
     private AuthService authService;
+
+    // @Value 필드가 AuthService에서 제거되었으므로 @BeforeEach 불필요
 
     @Test
     @DisplayName("회원가입: 이미 존재하는 이메일이면 AuthException(emailAlreadyExists)을 던진다")
@@ -161,6 +167,64 @@ class AuthServiceTest {
                 eq(1_209_600_000L),
                 eq(TimeUnit.MILLISECONDS)
         );
+    }
+
+@Test
+    @DisplayName("로그인: 성공 시 KafkaEventPublisher를 통해 LOGIN_SUCCESS 이벤트를 비동기 발행한다")
+    void login_success_publishesLoginSuccessEventViaKafkaEventPublisher() {
+        // given: 정상 로그인 시나리오 - 모든 인증 단계가 성공하는 상황
+        LoginRequest request = new LoginRequest("user@pbm.com", "plain-password");
+        User user = createUser(1L, "user@pbm.com", "encoded-password", "tester", User.Role.USER);
+
+        when(userRepository.findByEmail(request.email())).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(request.password(), user.getPassword())).thenReturn(true);
+        when(jwtUtil.generateAccessToken(1L, "USER")).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken(1L)).thenReturn("refresh-token");
+        when(jwtUtil.getRefreshExpiration()).thenReturn(1_209_600_000L);
+        when(jwtUtil.getAccessExpiration()).thenReturn(3_600_000L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+
+        // when: 로그인 수행
+        TokenResponse response = authService.login(request);
+
+        // then: 로그인 응답은 정상이어야 한다
+        assertThat(response.accessToken()).isEqualTo("access-token");
+
+        // KafkaEventPublisher의 @Async 메서드가 호출되었는지 검증
+        verify(kafkaEventPublisher).publishLoginSuccessEvent(user);
+    }
+
+    @Test
+    @DisplayName("로그인: KafkaEventPublisher에서 예외가 발생해도 로그인은 성공해야 한다")
+    void login_success_evenWhenKafkaEventPublisherThrows() {
+        // given: 정상 로그인 시나리오이지만 Kafka 이벤트 발행에서 예외가 발생하는 상황
+        // (Kafka 브로커 불가, 타임아웃 등의 장애 상황 시뮬레이션)
+        LoginRequest request = new LoginRequest("user@pbm.com", "plain-password");
+        User user = createUser(1L, "user@pbm.com", "encoded-password", "tester", User.Role.USER);
+
+        when(userRepository.findByEmail(request.email())).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches(request.password(), user.getPassword())).thenReturn(true);
+        when(jwtUtil.generateAccessToken(1L, "USER")).thenReturn("access-token");
+        when(jwtUtil.generateRefreshToken(1L)).thenReturn("refresh-token");
+        when(jwtUtil.getRefreshExpiration()).thenReturn(1_209_600_000L);
+        when(jwtUtil.getAccessExpiration()).thenReturn(3_600_000L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+
+        // KafkaEventPublisher 호출 시 예외를 던지도록 설정 (Kafka 브로커 불가 상황 시뮬레이션)
+        org.mockito.Mockito.doThrow(new RuntimeException("Kafka broker unavailable"))
+                .when(kafkaEventPublisher).publishLoginSuccessEvent(any(User.class));
+
+        // when: 로그인 수행 - 예외가 전파되지 않고 정상 응답이 반환되어야 한다
+        TokenResponse response = authService.login(request);
+
+        // then: Kafka 장애와 무관하게 로그인 응답은 정상이어야 한다
+        assertThat(response.accessToken()).isEqualTo("access-token");
+        assertThat(response.refreshToken()).isEqualTo("refresh-token");
+        assertThat(response.tokenType()).isEqualTo("Bearer");
+        assertThat(response.expiresIn()).isEqualTo(3_600_000L);
+
+        // Kafka 이벤트 발행 시도는 있었어야 한다 (best-effort)
+        verify(kafkaEventPublisher).publishLoginSuccessEvent(any(User.class));
     }
 
     @Test

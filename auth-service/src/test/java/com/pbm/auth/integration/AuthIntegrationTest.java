@@ -8,28 +8,40 @@ import com.pbm.auth.dto.response.UserResponse;
 import com.pbm.auth.exception.AuthException;
 import com.pbm.auth.repository.UserRepository;
 import com.pbm.auth.service.AuthService;
+import com.pbm.auth.service.KafkaEventPublisher;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.when;
 
 /**
  * AuthService의 실제 DB(H2)와 Redis 연동 시나리오를 검증하는 통합 테스트.
  *
- * 역할: 실제 Redis와 인메모리 DB를 사용해 회원가입~로그아웃까지 전체 인증 흐름을 확인한다.
- * 동작: signup -> login -> refresh -> logout 순서로 실행하고 Redis 토큰 저장/삭제를 검증한다.
+ * 역할: 인메모리 DB와 Mock RedisTemplate을 사용해 회원가입~로그아웃까지 전체 인증 흐름을 확인한다.
+ * 동작: signup -> login -> refresh -> logout 순서로 실행하고 Redis 토큰 저장/삭제 흐름을 검증한다.
  * 연관: AuthService, UserRepository, RedisTemplate.
  *
  * 참고: Testcontainers(macOS Colima 호환성 문제) 대신
- * 로컬 Redis(docker-compose로 실행 중)와 H2 인메모리 DB를 사용한다.
+ * H2 인메모리 DB와 Mock RedisTemplate을 사용해 외부 인프라 의존을 제거한다.
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -41,20 +53,53 @@ class AuthIntegrationTest {
     @Autowired
     private UserRepository userRepository;
 
-    @Autowired
+    @MockBean
     private RedisTemplate<String, String> redisTemplate;
+
+    @SuppressWarnings("unchecked")
+    private final ValueOperations<String, String> valueOperations = org.mockito.Mockito.mock(ValueOperations.class);
+
+    private final Map<String, String> refreshTokenStore = new HashMap<>();
+
+// KafkaEventPublisher MockBean: Kafka 이벤트 발행 컴포넌트를 Mock으로 대체하여
+// 실제 Kafka 브로커 없이도 컨텍스트 로딩 및 테스트가 가능하다
+@MockBean
+private KafkaEventPublisher kafkaEventPublisher;
+
+    @BeforeEach
+    void setUpRedisMock() {
+        refreshTokenStore.clear();
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+
+        doAnswer(invocation -> {
+            String key = invocation.getArgument(0);
+            String value = invocation.getArgument(1);
+            refreshTokenStore.put(key, value);
+            return null;
+        }).when(valueOperations).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
+
+        when(valueOperations.get(anyString()))
+                .thenAnswer(invocation -> refreshTokenStore.get(invocation.getArgument(0)));
+
+        doAnswer(invocation -> {
+            String key = invocation.getArgument(0);
+            refreshTokenStore.remove(key);
+            return true;
+        }).when(redisTemplate).delete(anyString());
+    }
 
     /**
      * 테스트 간 Redis 데이터 충돌을 방지하기 위해 각 테스트 후 사용한 키를 정리한다.
      */
     @AfterEach
     void cleanup() {
+        refreshTokenStore.clear();
         userRepository.deleteAll();
     }
 
     @Test
     @DisplayName("통합 플로우: signup -> login -> refresh -> logout 동작과 Redis 토큰 상태를 검증한다")
-    void fullAuthFlow_withH2AndLocalRedis() {
+    void fullAuthFlow_withH2AndMockRedis() {
         // given: 테스트 간 충돌을 피하기 위해 이메일을 매번 고유 값으로 생성한다.
         String email = "user-" + UUID.randomUUID() + "@pbm.com";
         SignupRequest signupRequest = new SignupRequest(email, "password123", "통합테스트유저");
@@ -75,7 +120,7 @@ class AuthIntegrationTest {
         // then: 로그인 직후 Refresh 토큰이 Redis에 저장되어 있어야 한다.
         assertThat(loginResponse.accessToken()).isNotBlank();
         assertThat(loginResponse.refreshToken()).isNotBlank();
-        assertThat(redisTemplate.opsForValue().get("RT:" + userId)).isEqualTo(loginResponse.refreshToken());
+        assertThat(refreshTokenStore.get("RT:" + userId)).isEqualTo(loginResponse.refreshToken());
 
         // when: 3) Refresh 토큰으로 재발급을 수행한다.
         TokenResponse refreshResponse = authService.refresh(loginResponse.refreshToken());
@@ -84,14 +129,14 @@ class AuthIntegrationTest {
         assertThat(refreshResponse.accessToken()).isNotBlank();
         assertThat(refreshResponse.refreshToken()).isNotBlank();
         // refresh 토큰은 매번 새로 발급되므로 Redis에 저장된 값이 갱신되어 있어야 한다.
-        String redisToken = redisTemplate.opsForValue().get("RT:" + userId);
+        String redisToken = refreshTokenStore.get("RT:" + userId);
         assertThat(redisToken).isEqualTo(refreshResponse.refreshToken());
 
         // when: 4) 로그아웃을 수행한다.
         authService.logout(userId);
 
         // then: 로그아웃 후에는 Redis에서 Refresh 토큰이 삭제되어야 한다.
-        assertThat(redisTemplate.opsForValue().get("RT:" + userId)).isNull();
+        assertThat(refreshTokenStore.get("RT:" + userId)).isNull();
     }
 
     @Test

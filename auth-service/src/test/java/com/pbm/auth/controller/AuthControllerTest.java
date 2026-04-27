@@ -6,6 +6,7 @@ import com.pbm.auth.dto.request.LoginRequest;
 import com.pbm.auth.dto.request.SignupRequest;
 import com.pbm.auth.dto.response.TokenResponse;
 import com.pbm.auth.dto.response.UserResponse;
+import com.pbm.auth.dto.event.UserEvent;
 import com.pbm.auth.exception.AuthException;
 import com.pbm.auth.service.AuthService;
 import org.junit.jupiter.api.DisplayName;
@@ -15,6 +16,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -45,6 +47,11 @@ class AuthControllerTest {
 
     @MockBean
     private AuthService authService;
+
+    // KafkaTemplate MockBean: KafkaAutoConfiguration이 테스트에서 제외되어도
+    // AuthService가 KafkaTemplate을 생성자 주입하므로 컨텍스트 로딩을 위해 필요하다
+    @MockBean
+    private KafkaTemplate<String, UserEvent> kafkaTemplate;
 
     @Test
     @DisplayName("POST /api/auth/signup: 유효한 요청이면 201과 ApiResponse<UserResponse>를 반환한다")

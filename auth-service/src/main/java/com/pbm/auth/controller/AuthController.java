@@ -13,7 +13,6 @@ import lombok.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -60,12 +59,15 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
+    // 수정: @AuthenticationPrincipal 대신 Authentication을 받아 getName()으로 userId를 추출하도록 변경
+    // 이유: @WithMockUser 테스트에서 Authentication.getName()이 username 값을 반환하므로 일관성 유지
     @PutMapping("/password")
     public ResponseEntity<ApiResponse<Void>> changePassword(
-            @AuthenticationPrincipal String userId,
+            Authentication authentication,
             @Valid @RequestBody ChangePasswordRequest request
             ) {
-        authService.changePassword(Long.parseLong(userId), request);
+        Long userId = Long.valueOf(authentication.getName());
+        authService.changePassword(userId, request);
         return ResponseEntity.ok(ApiResponse.success("비밀번호가 변경되었습니다."));
     }
 }

@@ -4,4 +4,10 @@
 dependencies {
     // 네이버 쇼핑 API 등 외부 API 호출 시 JSON 파싱용
     implementation 'com.fasterxml.jackson.core:jackson-databind'
+
+    // WebClient (external-api-service 호출용, 비동기 논블로킹 HTTP 클라이언트)
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+
+    // Eureka Server에 자신의 존재를 등록하고, 다른 MSA 주소를 찾기 위한 클라이언트 모듈
+    implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
 }

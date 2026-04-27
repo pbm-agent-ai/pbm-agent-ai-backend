@@ -10,6 +10,7 @@ import com.pbm.auth.dto.response.UserResponse;
 import com.pbm.auth.exception.AuthException;
 import com.pbm.auth.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -19,13 +20,15 @@ import java.util.concurrent.TimeUnit;
 
 /*
     - 클래스 레벨 @Transactional(readOnly = true)라 기본은 조회 전용이고, 쓰기 작업 메서드(signup/login/logout/refresh)에만 @Transactional을 따로 붙여 변경 트랜잭션을 연다.
-    - 의존성 4개:
+    - 의존성 5개:
       - UserRepository: 사용자 조회/저장
       - PasswordEncoder: 비밀번호 해시/검증
       - JwtUtil: access/refresh 생성·검증·클레임 파싱
       - RedisTemplate<String, String>: refresh 토큰 저장/조회/삭제
+      - KafkaEventPublisher: 로그인 성공 이벤트 비동기 발행 (@Async)
 
- */
+  */
+@Slf4j
 @Service
 @RequiredArgsConstructor  // final 필드 생성자 자동 생성 (= 의존성 주입)
 @Transactional(readOnly = true)
@@ -35,6 +38,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final RedisTemplate<String, String> redisTemplate;
+    private final KafkaEventPublisher kafkaEventPublisher;
 
     /*
         메서드별 역할
@@ -102,6 +106,17 @@ public class AuthService {
                 jwtUtil.getRefreshExpiration(),
                 TimeUnit.MILLISECONDS
         );
+
+        // 로그인 성공 이벤트를 Kafka에 비동기 발행
+        // - @Async 메서드이므로 별도 스레드에서 실행되어 호출자(로그인) 스레드를 블로킹하지 않는다
+        // - Kafka 브로커 장애 시에도 로그인 자체는 성공해야 한다(best-effort)
+        // - try-catch로 감싸 @Async 프록시가 정상 동작하지 않는 환경(단위 테스트 등)에서도 안전하게 보호
+        try {
+            kafkaEventPublisher.publishLoginSuccessEvent(user);
+        } catch (Exception e) {
+            // Kafka 이벤트 발행 실패가 로그인 응답에 영향을 주지 않도록 예외를 삼킨다
+            log.warn("로그인 성공 이벤트 발행 중 오류 발생: userId={}, 원인={}", user.getId(), e.getMessage());
+        }
 
         return new TokenResponse(accessToken, refreshToken, "Bearer", jwtUtil.getAccessExpiration());
     }

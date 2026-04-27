@@ -55,15 +55,15 @@ JWT 필터가 어떤 순서로 동작하는지 설명해줘"
 ## Week 2 (4/25 - 5/1): Gateway + Kafka 기초
 
 ### 학습 목표
-- [ ] Spring Cloud Gateway 라우팅 개념
-- [ ] Kafka producer/consumer 구조
+- [x] Spring Cloud Gateway 라우팅 개념
+- [x] Kafka producer/consumer 구조
 - [ ] `@KafkaListener` 동작 원리
 - [ ] Kafka 메시지 스키마 설계 원칙
 
 ### 개발 작업
-- [ ] gateway 완성 (JWT 검증 필터 포함)
-- [ ] docker-compose에 Kafka 토픽 설정
-- [ ] 전 서비스 Kafka 공통 설정
+- [x] gateway 완성 (JWT 검증 필터 포함)
+- [x] docker-compose에 Kafka 토픽 설정
+- [x] 전 서비스 Kafka 공통 설정
 - [ ] auth-service → Kafka 로그인 이벤트 발행
 - [ ] **Kafka 메시지 스키마 설계 확정** (서비스 간 이벤트 구조 정의)
 - [ ] **AWS EC2 배포 + CI/CD 구축** (gateway 완성 후 진행)
@@ -85,28 +85,52 @@ JWT 필터가 어떤 순서로 동작하는지 설명해줘"
 
 ---
 
-## Week 3 (5/2 - 5/8): Price Service + AI API 연동
+## Week 3 (5/2 - 5/8): External API Service (FastAPI) + Price Service 비즈니스 로직
+
+> 외부 API 관리 포인트 통합 결정: 모든 외부 API 호출은 FastAPI 서버(external-api-service)에서 전담
+> price-service는 비즈니스 로직(DB, 스케줄러, Kafka)만 담당
+
+### 서비스 구조
+```
+price-service (Spring Boot, 8083)
+    → 비즈니스 로직, DB 저장/조회, 스케줄러, Kafka 발행
+
+external-api-service (FastAPI, 8090)
+    → AliExpress API
+    → 한국수출입은행 환율 API
+    → 한국소비자원 물가정보 API
+    → youtube-transcript-api (유튜브 자막 수집)
+    → Claude API (자막 분석, 추천 생성)
+    → Gemini API (이미지 상품 인식)
+```
 
 ### 학습 목표
-- [ ] RestTemplate vs WebClient
+- [ ] FastAPI 기본 구조 이해
+- [ ] Spring Boot → FastAPI HTTP 통신 (WebClient)
 - [ ] Resilience4j Circuit Breaker 패턴
 - [ ] 외부 API 연동 시 예외 처리
 
-### 개발 작업
+### 개발 작업 - external-api-service (FastAPI)
+- [ ] FastAPI 프로젝트 구조 생성
 - [ ] AliExpress Affiliate API 연동
-- [ ] 한국수출입은행 환율 API 연동 (Redis 캐싱)
-- [ ] 한국소비자원 물가정보 API 연동 (Redis 캐싱)
-- [ ] 가격 스케줄러 (cron, 조건별 주기적 가격 수집)
-- [ ] **Claude API 연동** — YouTube 자막 수집 → 장단점 분석 → 추천 생성 파이프라인
+- [ ] 한국수출입은행 환율 API 연동
+- [ ] 한국소비자원 물가정보 API 연동
+- [ ] youtube-transcript-api 자막 수집
+- [ ] **Claude API 연동** — 자막 분석 → 장단점 추출 → 추천 생성
 - [ ] **Gemini API 연동** — 이미지 업로드 → 상품명 인식 → 쇼핑몰 검색
-- [ ] Resilience4j Circuit Breaker 적용 (외부 API 장애 대응)
+
+### 개발 작업 - price-service (Spring Boot)
+- [ ] WebClient로 external-api-service 호출 설정
+- [ ] 가격 스케줄러 (cron, 조건별 주기적 가격 수집)
+- [ ] Redis 캐싱 (환율, 물가 데이터)
+- [ ] Resilience4j Circuit Breaker 적용 (external-api-service 장애 대응)
 - [ ] price-service Swagger 적용
 
 ### AI 프롬프트 예시
 ```text
-"youtube-transcript-api로 자막을 수집하고
-Claude API로 상품 장단점을 추출하는 파이프라인을
-Spring Boot에서 구현해줘"
+"FastAPI로 youtube-transcript-api 자막 수집 후
+Claude API로 상품 장단점을 분석하는 엔드포인트를 만들어줘.
+Spring Boot WebClient로 이 FastAPI를 호출하는 코드도 작성해줘"
 ```
 
 ### 팀원 작업

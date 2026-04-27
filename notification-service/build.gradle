@@ -1,0 +1,7 @@
+dependencies {
+    // Eureka Client (서비스 디스커버리)
+    implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
+
+    // Spring Kafka 테스트 지원 (Embedded Kafka 등)
+    testImplementation 'org.springframework.kafka:spring-kafka-test'
+}

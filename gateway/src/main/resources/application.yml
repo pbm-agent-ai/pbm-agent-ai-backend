@@ -31,12 +31,12 @@ spring:
         - id: command-service
           uri: lb://command-service
           predicates:
-            - Path=/api/command/**
+            - Path=/api/commands/**
 
         - id: price-service
           uri: lb://price-service
           predicates:
-            - Path=/api/price/**
+            - Path=/api/prices/**
 
         - id: payment-service
           uri: lb://payment-service

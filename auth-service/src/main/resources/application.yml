@@ -30,6 +30,11 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
 
+app:
+  kafka:
+    topics:
+      user-event: ${KAFKA_TOPIC_USER_EVENT:user-event}
+
 jwt:
   secret: ${JWT_SECRET}
   expiration: ${JWT_EXPIRATION}           # 1800000ms = 30분

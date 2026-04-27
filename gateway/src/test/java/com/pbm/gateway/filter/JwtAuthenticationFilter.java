@@ -72,7 +72,7 @@ class JwtAuthenticationFilterTest {
                 .compact();
 
         MockServerHttpRequest request = MockServerHttpRequest
-                .get("/api/command/parse")
+                .get("/api/commands/price-check")
                 .header("Authorization", "Bearer " + token)
                 .build();
         MockServerWebExchange exchange = MockServerWebExchange.from(request);
@@ -89,7 +89,7 @@ class JwtAuthenticationFilterTest {
     @DisplayName("토큰 없이 보호된 경로 접근 시 401 반환")
     void noToken_shouldReturn401() {
         MockServerHttpRequest request = MockServerHttpRequest
-                .get("/api/command/parse")
+                .get("/api/commands/price-check")
                 .build();
         MockServerWebExchange exchange = MockServerWebExchange.from(request);
         GatewayFilterChain chain = mock(GatewayFilterChain.class);
@@ -112,7 +112,7 @@ class JwtAuthenticationFilterTest {
                 .compact();
 
         MockServerHttpRequest request = MockServerHttpRequest
-                .get("/api/command/parse")
+                .get("/api/commands/price-check")
                 .header("Authorization", "Bearer " + expiredToken)
                 .build();
         MockServerWebExchange exchange = MockServerWebExchange.from(request);

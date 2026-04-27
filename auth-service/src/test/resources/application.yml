@@ -19,12 +19,26 @@ spring:
       hibernate:
         format_sql: false
 
-  data:
-    redis:
-      host: localhost
-      port: 6379
+  # 테스트에서는 Kafka 자동 설정을 비활성화하여 실제 브로커 연결을 피한다
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+
+  cloud:
+    discovery:
+      enabled: false
+
+app:
+  kafka:
+    topics:
+      user-event: user-event
 
 jwt:
   secret: test-secret-key-for-jwt-testing-must-be-at-least-256-bits-long
   expiration: 3600000
   refresh-expiration: 604800000
+
+eureka:
+  client:
+    enabled: false

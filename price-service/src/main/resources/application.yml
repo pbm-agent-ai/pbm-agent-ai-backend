@@ -4,7 +4,7 @@ server:
 spring:
   application:
     name: price-service
-  # JPA/DataSource 자동 설정 제외 (현재 DB 미사용, 네이버 API 테스트 전용)
+  # JPA/DataSource 자동 설정 제외 (현재 DB 미사용, 외부 API 연동 전용)
   autoconfigure:
     exclude:
       - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
@@ -16,13 +16,32 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
     consumer:
-      group-id: price-service
+      group-id: ${PRICE_SERVICE_CONSUMER_GROUP:price-service}
+      auto-offset-reset: latest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: "*"
+        spring.json.use.type.headers: false
+        spring.json.value.default.type: com.pbm.price.dto.event.PriceRequestEvent
 
-# 네이버 API 설정 (환경변수로 주입, 절대 하드코딩 금지)
-naver:
-  client-id: ${NAVER_CLIENT_ID}
-  client-secret: ${NAVER_CLIENT_SECRET}
+# Kafka 토픽 설정
+app:
+  kafka:
+    topics:
+      price-topic: price-topic
+      price-alert: price-alert
+
+# external-api-service 직접 호출 설정
+# 네이버 API 등 외부 API 호출은 external-api-service를 통해 프록시 (직접 Naver 호출 잔존 흔적 제거 완료)
+# 컨테이너 환경: http://external-api-service:8090, 로컬 환경: http://localhost:8090
+external-api-service:
+  base-url: ${EXTERNAL_API_SERVICE_URL:http://localhost:8090}
+
+# Eureka 서비스 디스커버리 설정 (게이트웨이에서 라우팅하려면 Eureka 등록 필수)
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+  instance:
+    prefer-ip-address: true

@@ -3,8 +3,9 @@
 네이버, AliExpress 등 외부 API를 래핑하여 price-service 등 내부 서비스가 소비하기 쉬운
 정규화된 형태로 제공한다.
 
-NAVER_MOCK_ENABLED=true / ALIEXPRESS_MOCK_ENABLED=true 환경변수로 모킹 모드를 활성화하면
-실제 API 자격증명 없이도 고정된 검색 결과를 반환한다.
+기본적으로 실제 외부 API를 호출하며, NAVER_MOCK_ENABLED=true / ALIEXPRESS_MOCK_ENABLED=true
+환경변수로 모킹 모드를 활성화하면 실제 API 자격증명 없이도 고정된 검색 결과를 반환한다.
+모킹 모드는 필요 시(로컬 개발/CI 등)에만 활성화한다.
 """
 
 import os

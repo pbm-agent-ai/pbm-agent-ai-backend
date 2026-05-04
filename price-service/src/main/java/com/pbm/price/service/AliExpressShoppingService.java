@@ -1,6 +1,7 @@
 package com.pbm.price.service;
 
 import com.pbm.price.client.ExternalApiClient;
+import com.pbm.price.dto.response.AliExpressShoppingItem;
 import com.pbm.price.dto.response.SearchResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -20,9 +21,12 @@ import java.util.List;
 public class AliExpressShoppingService {
 
     private final ExternalApiClient externalApiClient;
+    private final ProductPersistenceService productPersistenceService;
 
-    public AliExpressShoppingService(ExternalApiClient externalApiClient) {
+    public AliExpressShoppingService(ExternalApiClient externalApiClient,
+                                     ProductPersistenceService productPersistenceService) {
         this.externalApiClient = externalApiClient;
+        this.productPersistenceService = productPersistenceService;
     }
 
     /**
@@ -51,8 +55,26 @@ public class AliExpressShoppingService {
     ) {
         log.info("AliExpress 상품 검색 요청 - 키워드: {}, 페이지: {}/{}, 정렬: {} (external-api-service 경유)",
                 keyword, pageNo, pageSize, sort);
-        return externalApiClient.searchAliExpressProducts(
+
+        List<AliExpressShoppingItem> items = externalApiClient.searchAliExpressProductItems(
                 keyword, pageNo, pageSize, sort, targetCurrency, targetLanguage, shipToCountry, trackingId
         );
+        productPersistenceService.saveAliExpressSearchResults(keyword, targetCurrency, items);
+
+        return items.stream()
+                .map(item -> {
+                    String lprice = (item.target_sale_price() != null && !item.target_sale_price().isBlank())
+                            ? item.target_sale_price()
+                            : item.sale_price();
+
+                    return new SearchResponse(
+                            item.product_title(),
+                            lprice,
+                            item.target_original_price(),
+                            item.shop_name(),
+                            item.product_detail_url()
+                    );
+                })
+                .toList();
     }
 }

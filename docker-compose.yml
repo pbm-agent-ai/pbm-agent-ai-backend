@@ -128,6 +128,9 @@ services:
       - EUREKA_URL=http://eureka-server:8761/eureka/
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - EXTERNAL_API_SERVICE_URL=http://external-api-service:8090
+      - PRICE_DB_URL=jdbc:postgresql://postgres:5432/price_db
+      - PRICE_DB_USERNAME=${PRICE_DB_USERNAME:-postgres}
+      - PRICE_DB_PASSWORD=${PRICE_DB_PASSWORD:-password}
 
   # ─── 결제 서비스 ──────────────────────────────────────────
   payment-service:
@@ -169,8 +172,14 @@ services:
     environment:
       - NAVER_CLIENT_ID=${NAVER_CLIENT_ID:-}
       - NAVER_CLIENT_SECRET=${NAVER_CLIENT_SECRET:-}
-      # 모킹 모드: Naver API 자격증명 없이도 동작 검증 가능 (로컬/CI 환경에서 true 설정)
-      - NAVER_MOCK_ENABLED=${NAVER_MOCK_ENABLED:-true}
+      # 모킹 모드: 기본값은 false(실제 API 호출). 필요 시 true로 설정하여 고정 데이터 반환
+      - NAVER_MOCK_ENABLED=${NAVER_MOCK_ENABLED:-false}
+      # AliExpress Affiliate API 환경변수
+      - ALIEXPRESS_APP_KEY=${ALIEXPRESS_APP_KEY:-}
+      - ALIEXPRESS_APP_SECRET=${ALIEXPRESS_APP_SECRET:-}
+      - ALIEXPRESS_BASE_URL=${ALIEXPRESS_BASE_URL:-https://api-sg.aliexpress.com/sync}
+      # AliExpress 모킹 모드: 기본값은 false(실제 API 호출). 필요 시 true로 설정하여 고정 데이터 반환
+      - ALIEXPRESS_MOCK_ENABLED=${ALIEXPRESS_MOCK_ENABLED:-false}
 
 volumes:
   postgres_data:

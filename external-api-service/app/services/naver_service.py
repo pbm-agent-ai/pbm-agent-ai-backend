@@ -1,7 +1,8 @@
 """네이버 쇼핑 API 호출 서비스 - 외부 API 통신 및 응답 정규화 담당
 
+기본적으로 실제 네이버 쇼핑 API를 호출한다.
 NAVER_MOCK_ENABLED=true 환경변수 설정 시 실제 API 호출 없이 고정된 모킹 데이터를 반환한다.
-로컬 개발 및 CI 환경에서 Naver API 자격증명 없이도 동작 검증이 가능하다.
+로컬 개발 및 CI 환경에서 Naver API 자격증명 없이도 동작 검증이 가능하다 (필요 시에만 활성화).
 """
 
 import os
@@ -26,6 +27,13 @@ def _is_mock_enabled() -> bool:
     return os.getenv("NAVER_MOCK_ENABLED", "false").lower() == "true"
 
 
+"""
+os.getenv()는 에러를 발생시키지 않는다. 파이썬에서 환경 변수를 가져오는 방법은 2가지가 있다.
+- os.environ['key']: 키가 없으면 KeyError 예외를 발생
+- os.getenv('key'): 키가 없으면 에러를 발생시키는 대신 None을 반환
+
+만약 environ을 상요한다고 해도 개발자가 실수로 환경변수를 빈 문자열로 설정해 둔 경우 걸러내지 못한다.
+"""
 def _get_naver_credentials() -> tuple[str, str]:
     """환경변수에서 네이버 API 자격증명 조회"""
     client_id = os.getenv("NAVER_CLIENT_ID")

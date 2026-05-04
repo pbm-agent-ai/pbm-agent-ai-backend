@@ -6,7 +6,7 @@
 			<attribute name="gradle_used_by_scope" value="main,test"/>
 		</attributes>
 	</classpathentry>
-	<classpathentry kind="src" output="bin/main" path="src/main/resources">
+	<classpathentry excluding="**" kind="src" output="bin/main" path="src/main/resources">
 		<attributes>
 			<attribute name="gradle_scope" value="main"/>
 			<attribute name="gradle_used_by_scope" value="main,test"/>
@@ -32,5 +32,6 @@
 			<attribute name="test" value="true"/>
 		</attributes>
 	</classpathentry>
+	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/com.h2database/h2/2.2.224/7bdade27d8cd197d9b5ce9dc251f41d2edc5f7ad/h2-2.2.224.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/com.h2database/h2/2.2.224/3b207e6b1933e49bf68f375b52a1ce0ed8b912b7/h2-2.2.224-sources.jar"/>
 	<classpathentry kind="output" path="bin/default"/>
 </classpath>

@@ -1,6 +1,7 @@
 package com.pbm.price.service;
 
 import com.pbm.price.client.ExternalApiClient;
+import com.pbm.price.dto.response.NaverShoppingItem;
 import com.pbm.price.dto.response.SearchResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,9 +22,12 @@ import java.util.List;
 public class NaverShoppingService {
 
     private final ExternalApiClient externalApiClient;
+    private final ProductPersistenceService productPersistenceService;
 
-    public NaverShoppingService(ExternalApiClient externalApiClient) {
+    public NaverShoppingService(ExternalApiClient externalApiClient,
+                                ProductPersistenceService productPersistenceService) {
         this.externalApiClient = externalApiClient;
+        this.productPersistenceService = productPersistenceService;
     }
 
     /**
@@ -36,6 +40,18 @@ public class NaverShoppingService {
      */
     public List<SearchResponse> searchProducts(String keyword, int display) {
         log.info("상품 검색 요청 - 키워드: {}, 개수: {} (external-api-service 경유)", keyword, display);
-        return externalApiClient.searchNaverProducts(keyword, display);
+
+        List<NaverShoppingItem> items = externalApiClient.searchNaverProductItems(keyword, display);
+        productPersistenceService.saveNaverSearchResults(keyword, items);
+
+        return items.stream()
+                .map(item -> new SearchResponse(
+                        item.title(),
+                        item.lprice(),
+                        item.hprice(),
+                        item.mallName(),
+                        item.link()
+                ))
+                .toList();
     }
 }

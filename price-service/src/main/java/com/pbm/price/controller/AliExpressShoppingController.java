@@ -14,14 +14,14 @@ import java.util.List;
 
 /**
  * AliExpress 쇼핑 검색 API 컨트롤러
- * GET /api/prices/aliexpress/search?keyword={keyword}&page_no=1&page_size=10&sort=...
+ * GET /api/v1/aliexpress/search?keyword={keyword}&page_no=1&page_size=10&sort=...
  *
  * AliExpress 상품 검색 결과를 공통 SearchResponse 형식으로 반환한다.
  * 모든 선택 파라미터는 기본값이 있어 keyword만 필수이다.
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/prices/aliexpress")
+@RequestMapping("/api/v1/aliexpress")
 @RequiredArgsConstructor
 public class AliExpressShoppingController {
 

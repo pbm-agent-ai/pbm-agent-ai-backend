@@ -1,7 +1,8 @@
 """AliExpress Affiliate API 호출 서비스 - 외부 API 통신 및 응답 정규화 담당
 
+기본적으로 실제 AliExpress Affiliate API를 호출한다.
 ALIEXPRESS_MOCK_ENABLED=true 환경변수 설정 시 실제 API 호출 없이 고정된 모킹 데이터를 반환한다.
-로컬 개발 및 CI 환경에서 AliExpress API 자격증명 없이도 동작 검증이 가능하다.
+로컬 개발 및 CI 환경에서 AliExpress API 자격증명 없이도 동작 검증이 가능하다 (필요 시에만 활성화).
 
 서명 규칙:
 - 엔드포인트: https://api-sg.aliexpress.com/sync (기본값, 환경변수로 변경 가능)

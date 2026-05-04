@@ -199,12 +199,12 @@ external-api-service:
 #### 문제
 
 - `gateway`: `/api/price/**`
-- `price-service`: `/api/prices/**`
+- `price-service`: `/api/v1/naver/**`, `/api/v1/aliexpress/**`
 
 #### 수정
 
-- Gateway 경로를 `/api/prices/**`로 수정
-- 오늘 테스트 기준 canonical path를 `/api/prices/**`로 확정
+- Gateway 경로를 `/api/v1/naver/**`, `/api/v1/aliexpress/**`로 수정
+- 버전 관리가 가능한 일관된 경로 형식으로 변경
 
 수정 파일:
 
@@ -288,7 +288,7 @@ external-api-service:
 
 #### 3) price-service -> external-api-service 연동
 
-- `GET http://localhost:8083/api/prices/search?keyword=아이폰&display=1`
+- `GET http://localhost:8083/api/v1/naver/search?keyword=아이폰&display=1`
 - `ApiResponse` 형태로 정상 응답 확인
 
 ### 결론

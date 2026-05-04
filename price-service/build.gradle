@@ -10,4 +10,15 @@ dependencies {
 
     // Eureka Server에 자신의 존재를 등록하고, 다른 MSA 주소를 찾기 위한 클라이언트 모듈
     implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
+
+    // Resilience4j: 외부 API 호출 장애 격리(Circuit Breaker), 재시도(Retry) 보호
+    // spring-cloud-starter-circuitbreaker-resilience4j는 resilience4j-spring-boot3를 포함하여
+    // @CircuitBreaker, @Retry 등의 어노테이션 기반 장애 제어를 지원한다
+    implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j'
+
+    // AOP: @CircuitBreaker, @Retry 등의 Resilience4j 어노테이션을 위한 AspectJ 지원
+    implementation 'org.springframework.boot:spring-boot-starter-aop'
+
+    // JPA 테스트 시 메모리 DB(H2)를 사용하여 실제 DB 없이도 저장 로직 검증 가능
+    testRuntimeOnly 'com.h2database:h2'
 }

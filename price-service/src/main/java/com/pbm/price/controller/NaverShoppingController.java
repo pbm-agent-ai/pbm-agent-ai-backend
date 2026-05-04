@@ -14,11 +14,11 @@ import java.util.List;
 
 /**
  * 네이버 쇼핑 검색 API 컨트롤러
- * GET /api/prices/search?keyword={keyword}&display={display}
+ * GET /api/v1/naver/search?keyword={keyword}&display={display}
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/prices")
+@RequestMapping("/api/v1/naver")
 @RequiredArgsConstructor
 public class NaverShoppingController {
 

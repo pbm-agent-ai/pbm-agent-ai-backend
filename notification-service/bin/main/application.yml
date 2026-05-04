@@ -1,0 +1,40 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: notification-service
+
+  # DB를 현재 사용하지 않으므로 DataSource/JPA 자동설정을 제외한다
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: notification-service
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+        # 타입 헤더 없이 역직렬화하도록 설정 (발행 측에서 타입 헤더를 보내지 않는 경우 대응)
+        spring.json.use.type.headers: false
+        # 역직렬화할 기본 대상 타입을 명시적으로 지정
+        spring.json.value.default.type: com.pbm.notification.dto.event.PriceAlertEvent
+
+# 애플리케이션 커스텀 설정
+app:
+  kafka:
+    topics:
+      price-alert: price-alert
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_SERVER_URL:http://localhost:8761/eureka/}
+    register-with-eureka: true
+    fetch-registry: true
+  instance:
+    prefer-ip-address: true

@@ -1,0 +1,40 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:price-service-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        format_sql: true
+    show-sql: false
+
+app:
+  monitoring:
+    default-fetch-interval-minutes: 10
+    scheduler-interval-ms: 60000
+    default-display: 10
+    aliexpress-default-page-size: 10
+
+# 테스트 환경 Resilience4j 설정
+# 단위 테스트에서는 Spring 컨텍스트가 로드되지 않아 어노테이션이 동작하지 않으나,
+# 통합 테스트 시 빠른 실패/복구 테스트를 위해 짧은 대기 시간과 낮은 임계값을 설정한다
+resilience4j:
+  circuitbreaker:
+    instances:
+      externalApiService:
+        slidingWindowSize: 5
+        minimumNumberOfCalls: 3
+        failureRateThreshold: 50
+        waitDurationInOpenState: 5s
+        permittedNumberOfCallsInHalfOpenState: 2
+        slidingWindowType: COUNT_BASED
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+  retry:
+    instances:
+      externalApiService:
+        maxAttempts: 2
+        waitDuration: 100ms

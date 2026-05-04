@@ -5,6 +5,7 @@ import com.pbm.price.dto.response.AliExpressShoppingItem;
 import com.pbm.price.dto.response.NaverSearchResponse;
 import com.pbm.price.dto.response.NaverShoppingItem;
 import com.pbm.price.dto.response.SearchResponse;
+import com.pbm.price.exception.ExternalApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -31,6 +32,11 @@ import static org.mockito.Mockito.*;
  * WebClient를 Mock하여 HTTP 호출 없이 동작 검증
  * external-api-service의 래퍼 응답(NaverSearchResponse)에서 items를 추출하여
  * SearchResponse 목록으로 매핑하는 로직을 검증한다.
+ *
+ * 주의: 단위 테스트에서는 Spring 컨텍스트가 로드되지 않으므로
+ * @CircuitBreaker, @Retry 어노테이션이 동작하지 않는다.
+ * Resilience4j 동작은 별도의 통합 테스트에서 검증해야 한다.
+ * 여기서는 fallback 메서드를 직접 호출하여 예외 전파 동작을 검증한다.
  */
 @ExtendWith(MockitoExtension.class)
 class ExternalApiClientTest {
@@ -91,6 +97,31 @@ class ExternalApiClientTest {
     }
 
     @Test
+    @DisplayName("네이버 쇼핑 원본 조회 - NaverShoppingItem 목록 그대로 반환")
+    void searchNaverProductItems_returnsRawItems() {
+        // given
+        NaverShoppingItem item = new NaverShoppingItem(
+                "에어팟 프로", "250000", "350000", "애플스토어",
+                "https://example.com/1", "1001", "https://img.example.com/1.jpg",
+                "애플", "Apple", "디지털/가전", "이어폰", "무선이어폰", ""
+        );
+        NaverSearchResponse wrappedResponse = new NaverSearchResponse(1, 1, 10, List.of(item));
+
+        when(webClient.get()).thenReturn(requestHeadersUriSpec);
+        when(requestHeadersUriSpec.uri(any(java.util.function.Function.class))).thenReturn(requestHeadersSpec);
+        when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.bodyToMono(any(ParameterizedTypeReference.class))).thenReturn(Mono.just(wrappedResponse));
+
+        // when
+        List<NaverShoppingItem> results = externalApiClient.searchNaverProductItems("이어폰", 10);
+
+        // then
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).productId()).isEqualTo("1001");
+        assertThat(results.get(0).image()).isEqualTo("https://img.example.com/1.jpg");
+    }
+
+    @Test
     @DisplayName("네이버 쇼핑 검색 - 빈 items 응답 시 빈 목록 반환")
     void searchNaverProducts_returnsEmptyList_whenItemsEmpty() {
         // given - 빈 items를 가진 래퍼 응답
@@ -125,19 +156,21 @@ class ExternalApiClientTest {
     }
 
     @Test
-    @DisplayName("네이버 쇼핑 검색 - WebClient 예외 발생 시 RuntimeException 래핑")
-    void searchNaverProducts_throwsRuntimeException_onWebClientError() {
-        // given
+    @DisplayName("네이버 쇼핑 검색 - WebClient 예외 발생 시 예외 전파 (Resilience4j 미적용 단위 테스트)")
+    void searchNaverProducts_propagatesException_onWebClientError() {
+        // given - WebClient 호출 실패 시 원본 예외가 전파됨
+        // 단위 테스트에서는 @CircuitBreaker/@Retry 어노테이션이 동작하지 않으므로
+        // try-catch 제거 후 원본 예외가 그대로 전파되는 것을 검증한다
         when(webClient.get()).thenReturn(requestHeadersUriSpec);
         when(requestHeadersUriSpec.uri(any(java.util.function.Function.class))).thenReturn(requestHeadersSpec);
         when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
         when(responseSpec.bodyToMono(any(ParameterizedTypeReference.class)))
                 .thenReturn(Mono.error(new RuntimeException("연결 실패")));
 
-        // when & then
+        // when & then - 원본 예외 메시지가 그대로 전파됨
         assertThatThrownBy(() -> externalApiClient.searchNaverProducts("이어폰", 10))
                 .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("external-api-service 네이버 쇼핑 API 호출 중 오류가 발생했습니다");
+                .hasMessageContaining("연결 실패");
     }
 
     @Test
@@ -168,6 +201,34 @@ class ExternalApiClientTest {
         assertThat(result.mallName()).isEqualTo("쇼핑몰");
         assertThat(result.link()).isEqualTo("https://example.com/p1");
         // productId, image, maker, brand, category 필드는 SearchResponse에 없으므로 매핑되지 않음
+    }
+
+    // ===== 네이버 쇼핑 fallback 메서드 테스트 =====
+
+    @Test
+    @DisplayName("네이버 쇼핑 fallback - ExternalApiException 발생하여 장애 상황 명확히 전파")
+    void naverSearchFallback_throwsExternalApiException() {
+        // given - Circuit Breaker가 OPEN이거나 재시도 모두 실패한 상황
+        Throwable cause = new RuntimeException("연결 거부");
+
+        // when & then - fallback은 빈 결과가 아닌 명확한 예외를 전파함
+        assertThatThrownBy(() -> externalApiClient.naverSearchFallback("이어폰", 10, cause))
+                .isInstanceOf(ExternalApiException.class)
+                .hasMessageContaining("external-api-service 네이버 쇼핑 API 호출 불가")
+                .hasMessageContaining("Circuit Breaker OPEN 또는 오류");
+    }
+
+    @Test
+    @DisplayName("네이버 쇼핑 fallback - 원인 예외가 ExternalApiException의 cause로 보존됨")
+    void naverSearchFallback_preservesCauseException() {
+        // given
+        Throwable cause = new java.net.ConnectException("Connection refused");
+
+        // when & then - 원인 예외가 보존되어 디버깅이 가능함
+        assertThatThrownBy(() -> externalApiClient.naverSearchFallback("이어폰", 10, cause))
+                .isInstanceOf(ExternalApiException.class)
+                .getCause()
+                .isInstanceOf(java.net.ConnectException.class);
     }
 
     // ===== AliExpress 검색 테스트 =====
@@ -217,6 +278,34 @@ class ExternalApiClientTest {
             assertThat(results.get(1).title()).isEqualTo("블루투스 스피커");
             assertThat(results.get(1).lprice()).isEqualTo("23000");  // target_sale_price
             verify(webClient, times(1)).get();
+        }
+
+        @Test
+        @DisplayName("AliExpress 원본 조회 - AliExpressShoppingItem 목록 그대로 반환")
+        void searchAliExpressProductItems_returnsRawItems() {
+            // given
+            AliExpressShoppingItem item = new AliExpressShoppingItem(
+                    "무선 이어폰 블루투스", "9.99", "15000", "25000",
+                    "AliExpress Store", "https://aliexpress.com/item/1",
+                    "1001", "https://img.example.com/1.jpg", "95",
+                    "200001", "이어폰"
+            );
+            AliExpressSearchResponse wrappedResponse = new AliExpressSearchResponse(1, 1, 10, List.of(item));
+
+            when(webClient.get()).thenReturn(requestHeadersUriSpec);
+            when(requestHeadersUriSpec.uri(any(java.util.function.Function.class))).thenReturn(requestHeadersSpec);
+            when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
+            when(responseSpec.bodyToMono(any(ParameterizedTypeReference.class))).thenReturn(Mono.just(wrappedResponse));
+
+            // when
+            List<AliExpressShoppingItem> results = externalApiClient.searchAliExpressProductItems(
+                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null
+            );
+
+            // then
+            assertThat(results).hasSize(1);
+            assertThat(results.get(0).product_id()).isEqualTo("1001");
+            assertThat(results.get(0).product_main_image_url()).isEqualTo("https://img.example.com/1.jpg");
         }
 
         @Test
@@ -313,21 +402,49 @@ class ExternalApiClientTest {
         }
 
         @Test
-        @DisplayName("AliExpress 검색 - WebClient 예외 발생 시 RuntimeException 래핑")
-        void searchAliExpressProducts_throwsRuntimeException_onWebClientError() {
-            // given
+        @DisplayName("AliExpress 검색 - WebClient 예외 발생 시 예외 전파 (Resilience4j 미적용 단위 테스트)")
+        void searchAliExpressProducts_propagatesException_onWebClientError() {
+            // given - WebClient 호출 실패 시 원본 예외가 전파됨
             when(webClient.get()).thenReturn(requestHeadersUriSpec);
             when(requestHeadersUriSpec.uri(any(java.util.function.Function.class))).thenReturn(requestHeadersSpec);
             when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
             when(responseSpec.bodyToMono(any(ParameterizedTypeReference.class)))
                     .thenReturn(Mono.error(new RuntimeException("연결 실패")));
 
-            // when & then
+            // when & then - 원본 예외 메시지가 그대로 전파됨
             assertThatThrownBy(() -> externalApiClient.searchAliExpressProducts(
                     "이어폰", 1, 10, null, "KRW", "KO", "KR", null
             ))
                     .isInstanceOf(RuntimeException.class)
-                    .hasMessageContaining("external-api-service AliExpress API 호출 중 오류가 발생했습니다");
+                    .hasMessageContaining("연결 실패");
+        }
+
+        @Test
+        @DisplayName("AliExpress fallback - ExternalApiException 발생하여 장애 상황 명확히 전파")
+        void aliExpressSearchFallback_throwsExternalApiException() {
+            // given - Circuit Breaker가 OPEN이거나 재시도 모두 실패한 상황
+            Throwable cause = new RuntimeException("서버 오류");
+
+            // when & then - fallback은 빈 결과가 아닌 명확한 예외를 전파함
+            assertThatThrownBy(() -> externalApiClient.aliExpressSearchFallback(
+                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null, cause))
+                    .isInstanceOf(ExternalApiException.class)
+                    .hasMessageContaining("external-api-service AliExpress API 호출 불가")
+                    .hasMessageContaining("Circuit Breaker OPEN 또는 오류");
+        }
+
+        @Test
+        @DisplayName("AliExpress fallback - 원인 예외가 ExternalApiException의 cause로 보존됨")
+        void aliExpressSearchFallback_preservesCauseException() {
+            // given
+            Throwable cause = new java.util.concurrent.TimeoutException("응답 시간 초과");
+
+            // when & then - 원인 예외가 보존되어 디버깅이 가능함
+            assertThatThrownBy(() -> externalApiClient.aliExpressSearchFallback(
+                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null, cause))
+                    .isInstanceOf(ExternalApiException.class)
+                    .getCause()
+                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
         }
     }
 }

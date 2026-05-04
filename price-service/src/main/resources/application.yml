@@ -4,11 +4,18 @@ server:
 spring:
   application:
     name: price-service
-  # JPA/DataSource 자동 설정 제외 (현재 DB 미사용, 외부 API 연동 전용)
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
-      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+  datasource:
+    url: ${PRICE_DB_URL:jdbc:postgresql://localhost:5432/price_db}
+    username: ${PRICE_DB_USERNAME:postgres}
+    password: ${PRICE_DB_PASSWORD:password}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        format_sql: true
+    open-in-view: false
+    show-sql: true
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
@@ -22,21 +29,69 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: "*"
-        spring.json.use.type.headers: false
         spring.json.value.default.type: com.pbm.price.dto.event.PriceRequestEvent
 
-# Kafka 토픽 설정
+# 모니터링 설정
+# 스케줄러는 fixedDelay 방식으로 이전 수집 완료 후 scheduler-interval-ms 대기 후 재실행
+# - scheduler-interval-ms: 스케줄러가 DB를 폴링하는 주기 (60000ms = 1분)
+# - default-fetch-interval-minutes: 개별 모니터링 대상의 수집 주기 (10분)
+#   따라서 next_fetch_at이 현재 시각보다 과거인 대상만 수집 대상이 됨
 app:
   kafka:
     topics:
       price-topic: price-topic
       price-alert: price-alert
+  monitoring:
+    default-fetch-interval-minutes: 10
+    scheduler-interval-ms: 60000
+    default-display: 10
+    aliexpress-default-page-size: 10
 
 # external-api-service 직접 호출 설정
 # 네이버 API 등 외부 API 호출은 external-api-service를 통해 프록시 (직접 Naver 호출 잔존 흔적 제거 완료)
 # 컨테이너 환경: http://external-api-service:8090, 로컬 환경: http://localhost:8090
 external-api-service:
   base-url: ${EXTERNAL_API_SERVICE_URL:http://localhost:8090}
+  # WebClient 연결 타임아웃 (밀리초) - TCP 연결 설정 대기 시간
+  connect-timeout-ms: ${EXTERNAL_API_CONNECT_TIMEOUT_MS:3000}
+  # WebClient 응답 타임아웃 (초) - HTTP 요청 후 전체 응답 수신 대기 시간
+  # @TimeLimiter는 비동기(CompletionStage) 메서드에만 적용 가능하므로,
+  # 동기 block() 방식에서는 WebClient 레벨에서 타임아웃을 설정함
+  response-timeout-seconds: ${EXTERNAL_API_RESPONSE_TIMEOUT_SECONDS:5}
+
+# Resilience4j: 외부 API 호출 장애 격리 및 복구 설정
+# Circuit Breaker: 연속 장애 발생 시 빠른 실패(Fail-Fast)를 유도하여 시스템 보호
+# Retry: 일시적 장애 시 자동 재시도로 복구 가능성 향상
+resilience4j:
+  circuitbreaker:
+    instances:
+      # external-api-service 호출용 Circuit Breaker 인스턴스
+      externalApiService:
+        # 슬라이딩 윈도우 크기 (최근 10회 호출 기준으로 장애 판단)
+        slidingWindowSize: 10
+        # 최소 호출 횟수 (5회 이상 호출 후 장애율 계산 시작)
+        minimumNumberOfCalls: 5
+        # 장애율 임계값 (50% 이상 실패 시 Circuit Open → 빠른 실패 유도)
+        failureRateThreshold: 50
+        # Circuit Open 상태 유지 시간 (30초 후 Half-Open으로 전환하여 복구 테스트)
+        waitDurationInOpenState: 30s
+        # Half-Open 상태에서 허용할 호출 횟수 (3회까지 테스트 호출 허용)
+        permittedNumberOfCallsInHalfOpenState: 3
+        # 슬라이딩 윈도우 타입 (COUNT 기반: 호출 횟수 기준)
+        slidingWindowType: COUNT_BASED
+        # 자동 Half-Open 전환 활성화 (waitDurationInOpenState 경과 후 자동 전환)
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+  retry:
+    instances:
+      # external-api-service 호출용 Retry 인스턴스
+      externalApiService:
+        # 최대 재시도 횟수 (초기 호출 1회 + 재시도 2회 = 총 3회)
+        maxAttempts: 3
+        # 재시도 간 대기 시간 (1초 고정 대기)
+        waitDuration: 1s
+        # 재시도할 예외 타입 (모든 예외에 대해 재시도 수행)
+        retryExceptions:
+          - java.lang.Exception
 
 # Eureka 서비스 디스커버리 설정 (게이트웨이에서 라우팅하려면 Eureka 등록 필수)
 eureka:

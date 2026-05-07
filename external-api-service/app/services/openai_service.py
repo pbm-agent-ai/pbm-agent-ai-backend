@@ -36,6 +36,10 @@ OPENAI_DEFAULT_MODEL = "gpt-5.4-mini"
 
 # command-service가 기대하는 최상위 응답 JSON 스키마.
 # strict=true 사용 시 additionalProperties=false가 필요하다.
+# OpenAI 호출 시 response_format에 이 스키마를 전달하면 GPT가 이 스키마를 벗어나는 JSON을 절대 반환하지 않음
+# "additionalProperties": False → 스키마에 없는 필드는 추가 불가
+# "required" → 필수 키가 무조건 포함됨
+# "enum" → 지정된 값만 사용 가능
 COMMAND_PARSE_SCHEMA: dict = {
     "type": "object",
     "properties": {
@@ -118,10 +122,27 @@ def _parse_structured_content(content: str | dict | None) -> dict:
     Structured Outputs를 사용하므로 content는 JSON 스키마를 만족하는 문자열이어야 한다.
     계약이 깨진 경우 raw_content로 우회하지 않고 즉시 예외를 발생시켜 상위에서 실패를 알린다.
     """
+    # content 자체가 없으면 즉시 실패
     if content is None:
         raise ValueError("OpenAI 응답에 content가 없습니다.")
+    # 이미 dict이면 즉시 반환
     if isinstance(content, dict):
         return content
+    # json.loads(): 문자열을 dict로 파싱
+    # from exc: 원본 예외를 체인으로 연결(Java의 cause와 동일)
+    """
+    json.loads()는 내부적으로 문자열을 한 글자씩 읽으면서 파싱합니다.
+    예시: {"color": "black"} → dict
+    문자열: {  "  c  o  l  o  r  "  :     "  b  l  a  c  k  "  }
+            ↓  ↓  ↓  ↓  ↓  ↓  ↓  ↓  ↓  ↓  ↓  ↓  ↓  ↓  ↓  ↓  ↓
+    단계1:  {  → "객체 시작이구나" → 빈 dict {} 생성
+    단계2:     "color" → "키는 color구나"
+    단계3:              : → "키 끝, 이제 값이 나오겠구나"
+    단계4:                "black" → "값은 black이구나" → dict["color"] = "black"
+    단계5:                         } → "객체 끝났구나" → 완료
+    결과: {"color": "black"} (Python dict)
+
+    """
     try:
         parsed = json.loads(content)
     except (json.JSONDecodeError, TypeError) as exc:
@@ -172,6 +193,7 @@ async def _parse_command_mock(
     )
 
 
+# 비동기 함수. OpenAI 응답을 기다리는 동안 블로킹 되지 않음
 async def parse_command(
     request: OpenAiParseCommandRequest,
 ) -> OpenAiParseCommandResponse:

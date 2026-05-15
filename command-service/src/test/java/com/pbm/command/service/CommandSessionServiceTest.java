@@ -123,6 +123,31 @@ class CommandSessionServiceTest {
     }
 
     @Test
+    @DisplayName("commandId 조회 시 후보 상품을 페이지 단위로 잘라서 반환한다")
+    void getByCommandId_withPaging_returnsSlicedCandidates() {
+        CommandSession session = CommandSession.createSearching(1L, "테스트 명령");
+        session.toProductSelectionRequired(
+                "[]",
+                "검색 결과를 확인하고 상품을 선택해주세요.",
+                null,
+                "[" +
+                        "{\"productId\":\"naver-1\",\"title\":\"상품 1\",\"lprice\":\"1000\",\"mallName\":\"스토어1\",\"productUrl\":\"https://example.com/1\",\"currency\":\"KRW\",\"platform\":\"NAVER\",\"searchKeyword\":\"키보드\"}," +
+                        "{\"productId\":\"naver-2\",\"title\":\"상품 2\",\"lprice\":\"2000\",\"mallName\":\"스토어2\",\"productUrl\":\"https://example.com/2\",\"currency\":\"KRW\",\"platform\":\"NAVER\",\"searchKeyword\":\"키보드\"}," +
+                        "{\"productId\":\"naver-3\",\"title\":\"상품 3\",\"lprice\":\"3000\",\"mallName\":\"스토어3\",\"productUrl\":\"https://example.com/3\",\"currency\":\"KRW\",\"platform\":\"NAVER\",\"searchKeyword\":\"키보드\"}" +
+                        "]",
+                100000,
+                "AUTO_PURCHASE"
+        );
+        given(commandSessionRepository.findByCommandId(TEST_COMMAND_ID))
+                .willReturn(Optional.of(session));
+
+        CommandSessionResponse response = commandSessionService.getByCommandId(TEST_COMMAND_ID, 1, 2);
+
+        assertThat(response.candidates()).hasSize(1);
+        assertThat(response.candidates().get(0).productId()).isEqualTo("naver-3");
+    }
+
+    @Test
     @DisplayName("존재하지 않는 commandId로 조회하면 예외를 던진다")
     void getByCommandId_withNonExistentId_throwsException() {
         // given

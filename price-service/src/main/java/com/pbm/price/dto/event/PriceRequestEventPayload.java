@@ -1,5 +1,7 @@
 package com.pbm.price.dto.event;
 
+import java.util.List;
+
 /**
  * price-topic에서 수신하는 가격 확인 요청의 Payload DTO.
  *
@@ -31,6 +33,27 @@ public record PriceRequestEventPayload(
         /** 상품 상세 페이지 URL */
         String productUrl,
         /** 검색 키워드 (Phase 1 이후 명시적 전달용) */
-        String searchKeyword
+        String searchKeyword,
+        /** 사용자가 직접 입력한 상품 URL 목록 */
+        List<String> productUrls
 ) {
+
+    /**
+     * 기존 10개 필드 payload와의 호환성을 위한 보조 생성자.
+     */
+    public PriceRequestEventPayload(
+            Long userId,
+            String keyword,
+            Integer targetPrice,
+            String platform,
+            String currency,
+            String commandId,
+            String intent,
+            ParsedCommandSnapshot parsedCommandSnapshot,
+            String productUrl,
+            String searchKeyword
+    ) {
+        this(userId, keyword, targetPrice, platform, currency, commandId, intent,
+                parsedCommandSnapshot, productUrl, searchKeyword, null);
+    }
 }

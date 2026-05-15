@@ -68,7 +68,8 @@ public class PriceRequestService {
                         null,                           // intent - PriceCheckRequest 경로에서는 미사용
                         null,                           // parsedCommandSnapshot - PriceCheckRequest 경로에서는 미사용
                         null,                           // productUrl - Phase 1 준비
-                        null                            // searchKeyword - Phase 1 준비
+                        null,                           // searchKeyword - Phase 1 준비
+                        null                            // productUrls - Phase 2 준비
                 )
         );
 
@@ -136,7 +137,67 @@ public class PriceRequestService {
                         intent,
                         snapshot,
                         null, // productUrl — Phase 1 준비, 후순위
-                        null  // searchKeyword — Phase 1 준비, 후순위
+                        null, // searchKeyword — Phase 1 준비, 후순위
+                        null  // productUrls — Phase 2 준비, 후순위
+                )
+        );
+
+        kafkaTemplate.send(priceTopic, String.valueOf(userId), event);
+
+        return new PriceCheckResponse(
+                eventId,
+                priceTopic,
+                "price-topic 발행 성공"
+        );
+    }
+
+    /**
+     * 사용자가 직접 입력한 상품 URL 목록을 price-topic으로 발행한다.
+     *
+     * 역할: 1차 검색 결과 대신 사용자가 고른 상품 링크들을
+     *       price-service가 플랫폼별 URL 검증 로직으로 처리할 수 있도록 전달한다.
+     * 동작:
+     * 1. commandId / targetPrice / intent를 기존 세션 값으로 유지한다.
+     * 2. keyword/searchKeyword에는 1차 검색에서 실제 사용했던 검색 키워드를 넣는다.
+     * 3. productUrls에는 사용자가 입력한 링크 목록을 그대로 담아 발행한다.
+     *
+     * @param userId         요청 사용자 ID
+     * @param intent         사용자 의도 문자열
+     * @param targetPrice    목표 가격
+     * @param commandId      기존 명령 세션 식별자
+     * @param productUrls    사용자가 입력한 상품 URL 목록
+     * @param searchKeyword  1차 검색에서 실제 사용했던 검색 키워드
+     * @param platform       링크가 속한 플랫폼
+     * @return 발행 결과 응답 DTO
+     */
+    public PriceCheckResponse publishProductUrlRequest(
+            Long userId,
+            String intent,
+            Integer targetPrice,
+            String commandId,
+            List<String> productUrls,
+            String searchKeyword,
+            String platform
+    ) {
+        String eventId = UUID.randomUUID().toString();
+
+        PriceRequestEvent event = new PriceRequestEvent(
+                eventId,
+                "PRICE_CHECK_REQUEST",
+                Instant.now(),
+                "command-service",
+                new PriceRequestEventPayload(
+                        userId,
+                        searchKeyword,
+                        targetPrice,
+                        platform,
+                        "KRW",
+                        commandId,
+                        intent,
+                        null,
+                        null,
+                        searchKeyword,
+                        productUrls
                 )
         );
 

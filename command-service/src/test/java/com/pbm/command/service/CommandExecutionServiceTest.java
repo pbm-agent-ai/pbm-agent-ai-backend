@@ -9,6 +9,7 @@ import com.pbm.command.dto.event.ProductCandidateDto;
 import com.pbm.command.dto.event.ProductSelectionEvent;
 import com.pbm.command.dto.request.CommandClarificationRequest;
 import com.pbm.command.dto.request.CommandParseRequest;
+import com.pbm.command.dto.request.ProductUrlSubmitRequest;
 import com.pbm.command.dto.request.ProductSelectionRequest;
 import com.pbm.command.dto.response.CommandParseResponse;
 import com.pbm.command.dto.response.CommandSessionResponse;
@@ -279,6 +280,49 @@ class CommandExecutionServiceTest {
         verify(priceRequestService).publishParsedCommandRequest(1L, "PRICE_CHECK", parsedCommand, commandId);
         // updateToPreSearchClarification은 호출되지 않아야 함
         verify(commandSessionService, never()).updateToPreSearchClarification(anyString(), anyList(), anyString());
+    }
+
+    @Test
+    @DisplayName("handleProductUrlSubmission - URL 목록을 발행하고 SEARCHING으로 전환한다")
+    void handleProductUrlSubmission_publishesUrlRequest() {
+        String commandId = "cmd-url-001";
+        ProductUrlSubmitRequest request = new ProductUrlSubmitRequest(List.of(
+                "https://ko.aliexpress.com/item/1005006782975346.html",
+                "https://ko.aliexpress.com/item/1005010633549414.html"
+        ));
+
+        CommandSession session = CommandSession.builder()
+                .commandId(commandId)
+                .userId(1L)
+                .originalCommand("mx master 3s 블랙 알리익스프레스에서 100000원 이하면 결제해줘")
+                .status(CommandSessionStatus.PRODUCT_SELECTION_REQUIRED)
+                .candidatesJson("[{\"productId\":\"1005006782975346\",\"title\":\"테스트 상품\",\"lprice\":\"139000\",\"mallName\":\"스토어\",\"productUrl\":\"https://ko.aliexpress.com/item/1005006782975346.html\",\"currency\":\"KRW\",\"platform\":\"ALIEXPRESS\",\"searchKeyword\":\"로지텍 mx master 3s black\"}]")
+                .targetPrice(100000)
+                .commandIntent("AUTO_PURCHASE")
+                .build();
+
+        CommandSessionResponse searchingResponse = new CommandSessionResponse(
+                commandId, 1L, session.getOriginalCommand(), CommandSessionStatus.SEARCHING,
+                List.of(), null, null, List.of(), List.of(), null, 100000, "AUTO_PURCHASE", null, null
+        );
+
+        given(commandSessionService.getSessionEntityByCommandId(commandId)).willReturn(session);
+        given(commandSessionService.updateToSearching(commandId)).willReturn(searchingResponse);
+        given(commandSessionService.getByCommandId(commandId)).willReturn(searchingResponse);
+
+        CommandSessionResponse response = commandExecutionService.handleProductUrlSubmission(commandId, request);
+
+        assertThat(response.status()).isEqualTo(CommandSessionStatus.SEARCHING);
+        verify(commandSessionService).updateToSearching(commandId);
+        verify(priceRequestService).publishProductUrlRequest(
+                eq(1L),
+                eq("AUTO_PURCHASE"),
+                eq(100000),
+                eq(commandId),
+                eq(request.productUrls()),
+                eq("로지텍 mx master 3s black"),
+                eq("ALIEXPRESS")
+        );
     }
 
     @Test

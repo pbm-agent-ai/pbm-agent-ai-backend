@@ -2,6 +2,7 @@ package com.pbm.command.controller;
 
 import com.pbm.command.common.ApiResponse;
 import com.pbm.command.dto.request.CommandClarificationRequest;
+import com.pbm.command.dto.request.ProductUrlSubmitRequest;
 import com.pbm.command.dto.request.ProductSelectionRequest;
 import com.pbm.command.dto.response.CommandParseResponse;
 import com.pbm.command.dto.response.CommandSessionResponse;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 동작:
  *   - `GET  /api/v1/commands/{commandId}` : 세션 상태 조회
  *   - `POST /api/v1/commands/{commandId}/clarifications` : 보완 입력 제출 및 재파싱
+ *   - `POST /api/v1/commands/{commandId}/product-links` : 상품 URL 직접 입력
  * 연관: CommandSessionService, CommandExecutionService, CommandClarificationRequest.
  */
 @RestController
@@ -50,9 +53,11 @@ public class CommandSessionController {
      */
     @GetMapping("/{commandId}")
     public ResponseEntity<ApiResponse<CommandSessionResponse>> getCommandSession(
-            @PathVariable String commandId
+            @PathVariable String commandId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size
     ) {
-        CommandSessionResponse response = commandSessionService.getByCommandId(commandId);
+        CommandSessionResponse response = commandSessionService.getByCommandId(commandId, page, size);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
@@ -92,6 +97,22 @@ public class CommandSessionController {
             @RequestBody ProductSelectionRequest request
     ) {
         CommandSessionResponse response = commandExecutionService.handleProductSelection(commandId, request);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    /**
+     * 상품 URL 목록을 직접 제출하고 URL 기반 상품 확인을 시작한다.
+     *
+     * @param commandId UUID 형식의 세션 식별자
+     * @param request   사용자가 직접 입력한 상품 URL 목록
+     * @return SEARCHING 상태로 전환된 세션 응답 DTO
+     */
+    @PostMapping("/{commandId}/product-links")
+    public ResponseEntity<ApiResponse<CommandSessionResponse>> submitProductUrls(
+            @PathVariable String commandId,
+            @RequestBody ProductUrlSubmitRequest request
+    ) {
+        CommandSessionResponse response = commandExecutionService.handleProductUrlSubmission(commandId, request);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 }

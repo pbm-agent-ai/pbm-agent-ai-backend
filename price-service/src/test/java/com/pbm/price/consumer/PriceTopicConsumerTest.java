@@ -7,7 +7,9 @@ import com.pbm.price.dto.event.ProductSelectionRequiredEvent;
 import com.pbm.price.dto.response.SearchResponse;
 import com.pbm.price.publisher.ProductSelectionRequiredEventPublisher;
 import com.pbm.price.service.AliExpressCategoryIdResolver;
+import com.pbm.price.service.AliExpressProductUrlService;
 import com.pbm.price.service.AliExpressShoppingService;
+import com.pbm.price.service.NaverProductUrlService;
 import com.pbm.price.service.NaverShoppingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -54,6 +56,12 @@ class PriceTopicConsumerTest {
     @Mock
     private AliExpressCategoryIdResolver aliExpressCategoryIdResolver;
 
+    @Mock
+    private AliExpressProductUrlService aliExpressProductUrlService;
+
+    @Mock
+    private NaverProductUrlService naverProductUrlService;
+
     private PriceTopicConsumer priceTopicConsumer;
 
     @BeforeEach
@@ -62,6 +70,8 @@ class PriceTopicConsumerTest {
                 naverShoppingService,
                 aliExpressShoppingService,
                 aliExpressCategoryIdResolver,
+                aliExpressProductUrlService,
+                naverProductUrlService,
                 productSelectionRequiredEventPublisher
         );
     }
@@ -88,7 +98,7 @@ class PriceTopicConsumerTest {
                 new PriceRequestEventPayload(
                         userId, keyword, targetPrice, platform, currency,
                         null, intent, snapshot,
-                        null, null
+                        null, null, null
                 )
         );
     }
@@ -102,7 +112,7 @@ class PriceTopicConsumerTest {
                 new SearchResponse("에어팟 프로 1", "250000", "350000", "애플스토어", "https://example.com/1", "KRW", "naver-1"),
                 new SearchResponse("에어팟 프로 2", "260000", "360000", "애플스토어", "https://example.com/2", "KRW", "naver-2")
         );
-        when(naverShoppingService.searchProducts("에어팟 프로", 10)).thenReturn(results);
+        when(naverShoppingService.searchProducts("에어팟 프로", 30)).thenReturn(results);
 
         // when
         priceTopicConsumer.consume(event);
@@ -128,7 +138,7 @@ class PriceTopicConsumerTest {
     void consume_noResults_publishEmptyCandidateEvent() {
         // given
         PriceRequestEvent event = createRequestEvent(1L, "존재하지않는상품", 100000, "NAVER", "KRW");
-        when(naverShoppingService.searchProducts("존재하지않는상품", 10)).thenReturn(List.of());
+        when(naverShoppingService.searchProducts("존재하지않는상품", 30)).thenReturn(List.of());
 
         // when
         priceTopicConsumer.consume(event);
@@ -225,11 +235,11 @@ class PriceTopicConsumerTest {
     }
 
     @Test
-    @DisplayName("후보 상품이 10개를 넘어도 상위 10개만 전달한다")
-    void consume_moreThanTenResults_onlyPublishesTopTenCandidates() {
+    @DisplayName("후보 상품이 30개를 넘어도 상위 30개만 저장 대상으로 전달한다")
+    void consume_moreThanThirtyResults_onlyPublishesTopThirtyCandidates() {
         // given
         PriceRequestEvent event = createRequestEvent(1L, "키보드", 100000, "NAVER", "KRW");
-        List<SearchResponse> results = java.util.stream.IntStream.rangeClosed(1, 12)
+        List<SearchResponse> results = java.util.stream.IntStream.rangeClosed(1, 32)
                 .mapToObj(i -> new SearchResponse(
                         "키보드 " + i,
                         String.valueOf(10000 + i),
@@ -240,7 +250,7 @@ class PriceTopicConsumerTest {
                         "naver-" + i
                 ))
                 .toList();
-        when(naverShoppingService.searchProducts("키보드", 10)).thenReturn(results);
+        when(naverShoppingService.searchProducts("키보드", 30)).thenReturn(results);
 
         // when
         priceTopicConsumer.consume(event);
@@ -251,8 +261,112 @@ class PriceTopicConsumerTest {
         verify(productSelectionRequiredEventPublisher, times(1)).publish(captor.capture());
 
         ProductSelectionRequiredEvent published = captor.getValue();
-        assertThat(published.payload().candidates()).hasSize(10);
+        assertThat(published.payload().candidates()).hasSize(30);
         assertThat(published.payload().candidates().get(0).productId()).isEqualTo("naver-1");
-        assertThat(published.payload().candidates().get(9).productId()).isEqualTo("naver-10");
+        assertThat(published.payload().candidates().get(29).productId()).isEqualTo("naver-30");
+    }
+
+    @Test
+    @DisplayName("ALIEXPRESS - productUrls가 있으면 검색 대신 단건 상세 확인 결과를 후보로 발행한다")
+    void consume_directAliExpressUrls_resolvesCandidatesFromDetailApi() {
+        PriceRequestEvent event = new PriceRequestEvent(
+                "evt-url-001",
+                "PRICE_CHECK_REQUEST",
+                Instant.now(),
+                "command-service",
+                new PriceRequestEventPayload(
+                        1L,
+                        "mx master 3s 블랙 알리익스프레스에서 100000원 이하면 결제해줘",
+                        100000,
+                        "ALIEXPRESS",
+                        "KRW",
+                        "cmd-url-001",
+                        "AUTO_PURCHASE",
+                        null,
+                        null,
+                        "mx master 3s 블랙 알리익스프레스에서 100000원 이하면 결제해줘",
+                        List.of(
+                                "https://ko.aliexpress.com/item/1005006782975346.html",
+                                "https://ko.aliexpress.com/item/1005010633549414.html"
+                        )
+                )
+        );
+
+        when(aliExpressProductUrlService.resolveProductsByUrls(
+                eq(List.of(
+                        "https://ko.aliexpress.com/item/1005006782975346.html",
+                        "https://ko.aliexpress.com/item/1005010633549414.html"
+                )),
+                eq("KRW"), eq("KO"), eq("KR")
+        )).thenReturn(List.of(
+                new SearchResponse(
+                        "로지텍 MX 마스터 무선 블루투스 마우스, 하이 엔드 크로스 스크린 노트북, 3S",
+                        "136200",
+                        "289787",
+                        "Stone's Store",
+                        "https://ko.aliexpress.com/item/1005006782975346.html",
+                        "KRW",
+                        "1005006782975346"
+                )
+        ));
+
+        priceTopicConsumer.consume(event);
+
+        verify(aliExpressProductUrlService).resolveProductsByUrls(any(), eq("KRW"), eq("KO"), eq("KR"));
+        verify(aliExpressShoppingService, never()).searchProducts(anyString(), anyInt(), anyInt(), any(), any(), any(), any(), any(), any());
+
+        ArgumentCaptor<ProductSelectionRequiredEvent> captor = ArgumentCaptor.forClass(ProductSelectionRequiredEvent.class);
+        verify(productSelectionRequiredEventPublisher).publish(captor.capture());
+        assertThat(captor.getValue().payload().candidates()).hasSize(1);
+        assertThat(captor.getValue().payload().candidates().get(0).productId()).isEqualTo("1005006782975346");
+    }
+
+    @Test
+    @DisplayName("NAVER - productUrls가 있으면 검색 결과 재매칭으로 후보를 발행한다")
+    void consume_directNaverUrls_resolvesCandidatesFromSearchResult() {
+        PriceRequestEvent event = new PriceRequestEvent(
+                "evt-url-naver-001",
+                "PRICE_CHECK_REQUEST",
+                Instant.now(),
+                "command-service",
+                new PriceRequestEventPayload(
+                        1L,
+                        "mx master 3s 블랙 네이버에서 100000원 이하면 결제해줘",
+                        100000,
+                        "NAVER",
+                        "KRW",
+                        "cmd-url-naver-001",
+                        "AUTO_PURCHASE",
+                        null,
+                        null,
+                        "로지텍 mx master 3s black",
+                        List.of("https://search.shopping.naver.com/catalog/57981069328")
+                )
+        );
+
+        when(naverProductUrlService.resolveProductsByUrls(
+                eq("로지텍 mx master 3s black"),
+                eq(List.of("https://search.shopping.naver.com/catalog/57981069328"))
+        )).thenReturn(List.of(
+                new SearchResponse(
+                        "로지텍 MX MASTER 3S bluetooth edition, 블랙",
+                        "139000",
+                        "",
+                        "네이버",
+                        "https://search.shopping.naver.com/catalog/57981069328",
+                        "KRW",
+                        "57981069328"
+                )
+        ));
+
+        priceTopicConsumer.consume(event);
+
+        verify(naverProductUrlService).resolveProductsByUrls(eq("로지텍 mx master 3s black"), any());
+        verify(naverShoppingService, never()).searchProducts(anyString(), anyInt());
+
+        ArgumentCaptor<ProductSelectionRequiredEvent> captor = ArgumentCaptor.forClass(ProductSelectionRequiredEvent.class);
+        verify(productSelectionRequiredEventPublisher).publish(captor.capture());
+        assertThat(captor.getValue().payload().candidates()).hasSize(1);
+        assertThat(captor.getValue().payload().candidates().get(0).productId()).isEqualTo("57981069328");
     }
 }

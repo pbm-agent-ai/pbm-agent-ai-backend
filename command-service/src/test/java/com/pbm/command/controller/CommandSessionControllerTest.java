@@ -6,6 +6,7 @@ import com.pbm.command.domain.CommandSessionStatus;
 import com.pbm.command.domain.PlatformType;
 import com.pbm.command.domain.ProductCategory;
 import com.pbm.command.dto.request.CommandClarificationRequest;
+import com.pbm.command.dto.request.ProductUrlSubmitRequest;
 import com.pbm.command.dto.request.ProductSelectionRequest;
 import com.pbm.command.dto.response.CommandParseResponse;
 import com.pbm.command.dto.response.CommandSessionResponse;
@@ -87,7 +88,7 @@ class CommandSessionControllerTest {
                 LocalDateTime.of(2026, 5, 11, 10, 0)
         );
 
-        given(commandSessionService.getByCommandId(commandId)).willReturn(response);
+        given(commandSessionService.getByCommandId(commandId, 0, 10)).willReturn(response);
 
         // when & then
         mockMvc.perform(get("/api/v1/commands/{commandId}", commandId))
@@ -101,6 +102,41 @@ class CommandSessionControllerTest {
                 .andExpect(jsonPath("$.data.missingFields").isEmpty())
                 .andExpect(jsonPath("$.data.candidates").isEmpty())
                 .andExpect(jsonPath("$.message").value("성공"));
+    }
+
+    @Test
+    @DisplayName("commandId로 세션 조회 - page/size 파라미터를 전달한다")
+    void getCommandSession_withPaginationParams_returnsPagedCandidates() throws Exception {
+        String commandId = "test-uuid-page-1";
+        CommandSessionResponse response = new CommandSessionResponse(
+                commandId,
+                1L,
+                "테스트",
+                CommandSessionStatus.PRODUCT_SELECTION_REQUIRED,
+                List.of(),
+                "검색 결과를 확인하고 상품을 선택해주세요.",
+                null,
+                List.of(
+                        new ProductCandidateResponse("naver-11", "상품 11", "11000", "스토어11", "https://example.com/11", "KRW", "NAVER", "키보드"),
+                        new ProductCandidateResponse("naver-12", "상품 12", "12000", "스토어12", "https://example.com/12", "KRW", "NAVER", "키보드")
+                ),
+                List.of(),
+                null,
+                100000,
+                "AUTO_PURCHASE",
+                LocalDateTime.of(2026, 5, 11, 10, 0),
+                LocalDateTime.of(2026, 5, 11, 10, 0)
+        );
+
+        given(commandSessionService.getByCommandId(commandId, 1, 10)).willReturn(response);
+
+        mockMvc.perform(get("/api/v1/commands/{commandId}", commandId)
+                        .param("page", "1")
+                        .param("size", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.candidates[0].productId").value("naver-11"))
+                .andExpect(jsonPath("$.data.candidates[1].productId").value("naver-12"));
     }
 
     @Test
@@ -224,6 +260,31 @@ class CommandSessionControllerTest {
     }
 
     @Test
+    @DisplayName("상품 URL 제출 POST /product-links - 200 OK + SEARCHING 상태 반환")
+    void submitProductUrls_returnsSuccessResponse() throws Exception {
+        String commandId = "test-uuid-ali-links";
+        ProductUrlSubmitRequest request = new ProductUrlSubmitRequest(List.of(
+                "https://ko.aliexpress.com/item/1005006782975346.html",
+                "https://ko.aliexpress.com/item/1005010633549414.html"
+        ));
+        CommandSessionResponse sessionResponse = new CommandSessionResponse(
+                commandId, 1L, "test", CommandSessionStatus.SEARCHING,
+                List.of(), null, null, List.of(), List.of(), null, 100000, "AUTO_PURCHASE", null, null
+        );
+
+        given(commandExecutionService.handleProductUrlSubmission(eq(commandId), any(ProductUrlSubmitRequest.class)))
+                .willReturn(sessionResponse);
+
+        mockMvc.perform(post("/api/v1/commands/{commandId}/product-links", commandId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.status").value("SEARCHING"))
+                .andExpect(jsonPath("$.message").value("성공"));
+    }
+
+    @Test
     @DisplayName("commandId로 세션 조회 - 누락 필드가 있으면 JSON 배열로 반환")
     void getCommandSession_withMissingFields_returnsArray() throws Exception {
         // given
@@ -245,7 +306,7 @@ class CommandSessionControllerTest {
                 LocalDateTime.of(2026, 5, 11, 10, 0)
         );
 
-        given(commandSessionService.getByCommandId(commandId)).willReturn(response);
+        given(commandSessionService.getByCommandId(commandId, 0, 10)).willReturn(response);
 
         // when & then
         mockMvc.perform(get("/api/v1/commands/{commandId}", commandId))
@@ -286,7 +347,7 @@ class CommandSessionControllerTest {
                 LocalDateTime.of(2026, 5, 11, 10, 0)
         );
 
-        given(commandSessionService.getByCommandId(commandId)).willReturn(response);
+        given(commandSessionService.getByCommandId(commandId, 0, 10)).willReturn(response);
 
         // when & then
         mockMvc.perform(get("/api/v1/commands/{commandId}", commandId))
@@ -317,7 +378,7 @@ class CommandSessionControllerTest {
         // given
         String invalidCommandId = "non-existent-uuid";
 
-        given(commandSessionService.getByCommandId(invalidCommandId))
+        given(commandSessionService.getByCommandId(invalidCommandId, 0, 10))
                 .willThrow(new CommandSessionNotFoundException(
                         "세션을 찾을 수 없습니다. commandId: " + invalidCommandId));
 

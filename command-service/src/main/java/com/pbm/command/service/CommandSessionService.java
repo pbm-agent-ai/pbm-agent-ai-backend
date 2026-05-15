@@ -100,11 +100,25 @@ public class CommandSessionService {
      */
     @Transactional(readOnly = true)
     public CommandSessionResponse getByCommandId(String commandId) {
+        return getByCommandId(commandId, 0, 10);
+    }
+
+    /**
+     * commandId로 세션을 조회하되 후보 상품 목록은 페이지 단위로 반환한다.
+     *
+     * @param commandId UUID 문자열
+     * @param page      0부터 시작하는 후보 페이지 번호
+     * @param size      페이지당 후보 개수
+     * @return 조회된 세션의 응답 DTO
+     * @throws CommandSessionNotFoundException 해당 commandId의 세션이 없을 때
+     */
+    @Transactional(readOnly = true)
+    public CommandSessionResponse getByCommandId(String commandId, int page, int size) {
         CommandSession session = commandSessionRepository.findByCommandId(commandId)
                 .orElseThrow(() -> new CommandSessionNotFoundException(
                         "세션을 찾을 수 없습니다. commandId: " + commandId));
 
-        return CommandSessionResponse.from(session);
+        return CommandSessionResponse.from(session, page, size);
     }
 
     /**

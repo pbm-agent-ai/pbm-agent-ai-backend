@@ -10,6 +10,7 @@ import com.pbm.command.dto.event.ProductSelectionEvent;
 import com.pbm.command.dto.event.ProductSelectionEventPayload;
 import com.pbm.command.dto.request.CommandClarificationRequest;
 import com.pbm.command.dto.request.CommandParseRequest;
+import com.pbm.command.dto.request.ProductUrlSubmitRequest;
 import com.pbm.command.dto.request.ProductSelectionRequest;
 import com.pbm.command.dto.response.CommandParseResponse;
 import com.pbm.command.dto.response.CommandSessionResponse;
@@ -269,6 +270,75 @@ public class CommandExecutionService {
         log.info("다중 상품 선택 처리 완료 - commandId: {}, 상태: PRICE_VALIDATING", commandId);
 
         return commandSessionService.getByCommandId(commandId);
+    }
+
+    /**
+     * 사용자가 직접 입력한 상품 URL 목록을 URL 기반 검증 흐름으로 넘긴다.
+     *
+     * 역할: 1차 검색 결과가 만족스럽지 않을 때 사용자가 직접 찾은 상품 링크들을 받아,
+     *       price-service가 플랫폼별 검증 로직으로 후보를 다시 구성하도록 요청한다.
+     * 동작:
+     * 1. 현재 세션이 PRODUCT_SELECTION_REQUIRED 상태인지 확인한다.
+     * 2. 세션을 SEARCHING 상태로 전환하여 새 후보 확인이 진행 중임을 표현한다.
+     * 3. 기존 commandId / targetPrice / intent를 유지한 채 price-topic으로 URL 목록을 발행한다.
+     *
+     * @param commandId 대상 세션의 commandId
+     * @param request   사용자가 직접 입력한 URL 목록
+     * @return SEARCHING 상태로 전환된 세션 응답 DTO
+     */
+    @Transactional
+    public CommandSessionResponse handleProductUrlSubmission(
+            String commandId,
+            ProductUrlSubmitRequest request
+    ) {
+        CommandSession session = commandSessionService.getSessionEntityByCommandId(commandId);
+
+        if (session.getStatus() != CommandSessionStatus.PRODUCT_SELECTION_REQUIRED) {
+            throw new InvalidProductSelectionException(
+                    "product-links API는 PRODUCT_SELECTION_REQUIRED 상태에서만 사용할 수 있습니다. 현재 상태: "
+                            + session.getStatus()
+            );
+        }
+
+        List<ProductCandidateDto> candidates = parseCandidatesFromSession(session);
+        String platform = resolvePlatform(candidates);
+        String searchKeyword = resolveSearchKeyword(session, candidates);
+
+        log.info("상품 직접 링크 검증 시작 - commandId: {}, platform: {}, urlCount: {}",
+                commandId, platform, request.productUrls().size());
+
+        // URL fallback은 원본 자연어 명령문보다 1차 검색 때 실제로 사용했던 searchKeyword를 재사용해야
+        // 네이버/알리 재검색 결과와 URL 매칭이 안정적으로 맞아진다.
+
+        commandSessionService.updateToSearching(commandId);
+
+        priceRequestService.publishProductUrlRequest(
+                session.getUserId(),
+                session.getCommandIntent(),
+                session.getTargetPrice(),
+                commandId,
+                request.productUrls(),
+                searchKeyword,
+                platform
+        );
+
+        return commandSessionService.getByCommandId(commandId);
+    }
+
+    private String resolvePlatform(List<ProductCandidateDto> candidates) {
+        return candidates.stream()
+                .map(ProductCandidateDto::platform)
+                .filter(platform -> platform != null && !platform.isBlank())
+                .findFirst()
+                .orElse("ALIEXPRESS");
+    }
+
+    private String resolveSearchKeyword(CommandSession session, List<ProductCandidateDto> candidates) {
+        return candidates.stream()
+                .map(ProductCandidateDto::searchKeyword)
+                .filter(keyword -> keyword != null && !keyword.isBlank())
+                .findFirst()
+                .orElse(session.getOriginalCommand());
     }
 
     /**

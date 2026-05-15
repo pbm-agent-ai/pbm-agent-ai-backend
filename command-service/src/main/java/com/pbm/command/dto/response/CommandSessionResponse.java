@@ -46,6 +46,21 @@ public record CommandSessionResponse(
      * @return 응답용 CommandSessionResponse
      */
     public static CommandSessionResponse from(CommandSession session) {
+        return from(session, 0, Integer.MAX_VALUE);
+    }
+
+    /**
+     * 엔티티를 응답 DTO로 변환하되 후보 상품 목록은 페이지 단위로 잘라서 반환한다.
+     *
+     * @param session 변환할 CommandSession 엔티티
+     * @param page    0부터 시작하는 후보 페이지 번호
+     * @param size    페이지당 후보 개수
+     * @return 응답용 CommandSessionResponse
+     */
+    public static CommandSessionResponse from(CommandSession session, int page, int size) {
+        List<ProductCandidateResponse> allCandidates = parseCandidates(session.getCandidatesJson());
+        List<ProductCandidateResponse> pagedCandidates = sliceCandidates(allCandidates, page, size);
+
         return new CommandSessionResponse(
                 session.getCommandId(),
                 session.getUserId(),
@@ -54,7 +69,7 @@ public record CommandSessionResponse(
                 parseMissingFields(session.getMissingFieldsJson()),
                 session.getClarificationMessage(),
                 session.getCategoryPath(),
-                parseCandidates(session.getCandidatesJson()),
+                pagedCandidates,
                 parseSelectedProductIds(session.getSelectedProductIdsJson()),
                 parseValidationResult(session.getValidationResultJson()),
                 session.getTargetPrice(),
@@ -96,6 +111,22 @@ public record CommandSessionResponse(
         } catch (JsonProcessingException e) {
             return List.of();
         }
+    }
+
+    private static List<ProductCandidateResponse> sliceCandidates(List<ProductCandidateResponse> candidates, int page, int size) {
+        if (candidates == null || candidates.isEmpty()) {
+            return List.of();
+        }
+
+        int safePage = Math.max(page, 0);
+        int safeSize = size <= 0 ? 10 : size;
+        int fromIndex = safePage * safeSize;
+        if (fromIndex >= candidates.size()) {
+            return List.of();
+        }
+
+        int toIndex = Math.min(fromIndex + safeSize, candidates.size());
+        return candidates.subList(fromIndex, toIndex);
     }
 
     /**

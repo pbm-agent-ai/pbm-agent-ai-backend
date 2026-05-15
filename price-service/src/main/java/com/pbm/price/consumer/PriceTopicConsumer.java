@@ -8,7 +8,9 @@ import com.pbm.price.dto.event.ProductSelectionRequiredEventPayload;
 import com.pbm.price.dto.response.SearchResponse;
 import com.pbm.price.publisher.ProductSelectionRequiredEventPublisher;
 import com.pbm.price.service.AliExpressCategoryIdResolver;
+import com.pbm.price.service.AliExpressProductUrlService;
 import com.pbm.price.service.AliExpressShoppingService;
+import com.pbm.price.service.NaverProductUrlService;
 import com.pbm.price.service.NaverShoppingService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -27,7 +29,7 @@ import java.util.UUID;
  *       상위 후보 상품 목록을 command-service로 전달한다.
  * 동작:
  *   1. price-topic에서 PriceRequestEvent 수신
- *   2. payload.platform에 따라 네이버 또는 AliExpress 쇼핑 검색 호출 (최대 10건)
+ *   2. payload.platform에 따라 네이버 또는 AliExpress 쇼핑 검색 호출 (최대 30건 저장)
  *   3. 검색 결과가 없으면 빈 후보 목록과 안내 메시지를 포함한 후보 선택 이벤트를 발행
  *   4. 검색 결과가 있으면 상위 후보 목록을 후보 선택 이벤트로 발행
  *   5. 이후 실제 가격 비교/모니터링 등록은 사용자의 상품 선택 후 downstream consumer가 담당
@@ -41,22 +43,28 @@ public class PriceTopicConsumer {
     private final NaverShoppingService naverShoppingService;
     private final AliExpressShoppingService aliExpressShoppingService;
     private final AliExpressCategoryIdResolver aliExpressCategoryIdResolver;
+    private final AliExpressProductUrlService aliExpressProductUrlService;
+    private final NaverProductUrlService naverProductUrlService;
     private final ProductSelectionRequiredEventPublisher productSelectionRequiredEventPublisher;
 
     public PriceTopicConsumer(NaverShoppingService naverShoppingService,
                               AliExpressShoppingService aliExpressShoppingService,
                               AliExpressCategoryIdResolver aliExpressCategoryIdResolver,
+                              AliExpressProductUrlService aliExpressProductUrlService,
+                              NaverProductUrlService naverProductUrlService,
                               ProductSelectionRequiredEventPublisher productSelectionRequiredEventPublisher) {
         this.naverShoppingService = naverShoppingService;
         this.aliExpressShoppingService = aliExpressShoppingService;
         this.aliExpressCategoryIdResolver = aliExpressCategoryIdResolver;
+        this.aliExpressProductUrlService = aliExpressProductUrlService;
+        this.naverProductUrlService = naverProductUrlService;
         this.productSelectionRequiredEventPublisher = productSelectionRequiredEventPublisher;
     }
 
     /**
      * price-topic 메시지 수신 및 후보 상품 조회 처리.
      * payload.platform에 따라 해당 플랫폼 쇼핑 API를 호출하고,
-     * 검색 결과 상위 후보를 command-service로 전달한다.
+     * 검색 결과 최대 30건을 command-service로 전달한다.
      *
      * @param event 수신한 가격 확인 요청 이벤트
      */
@@ -66,7 +74,7 @@ public class PriceTopicConsumer {
                 event.eventId(), event.payload().keyword(), event.payload().targetPrice(),
                 event.payload().platform(), event.payload().currency());
 
-        // 플랫폼별 쇼핑 API로 상품 검색 (상위 10건)
+        // 플랫폼별 쇼핑 API로 상품 검색 (최대 30건 저장)
         List<SearchResponse> results = searchProductsByPlatform(event);
 
         if (results.isEmpty()) {
@@ -92,7 +100,7 @@ public class PriceTopicConsumer {
         productSelectionRequiredEventPublisher.publish(selectionRequiredEvent);
 
         log.info("후보 상품 선택 요청 이벤트 발행 완료 - commandId: {}, candidateCount: {}",
-                event.payload().commandId(), Math.min(results.size(), 10));
+                event.payload().commandId(), Math.min(results.size(), 30));
     }
 
     /**
@@ -103,6 +111,22 @@ public class PriceTopicConsumer {
      * @return 검색 결과 목록 (실패 시 빈 리스트)
      */
     private List<SearchResponse> searchProductsByPlatform(PriceRequestEvent event) {
+        if (hasDirectNaverUrls(event)) {
+            return naverProductUrlService.resolveProductsByUrls(
+                    event.payload().searchKeyword(),
+                    event.payload().productUrls()
+            );
+        }
+
+        if (hasDirectAliExpressUrls(event)) {
+            return aliExpressProductUrlService.resolveProductsByUrls(
+                    event.payload().productUrls(),
+                    "KRW",
+                    "KO",
+                    "KR"
+            );
+        }
+
         String platform = event.payload().platform();
         if (platform == null || platform.isBlank()) {
             log.warn("요청에 플랫폼 정보가 없습니다 - eventId: {}, 검색을 건너뜁니다.", event.eventId());
@@ -125,7 +149,7 @@ public class PriceTopicConsumer {
         switch (platformEnum) {
             case NAVER:
                 log.info("네이버 쇼핑 검색 실행 - keyword: {}, platform: {}", keyword, platform);
-                return naverShoppingService.searchProducts(keyword, 10);
+                return naverShoppingService.searchProducts(keyword, 30);
             case ALIEXPRESS:
                 String categoryIds = resolveAliExpressCategoryIds(event);
                 log.info("AliExpress 쇼핑 검색 실행 - keyword: {}, platform: {}, currency: {}",
@@ -190,7 +214,7 @@ public class PriceTopicConsumer {
             return List.of();
         }
         return results.stream()
-                .limit(10)
+                .limit(30)
                 .map(r -> new ProductCandidateDto(
                         r.productId() != null && !r.productId().isBlank()
                                 ? r.productId()
@@ -204,6 +228,18 @@ public class PriceTopicConsumer {
                         searchKeyword
                 ))
                 .toList();
+    }
+
+    private boolean hasDirectAliExpressUrls(PriceRequestEvent event) {
+        return event.payload().productUrls() != null
+                && !event.payload().productUrls().isEmpty()
+                && "ALIEXPRESS".equalsIgnoreCase(event.payload().platform());
+    }
+
+    private boolean hasDirectNaverUrls(PriceRequestEvent event) {
+        return event.payload().productUrls() != null
+                && !event.payload().productUrls().isEmpty()
+                && "NAVER".equalsIgnoreCase(event.payload().platform());
     }
 
     private String resolveAliExpressCategoryIds(PriceRequestEvent event) {

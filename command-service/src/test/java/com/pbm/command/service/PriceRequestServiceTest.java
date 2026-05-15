@@ -73,10 +73,46 @@ class PriceRequestServiceTest {
         assertThat(event.payload().commandId()).isNull();
         assertThat(event.payload().intent()).isNull();
         assertThat(event.payload().parsedCommandSnapshot()).isNull();
+        assertThat(event.payload().productUrls()).isNull();
 
         assertThat(response.topic()).isEqualTo("price-topic");
         assertThat(response.message()).isEqualTo("price-topic 발행 성공");
         assertThat(response.eventId()).isNotBlank();
+    }
+
+    @Test
+    @DisplayName("상품 URL 직접 입력 발행 - productUrls 포함 이벤트 전송")
+    void publishProductUrlRequest_sendsKafkaMessage() {
+        when(kafkaTemplate.send(anyString(), anyString(), any(PriceRequestEvent.class)))
+                .thenReturn(new CompletableFuture<>());
+
+        PriceCheckResponse response = priceRequestService.publishProductUrlRequest(
+                1L,
+                "AUTO_PURCHASE",
+                100000,
+                "cmd-url-123",
+                java.util.List.of(
+                        "https://ko.aliexpress.com/item/1005006782975346.html",
+                        "https://ko.aliexpress.com/item/1005010633549414.html"
+                ),
+                "로지텍 mx master 3s black",
+                "ALIEXPRESS"
+        );
+
+        ArgumentCaptor<PriceRequestEvent> eventCaptor = ArgumentCaptor.forClass(PriceRequestEvent.class);
+        verify(kafkaTemplate).send(eq("price-topic"), eq("1"), eventCaptor.capture());
+
+        PriceRequestEvent event = eventCaptor.getValue();
+        assertThat(event.payload().keyword()).isEqualTo("로지텍 mx master 3s black");
+        assertThat(event.payload().searchKeyword()).isEqualTo("로지텍 mx master 3s black");
+        assertThat(event.payload().platform()).isEqualTo("ALIEXPRESS");
+        assertThat(event.payload().intent()).isEqualTo("AUTO_PURCHASE");
+        assertThat(event.payload().commandId()).isEqualTo("cmd-url-123");
+        assertThat(event.payload().productUrls()).containsExactly(
+                "https://ko.aliexpress.com/item/1005006782975346.html",
+                "https://ko.aliexpress.com/item/1005010633549414.html"
+        );
+        assertThat(response.message()).isEqualTo("price-topic 발행 성공");
     }
 
     @Test

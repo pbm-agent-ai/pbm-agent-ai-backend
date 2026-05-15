@@ -6,7 +6,10 @@ package com.pbm.price.dto.event;
  * 역할: command-service 등에서 가격 비교를 요청할 때 필요한 최소 정보를 담는다.
  * 동작: 사용자가 설정한 목표 가격과 검색 키워드를 포함하여 price-service가
  *       상품 검색 후 가격 비교를 수행할 수 있도록 한다.
- * 연관: PriceRequestEvent, PriceTopicConsumer.
+ *       platform과 currency는 가격 비교 대상 플랫폼과 통화 정보를 전달한다.
+ *       commandId, intent, parsedCommandSnapshot은 추후 post-search 검증에서
+ *       원본 명령 컨텍스트로 활용된다.
+ * 연관: PriceRequestEvent, PriceTopicConsumer, ParsedCommandSnapshot.
  */
 public record PriceRequestEventPayload(
         /** 요청 사용자 ID */
@@ -14,6 +17,20 @@ public record PriceRequestEventPayload(
         /** 검색 키워드 (상품명 등) */
         String keyword,
         /** 목표 가격 (원), 현재가가 이 값 이하일 때 알림 발생 */
-        Integer targetPrice
+        Integer targetPrice,
+        /** 가격 비교 대상 플랫폼 (예: "NAVER", "ALIEXPRESS") */
+        String platform,
+        /** 통화 코드 (예: "KRW", "USD") */
+        String currency,
+        /** 명령 고유 식별자 (UUID) */
+        String commandId,
+        /** 사용자 의도 (CommandIntent name 문자열, 예: "PRICE_CHECK") */
+        String intent,
+        /** 파싱된 명령 스냅샷 (post-search 검증용) */
+        ParsedCommandSnapshot parsedCommandSnapshot,
+        /** 상품 상세 페이지 URL */
+        String productUrl,
+        /** 검색 키워드 (Phase 1 이후 명시적 전달용) */
+        String searchKeyword
 ) {
 }

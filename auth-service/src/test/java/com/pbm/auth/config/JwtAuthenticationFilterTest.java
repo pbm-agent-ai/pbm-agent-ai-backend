@@ -50,7 +50,7 @@ class JwtAuthenticationFilterTest {
     void shouldNotFilter_excludedPaths_returnsTrue() {
         // given
         JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtUtil, jwtAuthenticationEntryPoint);
-        List<String> excludedPaths = List.of("/api/auth/signup", "/api/auth/login", "/api/auth/refresh");
+        List<String> excludedPaths = List.of("/api/v1/auth/signup", "/api/v1/auth/login", "/api/v1/auth/refresh");
 
         for (String path : excludedPaths) {
             MockHttpServletRequest request = new MockHttpServletRequest();
@@ -69,7 +69,7 @@ class JwtAuthenticationFilterTest {
     void doFilterInternal_missingAuthorizationHeader_passesThroughChain() throws Exception {
         // given: 보호 API 요청이지만 Authorization 헤더가 없는 상황
         JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtUtil, jwtAuthenticationEntryPoint);
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/auth/me");
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/auth/me");
         MockHttpServletResponse response = new MockHttpServletResponse();
         MockFilterChain filterChain = new MockFilterChain();
 
@@ -86,7 +86,7 @@ class JwtAuthenticationFilterTest {
     void doFilterInternal_invalidToken_callsAuthenticationEntryPoint() throws Exception {
         // given: Bearer 토큰은 있으나 JWT 검증에 실패하는 상황
         JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtUtil, jwtAuthenticationEntryPoint);
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/auth/me");
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/auth/me");
         request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer invalid-token");
         MockHttpServletResponse response = new MockHttpServletResponse();
         FilterChain filterChain = new MockFilterChain();
@@ -110,7 +110,7 @@ class JwtAuthenticationFilterTest {
     void doFilterInternal_validToken_setsSecurityContextAuthentication() throws Exception {
         // given
         JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtUtil, jwtAuthenticationEntryPoint);
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/auth/me");
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/auth/me");
         request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer valid-token");
         MockHttpServletResponse response = new MockHttpServletResponse();
         MockFilterChain filterChain = new MockFilterChain();

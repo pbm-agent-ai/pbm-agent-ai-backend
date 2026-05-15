@@ -14,6 +14,7 @@ from app.main import app
 from app.schemas.aliexpress import (
     AliexpressCategoryItem,
     AliexpressCategoryResponse,
+    AliexpressProductDetailResponse,
     AliexpressProductItem,
     AliexpressSearchResponse,
 )
@@ -21,11 +22,13 @@ from app.services.aliexpress_service import (
     _build_signed_params,
     _extract_error,
     _get_affiliate_categories_mock,
+    _get_affiliate_product_detail_mock,
     _is_mock_enabled,
     _normalize_categories,
     _normalize_products,
     _search_affiliate_products_mock,
     get_affiliate_categories,
+    get_affiliate_product_detail,
     search_affiliate_products,
 )
 
@@ -194,6 +197,54 @@ def test_search_products_empty_results(mock_search):
     data = response.json()
     assert data["total"] == 0
     assert data["items"] == []
+
+
+# --- AliExpress 상품 단건 조회 라우터 테스트 ---
+
+
+@patch("app.routers.aliexpress.get_affiliate_product_detail", new_callable=AsyncMock)
+def test_get_product_detail_success(mock_detail):
+    """상품 단건 조회가 정상적으로 상세 정보를 반환하는지 확인"""
+    mock_detail.return_value = AliexpressProductDetailResponse(
+        product=AliexpressProductItem(
+            product_id="1005006212345678",
+            product_title="무선 블루투스 이어폰 TWS 노이즈캔슬링",
+            product_detail_url="https://www.aliexpress.com/item/1005006212345678.html",
+            product_main_image_url="https://ae01.alicdn.com/kf/mock-earbuds.jpg",
+            sale_price="15.99",
+            target_sale_price="21500",
+            target_original_price="28000",
+            target_app_sale_price="19900",
+            target_app_original_price="26000",
+            discount="7%",
+            evaluate_rate="4.8",
+            commission_rate="5.0%",
+            lastest_volume="2500",
+            shop_name="TechGadget Store",
+            shop_url="https://www.aliexpress.com/store/912345678",
+        ),
+    )
+
+    response = client.get("/api/v1/aliexpress/products/1005006212345678")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["product"] is not None
+    assert data["product"]["product_id"] == "1005006212345678"
+    assert data["product"]["product_title"] == "무선 블루투스 이어폰 TWS 노이즈캔슬링"
+    assert data["product"]["shop_name"] == "TechGadget Store"
+
+
+@patch("app.routers.aliexpress.get_affiliate_product_detail", new_callable=AsyncMock)
+def test_get_product_detail_not_found(mock_detail):
+    """존재하지 않는 상품 ID 조회 시 product가 null인 응답을 반환하는지 확인"""
+    mock_detail.return_value = AliexpressProductDetailResponse(product=None)
+
+    response = client.get("/api/v1/aliexpress/products/9999999999999999")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["product"] is None
 
 
 # --- 서비스 레이어 정규화 테스트 ---
@@ -391,6 +442,49 @@ async def test_mock_mode_search_total_count():
     # page_size=1이어도 total은 전체 개수
     assert result.total == 3
     assert len(result.items) == 1
+
+
+@pytest.mark.asyncio
+async def test_mock_mode_product_detail_existing_product():
+    """모킹 모드에서 존재하는 product_id로 조회 시 정상 데이터 반환 확인"""
+    result = await _get_affiliate_product_detail_mock("1005006212345678")
+
+    assert isinstance(result, AliexpressProductDetailResponse)
+    assert result.product is not None
+    assert result.product.product_id == "1005006212345678"
+    assert result.product.product_title == "무선 블루투스 이어폰 TWS 노이즈캔슬링"
+
+
+@pytest.mark.asyncio
+async def test_mock_mode_product_detail_not_found():
+    """모킹 모드에서 존재하지 않는 product_id로 조회 시 product=None 반환 확인"""
+    result = await _get_affiliate_product_detail_mock("NONEXISTENT_ID")
+
+    assert isinstance(result, AliexpressProductDetailResponse)
+    assert result.product is None
+
+
+@patch("app.services.aliexpress_service._is_mock_enabled", return_value=True)
+@pytest.mark.asyncio
+async def test_get_affiliate_product_detail_delegates_to_mock_when_enabled(mock_check):
+    """MOCK_ENABLED=True일 때 get_affiliate_product_detail가 모킹 데이터를 반환하는지 확인"""
+    result = await get_affiliate_product_detail("1005006212345678")
+
+    assert isinstance(result, AliexpressProductDetailResponse)
+    assert result.product is not None
+    assert result.product.product_id == "1005006212345678"
+
+
+@patch("app.services.aliexpress_service._is_mock_enabled", return_value=False)
+@patch(
+    "app.services.aliexpress_service._get_credentials",
+    side_effect=ValueError("ALIEXPRESS_APP_KEY, ALIEXPRESS_APP_SECRET 환경변수가 필요합니다"),
+)
+@pytest.mark.asyncio
+async def test_get_affiliate_product_detail_raises_when_no_credentials(mock_creds, mock_check):
+    """MOCK_ENABLED=False이고 자격증명이 없을 때 ValueError 발생 확인"""
+    with pytest.raises(ValueError, match="ALIEXPRESS_APP_KEY"):
+        await get_affiliate_product_detail("1005006212345678")
 
 
 @patch("app.services.aliexpress_service._is_mock_enabled", return_value=True)

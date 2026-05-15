@@ -15,6 +15,8 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  * @param product_id            상품 ID
  * @param product_main_image_url 상품 대표 이미지 URL
  * @param evaluate_rate          평점 (0~100)
+ * @param first_level_category_id 1차 카테고리 ID
+ * @param first_level_category_name 1차 카테고리명
  * @param second_level_category_id 카테고리 ID
  * @param second_level_category_name 카테고리명
  */
@@ -29,6 +31,8 @@ public record AliExpressShoppingItem(
         String product_id,
         String product_main_image_url,
         String evaluate_rate,
+        String first_level_category_id,
+        String first_level_category_name,
         String second_level_category_id,
         String second_level_category_name
 ) {

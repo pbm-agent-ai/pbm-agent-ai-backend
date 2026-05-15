@@ -1,7 +1,7 @@
 package com.pbm.price.service;
 
 import com.pbm.price.domain.MonitorTarget;
-import com.pbm.price.domain.SourceType;
+import com.pbm.price.domain.Platform;
 import com.pbm.price.repository.MonitorTargetRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -70,7 +70,7 @@ class PriceMonitoringSchedulerTest {
         // then: 어떤 API도 호출하지 않음
         verify(naverShoppingService, never()).searchProducts(anyString(), anyInt());
         verify(aliExpressShoppingService, never()).searchProducts(
-                anyString(), anyInt(), anyInt(), anyString(), anyString(), anyString(), anyString(), anyString()
+                anyString(), anyInt(), anyInt(), anyString(), anyString(), anyString(), anyString(), any(), anyString()
         );
     }
 
@@ -78,7 +78,7 @@ class PriceMonitoringSchedulerTest {
     @DisplayName("네이버 대상이 있으면 네이버 API를 호출한다")
     void collectDueTargets_naverTarget_callsNaverApi() {
         // given: 네이버 수집 대상 1건
-        MonitorTarget naverTarget = MonitorTarget.create(SourceType.NAVER, "갤럭시s24", 10);
+        MonitorTarget naverTarget = MonitorTarget.create(Platform.NAVER, "갤럭시s24", 10);
         naverTarget.markFetched(baseTime.minusSeconds(600));
         when(monitorTargetRepository.findByNextFetchAtBefore(any()))
                 .thenReturn(List.of(naverTarget));
@@ -94,7 +94,7 @@ class PriceMonitoringSchedulerTest {
     @DisplayName("알리익스프레스 대상이 있으면 알리 API를 호출한다")
     void collectDueTargets_aliExpressTarget_callsAliExpressApi() {
         // given: 알리 수집 대상 1건
-        MonitorTarget aliTarget = MonitorTarget.create(SourceType.ALIEXPRESS, "airpodspro", 10);
+        MonitorTarget aliTarget = MonitorTarget.create(Platform.ALIEXPRESS, "airpodspro", 10);
         aliTarget.markFetched(baseTime.minusSeconds(600));
         when(monitorTargetRepository.findByNextFetchAtBefore(any()))
                 .thenReturn(List.of(aliTarget));
@@ -104,7 +104,7 @@ class PriceMonitoringSchedulerTest {
 
         // then: 알리 API가 호출됨
         verify(aliExpressShoppingService).searchProducts(
-                eq("airpodspro"), eq(1), eq(10), eq(null), eq("KRW"), eq("KO"), eq("KR"), eq(null)
+                eq("airpodspro"), eq(1), eq(10), eq(null), eq("KRW"), eq("KO"), eq("KR"), eq(null), eq(null)
         );
     }
 
@@ -112,9 +112,9 @@ class PriceMonitoringSchedulerTest {
     @DisplayName("한 대상 수집 실패해도 나머지 대상은 계속 수집한다")
     void collectDueTargets_partialFailure_continuesProcessing() {
         // given: 네이버 대상(실패) + 알리 대상(성공)
-        MonitorTarget naverTarget = MonitorTarget.create(SourceType.NAVER, "아이폰15", 10);
+        MonitorTarget naverTarget = MonitorTarget.create(Platform.NAVER, "아이폰15", 10);
         naverTarget.markFetched(baseTime.minusSeconds(600));
-        MonitorTarget aliTarget = MonitorTarget.create(SourceType.ALIEXPRESS, "airpods", 10);
+        MonitorTarget aliTarget = MonitorTarget.create(Platform.ALIEXPRESS, "airpods", 10);
         aliTarget.markFetched(baseTime.minusSeconds(600));
 
         when(monitorTargetRepository.findByNextFetchAtBefore(any()))
@@ -128,7 +128,7 @@ class PriceMonitoringSchedulerTest {
 
         // then: 네이버 실패 후에도 알리 API는 정상 호출됨
         verify(aliExpressShoppingService).searchProducts(
-                eq("airpods"), eq(1), eq(10), eq(null), eq("KRW"), eq("KO"), eq("KR"), eq(null)
+                eq("airpods"), eq(1), eq(10), eq(null), eq("KRW"), eq("KO"), eq("KR"), eq(null), eq(null)
         );
     }
 }

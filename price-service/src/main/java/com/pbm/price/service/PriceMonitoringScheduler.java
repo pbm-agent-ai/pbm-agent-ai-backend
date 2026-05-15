@@ -1,7 +1,7 @@
 package com.pbm.price.service;
 
 import com.pbm.price.domain.MonitorTarget;
-import com.pbm.price.domain.SourceType;
+import com.pbm.price.domain.Platform;
 import com.pbm.price.repository.MonitorTargetRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,10 +48,11 @@ public class PriceMonitoringScheduler {
      *
      * 동작 흐름:
      * 1. nextFetchAt이 현재 시각 이전인 MonitorTarget 목록을 조회
-     * 2. 각 대상의 sourceType에 따라 네이버 또는 알리 API 호출
+     * 2. 각 대상의 platform에 따라 네이버 또는 알리 API 호출
      * 3. API 호출 결과는 서비스 내부에서 ProductPersistenceService를 통해 DB에 자동 저장
      * 4. 한 대상 실패가 전체 배치를 중단시키지 않도록 예외를 로깅하고 계속 진행
      */
+    // 1분마다 DB를 확인
     @Scheduled(fixedDelayString = "${app.monitoring.scheduler-interval-ms:600000}")
     public void collectDueTargets() {
         Instant now = Instant.now();
@@ -73,8 +74,8 @@ public class PriceMonitoringScheduler {
                 successCount++;
             } catch (Exception e) {
                 failCount++;
-                log.error("수집 실패 - sourceType: {}, keyword: {}, 원인: {}",
-                        target.getSourceType(), target.getNormalizedKeyword(), e.getMessage(), e);
+                log.error("수집 실패 - platform: {}, keyword: {}, 원인: {}",
+                        target.getPlatform(), target.getNormalizedKeyword(), e.getMessage(), e);
             }
         }
 
@@ -92,16 +93,16 @@ public class PriceMonitoringScheduler {
         // 현재는 정규화된 키워드를 그대로 사용)
         String keyword = target.getNormalizedKeyword();
 
-        if (target.getSourceType() == SourceType.NAVER) {
+        if (target.getPlatform() == Platform.NAVER) {
             log.info("네이버 수집 - 키워드: {}", keyword);
             naverShoppingService.searchProducts(keyword, defaultDisplay);
-        } else if (target.getSourceType() == SourceType.ALIEXPRESS) {
+        } else if (target.getPlatform() == Platform.ALIEXPRESS) {
             log.info("알리익스프레스 수집 - 키워드: {}", keyword);
             aliExpressShoppingService.searchProducts(
-                    keyword, 1, aliExpressDefaultPageSize, null, "KRW", "KO", "KR", null
+                    keyword, 1, aliExpressDefaultPageSize, null, "KRW", "KO", "KR", null, null
             );
         } else {
-            log.warn("지원하지 않는 sourceType - {}", target.getSourceType());
+            log.warn("지원하지 않는 platform - {}", target.getPlatform());
         }
     }
 }

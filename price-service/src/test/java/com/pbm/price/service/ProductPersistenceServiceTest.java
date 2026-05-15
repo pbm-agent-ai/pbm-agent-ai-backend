@@ -1,11 +1,13 @@
 package com.pbm.price.service;
 
+import com.pbm.price.domain.CategoryNode;
 import com.pbm.price.domain.MonitorTarget;
 import com.pbm.price.domain.PriceHistory;
 import com.pbm.price.domain.Product;
-import com.pbm.price.domain.SourceType;
+import com.pbm.price.domain.Platform;
 import com.pbm.price.dto.response.AliExpressShoppingItem;
 import com.pbm.price.dto.response.NaverShoppingItem;
+import com.pbm.price.repository.CategoryNodeRepository;
 import com.pbm.price.repository.MonitorTargetRepository;
 import com.pbm.price.repository.PriceHistoryRepository;
 import com.pbm.price.repository.ProductRepository;
@@ -26,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 실제 JPA + H2 메모리 DB로 엔티티 저장/중복 방지/가격 이력 누적을 검증한다.
  */
 @DataJpaTest
-@Import(ProductPersistenceService.class)
+@Import({ProductPersistenceService.class, NaverCategoryNormalizer.class, AliExpressCategoryNormalizer.class})
 @TestPropertySource(properties = {
         "app.monitoring.default-fetch-interval-minutes=10"
 })
@@ -43,6 +45,9 @@ class ProductPersistenceServiceTest {
 
     @Autowired
     private PriceHistoryRepository priceHistoryRepository;
+
+    @Autowired
+    private CategoryNodeRepository categoryNodeRepository;
 
     @Test
     @DisplayName("네이버 검색 결과 저장 - 신규 상품이면 monitor target, product, price history가 생성된다")
@@ -62,9 +67,10 @@ class ProductPersistenceServiceTest {
         assertThat(priceHistoryRepository.findAll()).hasSize(1);
 
         Product product = productRepository.findAll().get(0);
-        assertThat(product.getSourceType()).isEqualTo(SourceType.NAVER);
+        assertThat(product.getPlatform()).isEqualTo(Platform.NAVER);
         assertThat(product.getExternalProductId()).isEqualTo("naver-1001");
         assertThat(product.getTitle()).isEqualTo("아이폰 15");
+        assertThat(product.getCategoryPath()).isEqualTo("디지털/휴대폰/스마트폰");
 
         PriceHistory priceHistory = priceHistoryRepository.findAll().get(0);
         assertThat(priceHistory.getCurrentPrice()).hasToString("1000000");
@@ -99,16 +105,25 @@ class ProductPersistenceServiceTest {
     }
 
     @Test
-    @DisplayName("같은 키워드의 서로 다른 상품 - MonitorTarget은 공유하고 Product는 각각 저장한다")
-    void saveAliExpressSearchResults_sharesMonitorTargetForSameKeyword() {
+    @DisplayName("AliExpress 검색 결과 저장 - category_nodes 매핑이 있으면 DB categoryPath를 우선 사용한다")
+    void saveAliExpressSearchResults_usesCategoryPathFromCategoryNodes() {
         // given
+        categoryNodeRepository.save(CategoryNode.create(
+                Platform.ALIEXPRESS,
+                "20",
+                "휴대폰케이스",
+                "10",
+                2,
+                "전자제품/액세서리/휴대폰케이스"
+        ));
+
         AliExpressShoppingItem item1 = new AliExpressShoppingItem(
                 "아이폰 케이스", "5.00", "7000", "9000", "Store A", "https://aliexpress.com/item/1",
-                "ali-1", "https://img.example.com/ali1.jpg", "95", "10", "케이스"
+                "ali-1", "https://img.example.com/ali1.jpg", "95", "10", "케이스", "20", "휴대폰케이스"
         );
         AliExpressShoppingItem item2 = new AliExpressShoppingItem(
                 "아이폰 충전기", "8.00", "11000", "14000", "Store B", "https://aliexpress.com/item/2",
-                "ali-2", "https://img.example.com/ali2.jpg", "92", "11", "충전기"
+                "ali-2", "https://img.example.com/ali2.jpg", "92", "11", "충전기", "21", "휴대폰충전기"
         );
 
         // when
@@ -120,7 +135,35 @@ class ProductPersistenceServiceTest {
         assertThat(priceHistoryRepository.findAll()).hasSize(2);
 
         MonitorTarget monitorTarget = monitorTargetRepository.findAll().get(0);
-        assertThat(monitorTarget.getSourceType()).isEqualTo(SourceType.ALIEXPRESS);
+        assertThat(monitorTarget.getPlatform()).isEqualTo(Platform.ALIEXPRESS);
         assertThat(monitorTarget.getNormalizedKeyword()).isEqualTo("아이폰");
+
+        // 수정: second_level_category_id에 매핑된 category_nodes의 categoryPath를 우선 사용해야 한다.
+        Product aliProduct1 = productRepository.findAll().stream()
+                .filter(product -> "ali-1".equals(product.getExternalProductId()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(aliProduct1.getCategoryPath()).isEqualTo("전자제품/액세서리/휴대폰케이스");
+    }
+
+    @Test
+    @DisplayName("AliExpress 검색 결과 저장 - category_nodes 매핑이 없으면 기존 방식대로 카테고리명을 join한다")
+    void saveAliExpressSearchResults_fallsBackToJoinedCategoryNames_whenCategoryMappingMissing() {
+        // given
+        AliExpressShoppingItem item = new AliExpressShoppingItem(
+                "아이폰 케이스", "5.00", "7000", "9000", "Store A", "https://aliexpress.com/item/1",
+                "ali-1", "https://img.example.com/ali1.jpg", "95", "10", "케이스", "20", "휴대폰케이스"
+        );
+
+        // when
+        productPersistenceService.saveAliExpressSearchResults("아이폰", "KRW", List.of(item));
+
+        // then
+        assertThat(monitorTargetRepository.findAll()).hasSize(1);
+        assertThat(productRepository.findAll()).hasSize(1);
+        assertThat(priceHistoryRepository.findAll()).hasSize(1);
+
+        Product savedProduct = productRepository.findAll().get(0);
+        assertThat(savedProduct.getCategoryPath()).isEqualTo("케이스/휴대폰케이스");
     }
 }

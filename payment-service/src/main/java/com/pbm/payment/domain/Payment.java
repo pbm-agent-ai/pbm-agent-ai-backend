@@ -1,0 +1,159 @@
+package com.pbm.payment.domain;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+import java.time.Instant;
+
+/**
+ * PBM 스마트컨트랙트 자동 결제 엔티티.
+ *
+ * 역할: 사용자 요청에 따라 발생한 결제 건의 생애주기(PENDING → SUCCESS/FAILED)를 추적한다.
+ * 동작: create() 정적 팩토리로 초기 상태(PENDING)를 생성하고,
+ *       블록체인 트랜잭션 결과에 따라 markSuccess() 또는 markFailed()로 상태를 전이시킨다.
+ * 연관: PaymentStatus.
+ */
+@Getter     // 모든 필드의 get메서드 자동 생성 (Lombok)
+@Entity     // 이 클래스는 DB 테이블이다.라고 JPA에게 선언
+@Table(
+        name = "payments",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_payments_payment_id",
+                columnNames = {"payment_id"}
+        )
+)
+// 파라미터 없는 생성자를 자동 생성하되, 접근 범위를 protected로 제한
+// JPA 내부에서 객체 복원할 때 필요하지만, 외부 new Payment()는 못 하게 막음
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class Payment {
+
+    // JPA가 기본 키를 자동 생성한다.
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    // 외부 결제 식별자. Kafka 메시지나 블록체인 연동 시 이 값을 기준으로 결제 건을 추적한다.
+    @Column(name = "payment_id", nullable = false, length = 64)
+    private String paymentId;
+
+    @Column(name = "user_id", nullable = false)
+    private Long userId;
+
+    @Column(name = "product_name", nullable = false, length = 255)
+    private String productName;
+
+    @Column(name = "product_url", length = 500)
+    private String productUrl;
+
+    @Column(name = "amount", nullable = false)
+    private Integer amount;
+
+    // 결제 통화 코드. KRW, USD 등 ISO 통화 코드를 문자열로 저장한다.
+    @Column(name = "currency", nullable = false, length = 10)
+    private String currency;
+
+    // 결제 상태를 문자열 enum으로 저장하여 DB에서도 PENDING/SUCCESS/FAILED 값을 바로 읽을 수 있게 한다.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 20)
+    private PaymentStatus status;
+
+    // 블록체인 트랜잭션 해시. 결제 성공 시에만 값이 채워진다.
+    @Column(name = "transaction_hash", length = 128)
+    private String transactionHash;
+
+    // 결제 실패 원인 메시지. 결제 실패 시에만 값이 채워진다.
+    @Column(name = "failure_reason", length = 500)
+    private String failureReason;
+
+    @Column(name = "created_at", nullable = false)
+    private Instant createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt;
+
+    // private 생성자로 클래스 내부에서만 호출 가능하도록 만듦
+    private Payment(String paymentId, Long userId, String productName, String productUrl,
+                    Integer amount, String currency) {
+        this.paymentId = paymentId;
+        this.userId = userId;
+        this.productName = productName;
+        this.productUrl = productUrl;
+        this.amount = amount;
+        this.currency = currency;
+        // 초기 상태는 PENDING, 트랜잭션 해시와 실패 사유는 null로 둔다.
+        this.status = PaymentStatus.PENDING;
+        this.transactionHash = null;
+        this.failureReason = null;
+    }
+
+    /**
+     * 새 결제 건을 생성한다.
+     *
+     * 초기 상태는 PENDING으로 설정되며, transactionHash와 failureReason은 null이다.
+     *
+     * @param paymentId   외부 결제 식별자 (Kafka 이벤트에서 전달받은 고유 ID)
+     * @param userId      결제 요청 사용자 ID
+     * @param productName 상품명
+     * @param productUrl  상품 URL
+     * @param amount      결제 금액
+     * @param currency    통화 코드 (예: KRW)
+     * @return 생성된 Payment 엔티티
+     */
+    // public 정적 팩토리 메서드로 외부에서 객체 만들 때 이걸 사용하도록 만듦
+    public static Payment create(String paymentId, Long userId, String productName, String productUrl,
+                                 Integer amount, String currency) {
+        return new Payment(paymentId, userId, productName, productUrl, amount, currency);
+    }
+
+    /**
+     * 블록체인 결제 성공 시 상태를 SUCCESS로 전이하고 트랜잭션 해시를 기록한다.
+     *
+     * @param transactionHash 블록체인에서 반환된 트랜잭션 해시
+     */
+    public void markSuccess(String transactionHash) {
+        this.status = PaymentStatus.SUCCESS;
+        this.transactionHash = transactionHash;
+        this.failureReason = null;
+    }
+
+    /**
+     * 블록체인 결제 실패 시 상태를 FAILED로 전이하고 실패 사유를 기록한다.
+     *
+     * @param failureReason 결제 실패 원인 메시지
+     */
+    public void markFailed(String failureReason) {
+        this.status = PaymentStatus.FAILED;
+        this.failureReason = failureReason;
+        this.transactionHash = null;
+    }
+
+    /**
+     * 엔티티 최초 저장 시 createdAt과 updatedAt을 현재 시각으로 설정한다.
+     */
+    @PrePersist     // DB에 INSERT 직전에 자동 실행
+    void prePersist() {
+        Instant now = Instant.now();
+        this.createdAt = now;
+        this.updatedAt = now;
+    }
+
+    /**
+     * 엔티티 갱신 시 updatedAt을 현재 시각으로 갱신한다.
+     */
+    @PreUpdate      // DB에 UPDATE 직전에 자동 실행
+    void preUpdate() {
+        this.updatedAt = Instant.now();
+    }
+}

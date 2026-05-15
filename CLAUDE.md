@@ -13,6 +13,21 @@ Spring Boot MSA 구조로 개발
 - 공통 응답은 반드시 ApiResponse<T> 래퍼 사용
 - DTO는 record 클래스로 작성
 
+## 코드 스타일 문서
+- 코드 작성 시 반드시 아래 문서를 참고
+- 공통/강제 규칙은 이 CLAUDE.md를 우선 적용
+- 레이어별 상세 스타일은 docs/coding-style/ 하위 문서를 적용
+- 규칙 우선순위: CLAUDE.md > docs/coding-style/*.md > 기존 파일 로컬 스타일
+
+- Controller: `docs/coding-style/controller.md`
+- Service: `docs/coding-style/service.md`
+- DTO: `docs/coding-style/dto.md`
+- Repository: `docs/coding-style/repository.md`
+- Domain: `docs/coding-style/domain.md`
+- Exception: `docs/coding-style/exception.md`
+- Client: `docs/coding-style/client.md`
+- Test: `docs/coding-style/test.md`
+
 ## 서비스 구조
 - eureka-server (8761): 서비스 디스커버리
 - gateway (8080): Spring Cloud Gateway, JWT 인증 필터

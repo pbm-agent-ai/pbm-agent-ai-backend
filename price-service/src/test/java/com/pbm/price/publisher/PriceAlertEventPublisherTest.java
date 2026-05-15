@@ -51,7 +51,7 @@ class PriceAlertEventPublisherTest {
                 "PRICE_ALERT",
                 Instant.parse("2026-04-25T12:00:00Z"),
                 "price-service",
-                new PriceAlertEventPayload(userId, productName, currentPrice, targetPrice, "https://example.com/1")
+                new PriceAlertEventPayload(userId, productName, currentPrice, targetPrice, "https://example.com/1", null)
         );
     }
 

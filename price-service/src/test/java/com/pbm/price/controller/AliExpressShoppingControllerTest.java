@@ -45,11 +45,11 @@ class AliExpressShoppingControllerTest {
     void searchProducts_success_returns200WithApiResponse() throws Exception {
         // given - 서비스가 정상 검색 결과를 반환하는 상황
         List<SearchResponse> mockResults = List.of(
-                new SearchResponse("무선 이어폰", "15000", "25000", "AliExpress Store", "https://aliexpress.com/item/1")
+                new SearchResponse("무선 이어폰", "15000", "25000", "AliExpress Store", "https://aliexpress.com/item/1", "KRW", "ae-1")
         );
         when(aliExpressShoppingService.searchProducts(
                 eq("이어폰"), eq(1), eq(10), eq("SALE_PRICE_ASC"),
-                eq("KRW"), eq("KO"), eq("KR"), eq(null)
+                eq("KRW"), eq("KO"), eq("KR"), eq(null), eq(null)
         )).thenReturn(mockResults);
 
         // when & then - HTTP 상태코드와 ApiResponse JSON 형식 검증
@@ -70,7 +70,7 @@ class AliExpressShoppingControllerTest {
     void searchProducts_externalApiException_returns503WithErrorJson() throws Exception {
         // given - 서비스가 외부 API 장애로 ExternalApiException을 던지는 상황
         when(aliExpressShoppingService.searchProducts(
-                anyString(), anyInt(), anyInt(), any(), any(), any(), any(), any()))
+                anyString(), anyInt(), anyInt(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new ExternalApiException(
                         "external-api-service AliExpress API 호출 불가 (Circuit Breaker OPEN 또는 오류)"));
 

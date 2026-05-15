@@ -30,6 +30,15 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: "*"
+        # 발행 측(price-service) 클래스명이 헤더에 담겨오지만 payment-service에 없으므로 헤더 무시
+        spring.json.use.type.headers: false
+        spring.json.value.default.type: com.pbm.payment.dto.event.PaymentRequestEvent
+
+app:
+  kafka:
+    topics:
+      payment-topic: payment-topic
+      payment-result: payment-result
 
 eureka:
   client:

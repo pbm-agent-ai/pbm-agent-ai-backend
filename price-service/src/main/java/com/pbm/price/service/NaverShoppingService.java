@@ -39,9 +39,23 @@ public class NaverShoppingService {
      * @return 검색된 상품 목록
      */
     public List<SearchResponse> searchProducts(String keyword, int display) {
-        log.info("상품 검색 요청 - 키워드: {}, 개수: {} (external-api-service 경유)", keyword, display);
+        return searchProducts(keyword, display, 1);
+    }
 
-        List<NaverShoppingItem> items = externalApiClient.searchNaverProductItems(keyword, display);
+    /**
+     * 키워드로 네이버 쇼핑 상품 검색 (start 파라미터 지원 오버로드)
+     * 기존 searchProducts(keyword, display)와의 호환성을 유지하면서
+     * start 파라미터를 추가한 오버로드 메서드.
+     *
+     * @param keyword 검색 키워드
+     * @param display 검색 결과 개수 (최대 100)
+     * @param start   검색 시작 위치 (최대 1000)
+     * @return 검색된 상품 목록
+     */
+    public List<SearchResponse> searchProducts(String keyword, int display, int start) {
+        log.info("상품 검색 요청 - 키워드: {}, 개수: {}, 시작: {} (external-api-service 경유)", keyword, display, start);
+
+        List<NaverShoppingItem> items = externalApiClient.searchNaverProductItems(keyword, display, start);
         productPersistenceService.saveNaverSearchResults(keyword, items);
 
         return items.stream()
@@ -50,7 +64,9 @@ public class NaverShoppingService {
                         item.lprice(),
                         item.hprice(),
                         item.mallName(),
-                        item.link()
+                        item.link(),
+                        "KRW",
+                        item.productId()
                 ))
                 .toList();
     }

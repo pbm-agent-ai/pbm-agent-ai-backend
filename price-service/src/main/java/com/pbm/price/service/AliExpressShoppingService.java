@@ -40,6 +40,7 @@ public class AliExpressShoppingService {
      * @param targetCurrency 통화 (기본 KRW)
      * @param targetLanguage 언어 (기본 KO)
      * @param shipToCountry  배송 국가 (기본 KR)
+     * @param categoryIds    카테고리 ID 목록 (선택, 콤마 구분)
      * @param trackingId     트래킹 ID (선택)
      * @return 검색된 상품 목록 (공통 SearchResponse 형식)
      */
@@ -51,28 +52,39 @@ public class AliExpressShoppingService {
             String targetCurrency,
             String targetLanguage,
             String shipToCountry,
+            String categoryIds,
             String trackingId
     ) {
         log.info("AliExpress 상품 검색 요청 - 키워드: {}, 페이지: {}/{}, 정렬: {} (external-api-service 경유)",
                 keyword, pageNo, pageSize, sort);
 
         List<AliExpressShoppingItem> items = externalApiClient.searchAliExpressProductItems(
-                keyword, pageNo, pageSize, sort, targetCurrency, targetLanguage, shipToCountry, trackingId
+                keyword, pageNo, pageSize, sort, targetCurrency, targetLanguage, shipToCountry, categoryIds, trackingId
         );
         productPersistenceService.saveAliExpressSearchResults(keyword, targetCurrency, items);
 
         return items.stream()
                 .map(item -> {
-                    String lprice = (item.target_sale_price() != null && !item.target_sale_price().isBlank())
-                            ? item.target_sale_price()
-                            : item.sale_price();
+                    // target_sale_price가 있으면 KRW 변환 판매가 사용, 통화는 targetCurrency
+                    // 없으면 USD 원화 sale_price 사용, 통화는 "USD"
+                    String lprice;
+                    String currency;
+                    if (item.target_sale_price() != null && !item.target_sale_price().isBlank()) {
+                        lprice = item.target_sale_price();
+                        currency = (targetCurrency != null && !targetCurrency.isBlank()) ? targetCurrency : "KRW";
+                    } else {
+                        lprice = item.sale_price();
+                        currency = "USD";
+                    }
 
                     return new SearchResponse(
                             item.product_title(),
                             lprice,
                             item.target_original_price(),
                             item.shop_name(),
-                            item.product_detail_url()
+                            item.product_detail_url(),
+                            currency,
+                            item.product_id()
                     );
                 })
                 .toList();

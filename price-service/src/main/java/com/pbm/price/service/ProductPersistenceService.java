@@ -4,7 +4,7 @@ import com.pbm.price.domain.CurrencyType;
 import com.pbm.price.domain.MonitorTarget;
 import com.pbm.price.domain.PriceHistory;
 import com.pbm.price.domain.Product;
-import com.pbm.price.domain.SourceType;
+import com.pbm.price.domain.Platform;
 import com.pbm.price.dto.response.AliExpressShoppingItem;
 import com.pbm.price.dto.response.NaverShoppingItem;
 import com.pbm.price.repository.MonitorTargetRepository;
@@ -37,6 +37,8 @@ public class ProductPersistenceService {
     private final MonitorTargetRepository monitorTargetRepository;
     private final ProductRepository productRepository;
     private final PriceHistoryRepository priceHistoryRepository;
+    private final NaverCategoryNormalizer naverCategoryNormalizer;
+    private final AliExpressCategoryNormalizer aliExpressCategoryNormalizer;
 
     @Value("${app.monitoring.default-fetch-interval-minutes:10}")
     private int defaultFetchIntervalMinutes;
@@ -53,17 +55,21 @@ public class ProductPersistenceService {
             return;
         }
 
-        MonitorTarget monitorTarget = prepareMonitorTarget(SourceType.NAVER, keyword);
+        MonitorTarget monitorTarget = prepareMonitorTarget(Platform.NAVER, keyword);
         Instant now = Instant.now();
 
         for (NaverShoppingItem item : items) {
+            String categoryPath = naverCategoryNormalizer.normalize(
+                    item.category1(), item.category2(), item.category3(), item.category4()
+            );
             CollectedProductSnapshot snapshot = new CollectedProductSnapshot(
-                    SourceType.NAVER,
+                    Platform.NAVER,
                     resolveExternalProductId(item.productId(), item.link(), item.title()),
                     item.title(),
                     item.link(),
                     item.image(),
                     item.mallName(),
+                    categoryPath,
                     parsePrice(item.lprice()),
                     parsePrice(item.hprice()),
                     CurrencyType.KRW
@@ -85,7 +91,7 @@ public class ProductPersistenceService {
             return;
         }
 
-        MonitorTarget monitorTarget = prepareMonitorTarget(SourceType.ALIEXPRESS, keyword);
+        MonitorTarget monitorTarget = prepareMonitorTarget(Platform.ALIEXPRESS, keyword);
         Instant now = Instant.now();
 
         for (AliExpressShoppingItem item : items) {
@@ -97,13 +103,20 @@ public class ProductPersistenceService {
                     ? resolveCurrency(targetCurrency)
                     : CurrencyType.USD;
 
+            // AliExpressCategoryNormalizer를  DB lookup 방식으로 바꿨기 때문에 여기에도 적용해줌
+            String categoryPath = aliExpressCategoryNormalizer.normalize(
+                    item.first_level_category_name(),
+                    item.second_level_category_id(),
+                    item.second_level_category_name()
+            );
             CollectedProductSnapshot snapshot = new CollectedProductSnapshot(
-                    SourceType.ALIEXPRESS,
+                    Platform.ALIEXPRESS,
                     resolveExternalProductId(item.product_id(), item.product_detail_url(), item.product_title()),
                     item.product_title(),
                     item.product_detail_url(),
                     item.product_main_image_url(),
                     item.shop_name(),
+                    categoryPath,
                     currentPrice,
                     parsePrice(item.target_original_price()),
                     currency
@@ -115,12 +128,12 @@ public class ProductPersistenceService {
     /**
      * 공통 수집 대상(MonitorTarget)을 찾거나 생성하고 최신 수집 시각을 갱신한다.
      */
-    private MonitorTarget prepareMonitorTarget(SourceType sourceType, String keyword) {
+    private MonitorTarget prepareMonitorTarget(Platform platform, String keyword) {
         String normalizedKeyword = normalizeKeyword(keyword);
 
         MonitorTarget monitorTarget = monitorTargetRepository
-                .findBySourceTypeAndNormalizedKeyword(sourceType, normalizedKeyword)
-                .orElseGet(() -> MonitorTarget.create(sourceType, normalizedKeyword, defaultFetchIntervalMinutes));
+                .findByPlatformAndNormalizedKeyword(platform, normalizedKeyword)
+                .orElseGet(() -> MonitorTarget.create(platform, normalizedKeyword, defaultFetchIntervalMinutes));
 
         monitorTarget.markFetched(Instant.now());
         return monitorTargetRepository.save(monitorTarget);
@@ -131,15 +144,16 @@ public class ProductPersistenceService {
      */
     private void saveSnapshot(MonitorTarget monitorTarget, CollectedProductSnapshot snapshot, Instant checkedAt) {
         Product product = productRepository
-                .findBySourceTypeAndExternalProductId(snapshot.sourceType(), snapshot.externalProductId())
+                .findByPlatformAndExternalProductId(snapshot.platform(), snapshot.externalProductId())
                 .orElseGet(() -> Product.create(
                         monitorTarget,
-                        snapshot.sourceType(),
+                        snapshot.platform(),
                         snapshot.externalProductId(),
                         snapshot.title(),
                         snapshot.productUrl(),
                         snapshot.imageUrl(),
                         snapshot.mallName(),
+                        snapshot.categoryPath(),
                         checkedAt
                 ));
 
@@ -149,6 +163,7 @@ public class ProductPersistenceService {
                 snapshot.productUrl(),
                 snapshot.imageUrl(),
                 snapshot.mallName(),
+                snapshot.categoryPath(),
                 checkedAt
         );
 
@@ -156,8 +171,8 @@ public class ProductPersistenceService {
 
         // 현재가를 읽지 못한 경우에는 의미 있는 가격 히스토리를 만들 수 없으므로 스냅샷 저장을 생략한다.
         if (snapshot.currentPrice() == null) {
-            log.warn("가격 저장 생략 - sourceType: {}, externalProductId: {}, currentPrice가 null임",
-                    snapshot.sourceType(), snapshot.externalProductId());
+            log.warn("가격 저장 생략 - platform: {}, externalProductId: {}, currentPrice가 null임",
+                    snapshot.platform(), snapshot.externalProductId());
             return;
         }
 
@@ -234,12 +249,13 @@ public class ProductPersistenceService {
      * 외부 검색 결과를 내부 영속화 구조로 잠시 옮겨 담는 내부 record.
      */
     private record CollectedProductSnapshot(
-            SourceType sourceType,
+            Platform platform,
             String externalProductId,
             String title,
             String productUrl,
             String imageUrl,
             String mallName,
+            String categoryPath,
             BigDecimal currentPrice,
             BigDecimal originalPrice,
             CurrencyType currency

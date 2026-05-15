@@ -1,5 +1,7 @@
 package com.pbm.price.client;
 
+import com.pbm.price.dto.response.AliExpressCategoryItem;
+import com.pbm.price.dto.response.AliExpressCategoryResponse;
 import com.pbm.price.dto.response.AliExpressSearchResponse;
 import com.pbm.price.dto.response.AliExpressShoppingItem;
 import com.pbm.price.dto.response.NaverSearchResponse;
@@ -91,7 +93,7 @@ class ExternalApiClientTest {
         assertThat(results.get(0).lprice()).isEqualTo("250000");
         assertThat(results.get(0).hprice()).isEqualTo("350000");
         assertThat(results.get(0).mallName()).isEqualTo("애플스토어");
-        assertThat(results.get(0).link()).isEqualTo("https://example.com/1");
+        assertThat(results.get(0).productUrl()).isEqualTo("https://example.com/1");
         assertThat(results.get(1).title()).isEqualTo("갤럭시 버즈");
         verify(webClient, times(1)).get();
     }
@@ -199,7 +201,7 @@ class ExternalApiClientTest {
         assertThat(result.lprice()).isEqualTo("10000");
         assertThat(result.hprice()).isEqualTo("20000");
         assertThat(result.mallName()).isEqualTo("쇼핑몰");
-        assertThat(result.link()).isEqualTo("https://example.com/p1");
+        assertThat(result.productUrl()).isEqualTo("https://example.com/p1");
         // productId, image, maker, brand, category 필드는 SearchResponse에 없으므로 매핑되지 않음
     }
 
@@ -231,6 +233,85 @@ class ExternalApiClientTest {
                 .isInstanceOf(java.net.ConnectException.class);
     }
 
+    // ===== 네이버 쇼핑 검색 (start 파라미터 추가 오버로드) 테스트 =====
+
+    @Test
+    @DisplayName("네이버 쇼핑 검색 (start 파라미터) - 래퍼 응답에서 items를 추출하여 SearchResponse 목록 반환")
+    void searchNaverProducts_withStart_returnsResults() {
+        // given
+        NaverShoppingItem item = new NaverShoppingItem(
+                "에어팟 프로", "250000", "350000", "애플스토어",
+                "https://example.com/1", "1001", "https://img.example.com/1.jpg",
+                "애플", "Apple", "디지털/가전", "이어폰", "무선이어폰", ""
+        );
+        NaverSearchResponse wrappedResponse = new NaverSearchResponse(200, 101, 100, List.of(item));
+
+        when(webClient.get()).thenReturn(requestHeadersUriSpec);
+        when(requestHeadersUriSpec.uri(any(java.util.function.Function.class))).thenReturn(requestHeadersSpec);
+        when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.bodyToMono(any(ParameterizedTypeReference.class))).thenReturn(Mono.just(wrappedResponse));
+
+        // when - start=101로 2페이지 조회
+        List<SearchResponse> results = externalApiClient.searchNaverProducts("이어폰", 100, 101);
+
+        // then
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).title()).isEqualTo("에어팟 프로");
+        assertThat(results.get(0).lprice()).isEqualTo("250000");
+        verify(webClient, times(1)).get();
+    }
+
+    @Test
+    @DisplayName("네이버 쇼핑 원본 조회 (start 파라미터) - NaverShoppingItem 목록 반환")
+    void searchNaverProductItems_withStart_returnsRawItems() {
+        // given
+        NaverShoppingItem item = new NaverShoppingItem(
+                "갤럭시 버즈", "120000", "180000", "삼성스토어",
+                "https://example.com/2", "1002", "https://img.example.com/2.jpg",
+                "삼성", "Samsung", "디지털/가전", "이어폰", "무선이어폰", ""
+        );
+        NaverSearchResponse wrappedResponse = new NaverSearchResponse(150, 1, 100, List.of(item));
+
+        when(webClient.get()).thenReturn(requestHeadersUriSpec);
+        when(requestHeadersUriSpec.uri(any(java.util.function.Function.class))).thenReturn(requestHeadersSpec);
+        when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.bodyToMono(any(ParameterizedTypeReference.class))).thenReturn(Mono.just(wrappedResponse));
+
+        // when - start=1로 1페이지 조회
+        List<NaverShoppingItem> results = externalApiClient.searchNaverProductItems("갤럭시", 100, 1);
+
+        // then
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).productId()).isEqualTo("1002");
+        assertThat(results.get(0).link()).isEqualTo("https://example.com/2");
+    }
+
+    @Test
+    @DisplayName("네이버 쇼핑 fallback (start 파라미터) - ExternalApiException 발생")
+    void naverSearchFallback_withStart_throwsExternalApiException() {
+        // given
+        Throwable cause = new RuntimeException("API 호출 실패");
+
+        // when & then
+        assertThatThrownBy(() -> externalApiClient.naverSearchFallback("이어폰", 100, 101, cause))
+                .isInstanceOf(ExternalApiException.class)
+                .hasMessageContaining("external-api-service 네이버 쇼핑 API 호출 불가")
+                .hasMessageContaining("Circuit Breaker OPEN 또는 오류");
+    }
+
+    @Test
+    @DisplayName("네이버 쇼핑 fallback (start 파라미터) - 원인 예외 보존")
+    void naverSearchFallback_withStart_preservesCauseException() {
+        // given
+        Throwable cause = new java.net.ConnectException("Connection refused");
+
+        // when & then
+        assertThatThrownBy(() -> externalApiClient.naverSearchFallback("이어폰", 100, 101, cause))
+                .isInstanceOf(ExternalApiException.class)
+                .getCause()
+                .isInstanceOf(java.net.ConnectException.class);
+    }
+
     // ===== AliExpress 검색 테스트 =====
 
     @Nested
@@ -245,13 +326,13 @@ class ExternalApiClientTest {
                     "무선 이어폰 블루투스", "9.99", "15000", "25000",
                     "AliExpress Store", "https://aliexpress.com/item/1",
                     "1001", "https://img.example.com/1.jpg", "95",
-                    "200001", "이어폰"
+                    "200001", "이어폰", "300001", "무선이어폰"
             );
             AliExpressShoppingItem item2 = new AliExpressShoppingItem(
                     "블루투스 스피커", "15.50", "23000", "35000",
                     "Tech Shop", "https://aliexpress.com/item/2",
                     "1002", "https://img.example.com/2.jpg", "88",
-                    "200002", "스피커"
+                    "200002", "스피커", "300002", "블루투스스피커"
             );
             AliExpressSearchResponse wrappedResponse = new AliExpressSearchResponse(2, 1, 10, List.of(item1, item2));
 
@@ -263,7 +344,7 @@ class ExternalApiClientTest {
 
             // when
             List<SearchResponse> results = externalApiClient.searchAliExpressProducts(
-                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null
+                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null, null
             );
 
             // then - 래퍼 응답에서 items가 SearchResponse로 매핑되었는지 확인
@@ -273,7 +354,7 @@ class ExternalApiClientTest {
             assertThat(results.get(0).lprice()).isEqualTo("15000");  // target_sale_price
             assertThat(results.get(0).hprice()).isEqualTo("25000");  // target_original_price
             assertThat(results.get(0).mallName()).isEqualTo("AliExpress Store");
-            assertThat(results.get(0).link()).isEqualTo("https://aliexpress.com/item/1");
+            assertThat(results.get(0).productUrl()).isEqualTo("https://aliexpress.com/item/1");
             // 두 번째 아이템
             assertThat(results.get(1).title()).isEqualTo("블루투스 스피커");
             assertThat(results.get(1).lprice()).isEqualTo("23000");  // target_sale_price
@@ -288,7 +369,7 @@ class ExternalApiClientTest {
                     "무선 이어폰 블루투스", "9.99", "15000", "25000",
                     "AliExpress Store", "https://aliexpress.com/item/1",
                     "1001", "https://img.example.com/1.jpg", "95",
-                    "200001", "이어폰"
+                    "200001", "이어폰", "300001", "무선이어폰"
             );
             AliExpressSearchResponse wrappedResponse = new AliExpressSearchResponse(1, 1, 10, List.of(item));
 
@@ -299,7 +380,7 @@ class ExternalApiClientTest {
 
             // when
             List<AliExpressShoppingItem> results = externalApiClient.searchAliExpressProductItems(
-                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null
+                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null, null
             );
 
             // then
@@ -316,7 +397,7 @@ class ExternalApiClientTest {
                     "저가 이어폰", "12.50", null, "20000",
                     "Cheap Store", "https://aliexpress.com/item/3",
                     "1003", "https://img.example.com/3.jpg", "70",
-                    "200001", "이어폰"
+                    "200001", "이어폰", "300001", "무선이어폰"
             );
             AliExpressSearchResponse response = new AliExpressSearchResponse(1, 1, 10, List.of(item));
 
@@ -327,7 +408,7 @@ class ExternalApiClientTest {
 
             // when
             List<SearchResponse> results = externalApiClient.searchAliExpressProducts(
-                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null
+                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null, null
             );
 
             // then - target_sale_price가 null이므로 sale_price가 lprice로 사용됨
@@ -344,7 +425,7 @@ class ExternalApiClientTest {
                     "빈값 이어폰", "8.00", "", "18000",
                     "Store", "https://aliexpress.com/item/4",
                     "1004", "https://img.example.com/4.jpg", "60",
-                    "200001", "이어폰"
+                    "200001", "이어폰", "300001", "무선이어폰"
             );
             AliExpressSearchResponse response = new AliExpressSearchResponse(1, 1, 10, List.of(item));
 
@@ -355,7 +436,7 @@ class ExternalApiClientTest {
 
             // when
             List<SearchResponse> results = externalApiClient.searchAliExpressProducts(
-                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null
+                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null, null
             );
 
             // then - 빈 문자열도 fallback 동작
@@ -376,7 +457,7 @@ class ExternalApiClientTest {
 
             // when
             List<SearchResponse> results = externalApiClient.searchAliExpressProducts(
-                    "없는상품", 1, 10, null, "KRW", "KO", "KR", null
+                    "없는상품", 1, 10, null, "KRW", "KO", "KR", null, null
             );
 
             // then
@@ -394,7 +475,7 @@ class ExternalApiClientTest {
 
             // when
             List<SearchResponse> results = externalApiClient.searchAliExpressProducts(
-                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null
+                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null, null
             );
 
             // then
@@ -413,7 +494,7 @@ class ExternalApiClientTest {
 
             // when & then - 원본 예외 메시지가 그대로 전파됨
             assertThatThrownBy(() -> externalApiClient.searchAliExpressProducts(
-                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null
+                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null, null
             ))
                     .isInstanceOf(RuntimeException.class)
                     .hasMessageContaining("연결 실패");
@@ -427,7 +508,7 @@ class ExternalApiClientTest {
 
             // when & then - fallback은 빈 결과가 아닌 명확한 예외를 전파함
             assertThatThrownBy(() -> externalApiClient.aliExpressSearchFallback(
-                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null, cause))
+                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null, null, cause))
                     .isInstanceOf(ExternalApiException.class)
                     .hasMessageContaining("external-api-service AliExpress API 호출 불가")
                     .hasMessageContaining("Circuit Breaker OPEN 또는 오류");
@@ -441,10 +522,127 @@ class ExternalApiClientTest {
 
             // when & then - 원인 예외가 보존되어 디버깅이 가능함
             assertThatThrownBy(() -> externalApiClient.aliExpressSearchFallback(
-                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null, cause))
+                    "이어폰", 1, 10, null, "KRW", "KO", "KR", null, null, cause))
                     .isInstanceOf(ExternalApiException.class)
                     .getCause()
                     .isInstanceOf(java.util.concurrent.TimeoutException.class);
+        }
+    }
+
+    // ===== AliExpress 카테고리 조회 테스트 =====
+
+    @Nested
+    @DisplayName("AliExpress 카테고리 조회")
+    class AliExpressCategoryTests {
+
+        @Test
+        @DisplayName("카테고리 조회 - 래퍼 응답에서 items를 추출하여 목록 반환")
+        void fetchAliExpressCategories_returnsItems_fromWrappedResponse() {
+            // given - external-api-service의 카테고리 래퍼 응답 구조
+            AliExpressCategoryItem cat1 = new AliExpressCategoryItem("100", "전자기기", null);
+            AliExpressCategoryItem cat2 = new AliExpressCategoryItem("101", "오디오", "100");
+            AliExpressCategoryItem cat3 = new AliExpressCategoryItem("102", "스피커", "101");
+            AliExpressCategoryResponse wrappedResponse = new AliExpressCategoryResponse(
+                    3, List.of(cat1, cat2, cat3)
+            );
+
+            // WebClient Mock 체인 설정
+            when(webClient.get()).thenReturn(requestHeadersUriSpec);
+            when(requestHeadersUriSpec.uri(any(java.util.function.Function.class))).thenReturn(requestHeadersSpec);
+            when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
+            when(responseSpec.bodyToMono(any(ParameterizedTypeReference.class))).thenReturn(Mono.just(wrappedResponse));
+
+            // when
+            List<AliExpressCategoryItem> results = externalApiClient.fetchAliExpressCategories();
+
+            // then
+            assertThat(results).hasSize(3);
+            assertThat(results.get(0).category_id()).isEqualTo("100");
+            assertThat(results.get(0).category_name()).isEqualTo("전자기기");
+            assertThat(results.get(0).parent_category_id()).isNull();
+            assertThat(results.get(1).category_id()).isEqualTo("101");
+            assertThat(results.get(1).category_name()).isEqualTo("오디오");
+            assertThat(results.get(1).parent_category_id()).isEqualTo("100");
+            assertThat(results.get(2).category_id()).isEqualTo("102");
+            assertThat(results.get(2).category_name()).isEqualTo("스피커");
+            assertThat(results.get(2).parent_category_id()).isEqualTo("101");
+            verify(webClient, times(1)).get();
+        }
+
+        @Test
+        @DisplayName("카테고리 조회 - 빈 items 응답 시 빈 목록 반환")
+        void fetchAliExpressCategories_returnsEmptyList_whenItemsEmpty() {
+            // given - 빈 items를 가진 래퍼 응답
+            AliExpressCategoryResponse emptyResponse = new AliExpressCategoryResponse(0, List.of());
+
+            when(webClient.get()).thenReturn(requestHeadersUriSpec);
+            when(requestHeadersUriSpec.uri(any(java.util.function.Function.class))).thenReturn(requestHeadersSpec);
+            when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
+            when(responseSpec.bodyToMono(any(ParameterizedTypeReference.class))).thenReturn(Mono.just(emptyResponse));
+
+            // when
+            List<AliExpressCategoryItem> results = externalApiClient.fetchAliExpressCategories();
+
+            // then
+            assertThat(results).isEmpty();
+        }
+
+        @Test
+        @DisplayName("카테고리 조회 - null 응답 시 빈 목록 반환")
+        void fetchAliExpressCategories_returnsEmptyList_whenResponseNull() {
+            // given - null 응답
+            when(webClient.get()).thenReturn(requestHeadersUriSpec);
+            when(requestHeadersUriSpec.uri(any(java.util.function.Function.class))).thenReturn(requestHeadersSpec);
+            when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
+            when(responseSpec.bodyToMono(any(ParameterizedTypeReference.class))).thenReturn(Mono.justOrEmpty(null));
+
+            // when
+            List<AliExpressCategoryItem> results = externalApiClient.fetchAliExpressCategories();
+
+            // then
+            assertThat(results).isEmpty();
+        }
+
+        @Test
+        @DisplayName("카테고리 조회 - WebClient 예외 발생 시 예외 전파 (Resilience4j 미적용 단위 테스트)")
+        void fetchAliExpressCategories_propagatesException_onWebClientError() {
+            // given - WebClient 호출 실패 시 원본 예외가 전파됨
+            when(webClient.get()).thenReturn(requestHeadersUriSpec);
+            when(requestHeadersUriSpec.uri(any(java.util.function.Function.class))).thenReturn(requestHeadersSpec);
+            when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
+            when(responseSpec.bodyToMono(any(ParameterizedTypeReference.class)))
+                    .thenReturn(Mono.error(new RuntimeException("카테고리 조회 실패")));
+
+            // when & then - 원본 예외 메시지가 그대로 전파됨
+            assertThatThrownBy(() -> externalApiClient.fetchAliExpressCategories())
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("카테고리 조회 실패");
+        }
+
+        @Test
+        @DisplayName("카테고리 fallback - ExternalApiException 발생하여 장애 상황 명확히 전파")
+        void aliExpressCategoryFallback_throwsExternalApiException() {
+            // given - Circuit Breaker가 OPEN이거나 재시도 모두 실패한 상황
+            Throwable cause = new RuntimeException("서버 오류");
+
+            // when & then - fallback은 빈 결과가 아닌 명확한 예외를 전파함
+            assertThatThrownBy(() -> externalApiClient.aliExpressCategoryFallback(cause))
+                    .isInstanceOf(ExternalApiException.class)
+                    .hasMessageContaining("external-api-service AliExpress 카테고리 API 호출 불가")
+                    .hasMessageContaining("Circuit Breaker OPEN 또는 오류");
+        }
+
+        @Test
+        @DisplayName("카테고리 fallback - 원인 예외가 ExternalApiException의 cause로 보존됨")
+        void aliExpressCategoryFallback_preservesCauseException() {
+            // given
+            Throwable cause = new java.net.ConnectException("Connection refused");
+
+            // when & then - 원인 예외가 보존되어 디버깅이 가능함
+            assertThatThrownBy(() -> externalApiClient.aliExpressCategoryFallback(cause))
+                    .isInstanceOf(ExternalApiException.class)
+                    .getCause()
+                    .isInstanceOf(java.net.ConnectException.class);
         }
     }
 }

@@ -37,6 +37,7 @@ public class AliExpressShoppingController {
      * @param targetCurrency 통화 (선택, 기본 KRW)
      * @param targetLanguage 언어 (선택, 기본 KO)
      * @param shipToCountry  배송 국가 (선택, 기본 KR)
+     * @param categoryIds    카테고리 ID 목록 (선택, 콤마 구분)
      * @param trackingId     트래킹 ID (선택)
      * @return 검색된 상품 목록 (공통 SearchResponse 형식)
      */
@@ -49,13 +50,14 @@ public class AliExpressShoppingController {
             @RequestParam(defaultValue = "KRW") String targetCurrency,
             @RequestParam(defaultValue = "KO") String targetLanguage,
             @RequestParam(defaultValue = "KR") String shipToCountry,
+            @RequestParam(required = false) String categoryIds,
             @RequestParam(required = false) String trackingId
     ) {
         log.info("AliExpress 상품 검색 요청 - 키워드: {}, 페이지: {}/{}, 정렬: {}, 통화: {}",
                 keyword, pageNo, pageSize, sort, targetCurrency);
 
         List<SearchResponse> results = aliExpressShoppingService.searchProducts(
-                keyword, pageNo, pageSize, sort, targetCurrency, targetLanguage, shipToCountry, trackingId
+                keyword, pageNo, pageSize, sort, targetCurrency, targetLanguage, shipToCountry, categoryIds, trackingId
         );
 
         return ApiResponse.success(results, "AliExpress 검색 성공");

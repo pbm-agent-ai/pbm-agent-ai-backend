@@ -12,6 +12,7 @@ public record PaymentRequestEventPayload(
         String productName,
         String productUrl,
         Integer amount,
-        String currency
+        String currency,
+        String searchKeyword
 ) {
 }

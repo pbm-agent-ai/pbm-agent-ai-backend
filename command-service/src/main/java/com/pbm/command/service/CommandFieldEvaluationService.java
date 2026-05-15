@@ -1,0 +1,163 @@
+package com.pbm.command.service;
+
+import com.pbm.command.domain.CommandFieldType;
+import com.pbm.command.domain.CommandIntent;
+import com.pbm.command.domain.ProductCategory;
+import com.pbm.command.dto.response.ParsedCommand;
+import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+
+/**
+ * 파싱 결과의 누락 필드와 모호 필드를 계산하는 서비스.
+ *
+ * 역할: GPT가 추출한 ParsedCommand를 카테고리 정책과 비교하여
+ *       프론트 모달에 보여줄 missingRequiredFields, ambiguousFields를 계산한다.
+ * 동작: 필수 필드는 null/빈값 여부를 검사하고,
+ *       자동 결제 또는 상품명 모호성 상황에서는 추가 확인 필드를 별도로 수집한다.
+ * 연관: CommandFieldPolicyService, ParsedCommand, FieldEvaluationResult.
+ */
+@Service
+public class CommandFieldEvaluationService {
+
+    private final CommandFieldPolicyService commandFieldPolicyService;
+
+    public CommandFieldEvaluationService(CommandFieldPolicyService commandFieldPolicyService) {
+        this.commandFieldPolicyService = commandFieldPolicyService;
+    }
+
+    /**
+     * 파싱 결과를 기준으로 누락 필드와 모호 필드를 한 번에 계산한다.
+     *
+     * @param intent       사용자 의도
+     * @param parsedCommand GPT가 추출한 구조화 결과
+     * @return 누락/모호 필드 계산 결과
+     */
+    public FieldEvaluationResult evaluate(CommandIntent intent, ParsedCommand parsedCommand) {
+        // 필수인데 비어있는 필드 계산
+        List<String> missingRequiredFields = calculateMissingRequiredFields(parsedCommand);
+        // 값은 있지만 더 확인해야 하는 필드 계산
+        List<String> ambiguousFields = calculateAmbiguousFields(intent, parsedCommand);
+        // 두 결과를 하나의 객체로 합쳐서 변환
+        return new FieldEvaluationResult(missingRequiredFields, ambiguousFields, false);
+    }
+
+    /**
+     * 카테고리 정책 기준으로 필수 누락 필드를 계산한다.
+     *
+     * @param parsedCommand GPT가 추출한 구조화 결과
+     * @return 비어 있는 필수 필드 목록
+     */
+    public List<String> calculateMissingRequiredFields(ParsedCommand parsedCommand) {
+        // GPT가 아예 아무것도 못 뽑았으면, 최소한 이 3개는 무조건 필요하다고 알려줌
+        if (parsedCommand == null) {
+            return List.of(
+                    CommandFieldType.PRODUCT_CATEGORY.fieldKey(),
+                    CommandFieldType.PRODUCT_NAME.fieldKey(),
+                    CommandFieldType.MAX_PRICE.fieldKey()
+            );
+        }
+
+        // ArrayList: 여기에 필드키를 하나씩 추가할거라서 가변 리스트 사용
+        ProductCategory category = parsedCommand.productCategory();
+        List<String> missingFields = new ArrayList<>();
+
+        // 이 카테고리에서 필수인 필드들 중에 비어있는 게 뭔지 하나씩 검사
+        for (CommandFieldType fieldType : commandFieldPolicyService.getRequiredFields(category)) {
+            if (isMissing(fieldType, parsedCommand)) {
+                missingFields.add(fieldType.fieldKey());
+            }
+        }
+
+        return List.copyOf(missingFields);
+    }
+
+    /**
+     * 추가 확인이 필요한 모호 필드를 계산한다.
+     *
+     * @param intent        사용자 의도
+     * @param parsedCommand GPT가 추출한 구조화 결과
+     * @return 추가 확인 대상 필드 목록
+     */
+    // LinkedHashSet을 쓰는 이유:
+    // 1) 중복 방지 (같은 필드가 여러 조건에 걸려도 한 번만 나옴)
+    // 2) 입력 순서 유지 (프론트에 일관된 순서로 보여주기 위해)
+    public List<String> calculateAmbiguousFields(CommandIntent intent, ParsedCommand parsedCommand) {
+        LinkedHashSet<String> ambiguousFields = new LinkedHashSet<>();
+
+        // 카테고리 자체를 모르는 경우 -> 카테고리 자체를 모르면 다른 판단이 무의미하므로 productCategory만 ambiguous에 넣고 즉시 반환
+        // ex) "아이템 하나 추천해줘" -> 뭘 사려는지 조차 모름 -> productCategory 물어봐야 함
+        if (parsedCommand == null || parsedCommand.productCategory() == null || parsedCommand.productCategory() == ProductCategory.UNKNOWN) {
+            ambiguousFields.add(CommandFieldType.PRODUCT_CATEGORY.fieldKey());
+            return List.copyOf(ambiguousFields);
+        }
+
+        ProductCategory category = parsedCommand.productCategory();
+
+        // 자동 결제의 경우 진짜 돈이 나가므로 더 확실한 정보가 필요함
+        if (intent == CommandIntent.AUTO_PURCHASE) {
+            addMissingFieldKeys(
+                    ambiguousFields,
+                    commandFieldPolicyService.getAutoPurchaseClarificationFields(category),
+                    parsedCommand
+            );
+        }
+
+        // 상품명이 2단어 이하로 너무 짧을 경우 검색 결과가 너무 많아지므로 추가 정보를 받아옴
+        if (isBroadProductName(parsedCommand)) {
+            addMissingFieldKeys(
+                    ambiguousFields,
+                    commandFieldPolicyService.getBroadProductClarificationFields(category),
+                    parsedCommand
+            );
+        }
+
+        return List.copyOf(ambiguousFields);
+    }
+
+    private void addMissingFieldKeys(
+            LinkedHashSet<String> ambiguousFields,  // 결과를 여기에 누적
+            List<CommandFieldType> fieldTypes,      // 검사할 필드 목록
+            ParsedCommand parsedCommand             // GPT 파싱 결과
+    ) {
+        for (CommandFieldType fieldType : fieldTypes) {
+            if (isMissing(fieldType, parsedCommand)) {
+                ambiguousFields.add(fieldType.fieldKey());
+            }
+        }
+    }
+
+    private boolean isBroadProductName(ParsedCommand parsedCommand) {
+        String productName = parsedCommand.productName();
+        if (isBlank(productName)) {
+            return false;
+        }
+
+        // 브랜드 + 라인 정도만 있는 짧은 상품명은 후보가 너무 많다고 가정한다.
+        int tokenCount = productName.trim().split("\\s+").length;
+        return tokenCount <= 2;
+    }
+
+    private boolean isMissing(CommandFieldType fieldType, ParsedCommand parsedCommand) {
+        return switch (fieldType) {
+            case PRODUCT_CATEGORY -> parsedCommand.productCategory() == null || parsedCommand.productCategory() == ProductCategory.UNKNOWN;
+            case PRODUCT_NAME -> isBlank(parsedCommand.productName());
+            case BRAND -> isBlank(parsedCommand.brand());
+            case LINE -> isBlank(parsedCommand.line());
+            case MODEL -> isBlank(parsedCommand.model());
+            case COLOR -> isBlank(parsedCommand.color());
+            case SIZE -> isBlank(parsedCommand.size());
+            case PLATFORM -> parsedCommand.platform() == null;
+            case MAX_PRICE -> parsedCommand.maxPrice() == null || parsedCommand.maxPrice() <= 0;
+            case MIN_PRICE -> parsedCommand.minPrice() == null || parsedCommand.minPrice() <= 0;
+            case CURRENCY -> isBlank(parsedCommand.currency());
+            case SEARCH_CATEGORY_HINT -> isBlank(parsedCommand.searchCategoryHint());
+        };
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+}

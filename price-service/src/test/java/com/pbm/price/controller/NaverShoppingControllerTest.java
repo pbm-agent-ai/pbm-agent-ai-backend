@@ -44,8 +44,8 @@ class NaverShoppingControllerTest {
     void searchProducts_success_returns200WithApiResponse() throws Exception {
         // given - 서비스가 정상 검색 결과를 반환하는 상황
         List<SearchResponse> mockResults = List.of(
-                new SearchResponse("에어팟 프로", "250000", "350000", "애플스토어", "https://example.com/1"),
-                new SearchResponse("갤럭시 버즈", "120000", "180000", "삼성스토어", "https://example.com/2")
+                new SearchResponse("에어팟 프로", "250000", "350000", "애플스토어", "https://example.com/1", "KRW", "naver-1"),
+                new SearchResponse("갤럭시 버즈", "120000", "180000", "삼성스토어", "https://example.com/2", "KRW", "naver-2")
         );
         when(naverShoppingService.searchProducts(eq("이어폰"), eq(10)))
                 .thenReturn(mockResults);

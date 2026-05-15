@@ -34,9 +34,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 - shouldNotFilter()에서 request.getServletPath()로 제외 경로인지 판단
  */
     private static final Set<String> EXCLUDED_PATHS = Set.of(
-            "/api/auth/signup",
-            "/api/auth/login",
-            "/api/auth/refresh"
+            "/api/v1/auth/signup",
+            "/api/v1/auth/login",
+            "/api/v1/auth/refresh"
     );
     /* 의존성
     - JwtUtil jwtUtil: 토큰 유효성 검증/클레임 추출(userId, role)

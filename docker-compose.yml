@@ -72,7 +72,7 @@ services:
       - eureka-server
     environment:
       - EUREKA_URL=http://eureka-server:8761/eureka/
-      - JWT_SECRET=${JWT_SECRET:-pbm-super-secret-key-minimum-32-characters-long}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
 
   # ─── 인증 서비스 ──────────────────────────────────────────
   auth-service:
@@ -92,7 +92,7 @@ services:
       - AUTH_DB_PASSWORD=${AUTH_DB_PASSWORD:-password}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - JWT_SECRET=${JWT_SECRET:-pbm-super-secret-key-minimum-32-characters-long}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
       - JWT_EXPIRATION=${JWT_EXPIRATION:-1800000}
       - JWT_REFRESH_EXPIRATION=${JWT_REFRESH_EXPIRATION:-604800000}
 
@@ -109,6 +109,7 @@ services:
     environment:
       - EUREKA_SERVER_URL=http://eureka-server:8761/eureka/
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - EXTERNAL_API_SERVICE_URL=http://external-api-service:8090
       - COMMAND_DB_URL=jdbc:postgresql://postgres:5432/command_db
       - COMMAND_DB_USERNAME=${COMMAND_DB_USERNAME:-postgres}
       - COMMAND_DB_PASSWORD=${COMMAND_DB_PASSWORD:-password}
@@ -154,8 +155,8 @@ services:
     build:
       context: .
       dockerfile: notification-service/Dockerfile
-    ports:
-      - "8085:8085"
+    expose:
+      - "8085"
     depends_on:
       - kafka
       - eureka-server
@@ -180,6 +181,12 @@ services:
       - ALIEXPRESS_BASE_URL=${ALIEXPRESS_BASE_URL:-https://api-sg.aliexpress.com/sync}
       # AliExpress 모킹 모드: 기본값은 false(실제 API 호출). 필요 시 true로 설정하여 고정 데이터 반환
       - ALIEXPRESS_MOCK_ENABLED=${ALIEXPRESS_MOCK_ENABLED:-false}
+      # OpenAI API 환경변수
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.4-mini}
+      # OpenAI 모킹 모드: 기본값은 false(실제 API 호출). 필요 시 true로 설정하여 고정 데이터 반환
+      - OPENAI_MOCK_ENABLED=${OPENAI_MOCK_ENABLED:-false}
 
 volumes:
   postgres_data:

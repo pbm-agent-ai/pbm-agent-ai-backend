@@ -25,9 +25,9 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
 
     // 인증 없이 접근 가능한 공개 경로
     private static final List<String> PUBLIC_PATHS = List.of(
-            "/api/auth/signup",
-            "/api/auth/login",
-            "/api/auth/refresh"
+            "/api/v1/auth/signup",
+            "/api/v1/auth/login",
+            "/api/v1/auth/refresh"
     );
 
     @Override
@@ -43,7 +43,9 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
 
         // 2. 프리패스 구역인지 확인
         if (isPublicPath(path)) {
-            return chain.filter(exchange);  // 다음 필터로 곧장 패스
+            // 스푸핑 방지: 공개 경로 요청에도 클라이언트가 악의적으로 보낸 X-User-Id/X-User-Role 헤더를 제거하고 다음 단계로 넘긴다
+            ServerHttpRequest cleanRequest = removeUserIdentityHeaders(exchange.getRequest());
+            return chain.filter(exchange.mutate().request(cleanRequest).build());
         }
 
         // 3. 티켓 검사 ("회원가입 아니면, 요청 방문 카드에서 Authorization 을 확인)
@@ -67,13 +69,29 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         // 7. 손님 방문 카드에 몰래 적어두기
         // Gateway는 변경 불가능(Immutable)원칙을 따르기 때문.
         // 기존 카드에 펜으로 덧쓰는게 아니라 mutate() (복사본 만듦)를 써서 새로운 카드를 발급
+        // 스푸핑 방지: 클라이언트가 보낸 가짜 X-User-Id/X-User-Role을 먼저 지우고, JWT에서 추출한 신뢰값으로 교체
         ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
+                .headers(headers -> {
+                    headers.remove("X-User-Id");
+                    headers.remove("X-User-Role");
+                })
                 .header("X-User-Id", String.valueOf(userId))    // 다른 마이크로서비스가 볼 수 있게 아이디표 붙여줌
                 .header("X-User-Role", role)                    // 등급표 붙여줌
                 .build();
 
         // 8. 메모가 적힌 새로운 방문 카드를 들고 다음 담당자에게 넘김.
         return chain.filter(exchange.mutate().request(mutatedRequest).build());
+    }
+
+    // 클라이언트가 임의로 X-User-Id / X-User-Role 헤더를 주입하는 스푸핑 공격을 방지하기 위해
+    // 요청에서 해당 헤더를 제거한 복사본을 반환한다.
+    private ServerHttpRequest removeUserIdentityHeaders(ServerHttpRequest request) {
+        return request.mutate()
+                .headers(headers -> {
+                    headers.remove("X-User-Id");
+                    headers.remove("X-User-Role");
+                })
+                .build();
     }
 
     private boolean isPublicPath(String path) {

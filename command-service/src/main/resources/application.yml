@@ -5,13 +5,8 @@ spring:
   application:
     name: command-service
 
-  # 현재 command-service는 Kafka 발행 기능만 사용하므로
-  # DB/JPA 자동 설정은 잠시 제외하여 PostgreSQL 미기동 환경에서도 실행 가능하게 한다.
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
-      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
-
+  # command-sessions 테이블 접근을 위해 JPA 자동 설정을 활성화한다.
+  # datasource/jpa 설정은 아래에서 환경변수로 주입받는다.
   datasource:
     url: ${COMMAND_DB_URL}
     username: ${COMMAND_DB_USERNAME}
@@ -44,6 +39,34 @@ app:
   kafka:
     topics:
       price-topic: price-topic  # Java 파일에 토픽명을 하드코딩하지 않기 위해 설정으로 분리
+      product-selection-required-topic: product-selection-required
+      product-selection-topic: product-selection
+      price-validation-result-topic: price-validation-result
+
+proxy:
+  base-url: ${EXTERNAL_API_SERVICE_URL:http://127.0.0.1:8090}
+  connect-timeout-ms: 3000
+  read-timeout-ms: 25000
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      openAiProxyService:
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+        permittedNumberOfCallsInHalfOpenState: 3
+        slidingWindowType: COUNT_BASED
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+  retry:
+    instances:
+      openAiProxyService:
+        maxAttempts: 1
+        waitDuration: 1s
+        retryExceptions:
+          - org.springframework.web.client.RestClientException
+          - com.pbm.command.exception.OpenAiClientException
 
 eureka:
   client:
@@ -53,3 +76,17 @@ eureka:
     fetch-registry: true
   instance:
     prefer-ip-address: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+# 디버그 로깅: external-api-service 호출 및 HTTP 클라이언트 동작 추적용
+logging:
+  level:
+    com.pbm.command.client: DEBUG
+    com.pbm.command.config.RestClientConfig: DEBUG
+    org.springframework.web.client: DEBUG
+    org.apache.hc.client5: DEBUG

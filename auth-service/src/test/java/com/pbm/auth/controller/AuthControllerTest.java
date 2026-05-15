@@ -54,13 +54,13 @@ class AuthControllerTest {
     private KafkaTemplate<String, UserEvent> kafkaTemplate;
 
     @Test
-    @DisplayName("POST /api/auth/signup: 유효한 요청이면 201과 ApiResponse<UserResponse>를 반환한다")
+    @DisplayName("POST /api/v1/auth/signup: 유효한 요청이면 201과 ApiResponse<UserResponse>를 반환한다")
     void signup_success_returns201WithApiResponse() throws Exception {
         SignupRequest request = new SignupRequest("new@pbm.com", "password123", "newbie");
         UserResponse response = new UserResponse(1L, "new@pbm.com", "newbie", "USER");
         when(authService.signup(any(SignupRequest.class))).thenReturn(response);
 
-        mockMvc.perform(post("/api/auth/signup")
+        mockMvc.perform(post("/api/v1/auth/signup")
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
@@ -74,11 +74,11 @@ class AuthControllerTest {
     }
 
     @Test
-    @DisplayName("POST /api/auth/signup: 요청값 검증 실패면 400과 ApiResponse 에러 형식을 반환한다")
+    @DisplayName("POST /api/v1/auth/signup: 요청값 검증 실패면 400과 ApiResponse 에러 형식을 반환한다")
     void signup_validationFailure_returns400() throws Exception {
         SignupRequest invalidRequest = new SignupRequest("invalid-email", "123", "");
 
-        mockMvc.perform(post("/api/auth/signup")
+        mockMvc.perform(post("/api/v1/auth/signup")
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(invalidRequest)))
@@ -89,13 +89,13 @@ class AuthControllerTest {
     }
 
     @Test
-    @DisplayName("POST /api/auth/login: 유효한 로그인 요청이면 200과 ApiResponse<TokenResponse>를 반환한다")
+    @DisplayName("POST /api/v1/auth/login: 유효한 로그인 요청이면 200과 ApiResponse<TokenResponse>를 반환한다")
     void login_success_returns200WithApiResponse() throws Exception {
         LoginRequest request = new LoginRequest("user@pbm.com", "password123");
         TokenResponse response = new TokenResponse("access-token", "refresh-token", "Bearer", 3_600_000L);
         when(authService.login(any(LoginRequest.class))).thenReturn(response);
 
-        mockMvc.perform(post("/api/auth/login")
+        mockMvc.perform(post("/api/v1/auth/login")
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
@@ -109,12 +109,12 @@ class AuthControllerTest {
     }
 
     @Test
-    @DisplayName("POST /api/auth/login: 인증 실패(AuthException)면 401과 ApiResponse 에러를 반환한다")
+    @DisplayName("POST /api/v1/auth/login: 인증 실패(AuthException)면 401과 ApiResponse 에러를 반환한다")
     void login_invalidCredentials_returns401() throws Exception {
         LoginRequest request = new LoginRequest("user@pbm.com", "wrong-password");
         when(authService.login(any(LoginRequest.class))).thenThrow(AuthException.invalidCredentials());
 
-        mockMvc.perform(post("/api/auth/login")
+        mockMvc.perform(post("/api/v1/auth/login")
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
@@ -126,11 +126,11 @@ class AuthControllerTest {
 
     @Test
     @WithMockUser(username = "1")
-    @DisplayName("POST /api/auth/logout: 인증된 사용자는 200과 성공 메시지를 반환한다")
+    @DisplayName("POST /api/v1/auth/logout: 인증된 사용자는 200과 성공 메시지를 반환한다")
     void logout_success_returns200() throws Exception {
         doNothing().when(authService).logout(1L);
 
-        mockMvc.perform(post("/api/auth/logout").with(csrf()))
+        mockMvc.perform(post("/api/v1/auth/logout").with(csrf()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data").doesNotExist())
@@ -138,12 +138,12 @@ class AuthControllerTest {
     }
 
     @Test
-    @DisplayName("POST /api/auth/refresh: Refresh-Token 헤더로 재발급 요청 시 200을 반환한다")
+    @DisplayName("POST /api/v1/auth/refresh: Refresh-Token 헤더로 재발급 요청 시 200을 반환한다")
     void refresh_success_returns200() throws Exception {
         TokenResponse response = new TokenResponse("new-access", "new-refresh", "Bearer", 3_600_000L);
         when(authService.refresh(eq("refresh-token-value"))).thenReturn(response);
 
-        mockMvc.perform(post("/api/auth/refresh")
+        mockMvc.perform(post("/api/v1/auth/refresh")
                         .with(csrf())
                         .header("Refresh-Token", "refresh-token-value"))
                 .andExpect(status().isOk())
@@ -156,12 +156,12 @@ class AuthControllerTest {
 
     @Test
     @WithMockUser(username = "1")
-    @DisplayName("GET /api/auth/me: 인증된 사용자 정보 조회 시 200과 ApiResponse<UserResponse>를 반환한다")
+    @DisplayName("GET /api/v1/auth/me: 인증된 사용자 정보 조회 시 200과 ApiResponse<UserResponse>를 반환한다")
     void getMyInfo_success_returns200() throws Exception {
         UserResponse response = new UserResponse(1L, "user@pbm.com", "tester", "USER");
         when(authService.getMyInfo(1L)).thenReturn(response);
 
-        mockMvc.perform(get("/api/auth/me"))
+        mockMvc.perform(get("/api/v1/auth/me"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.message").value("성공"))
@@ -172,12 +172,12 @@ class AuthControllerTest {
     }
     @Test
     @WithMockUser(username = "1")
-    @DisplayName("PUT /api/auth/password: 인증된 사용자가 올바른 현재 비밀번호로 요청 시 200을 반환한다")
+    @DisplayName("PUT /api/v1/auth/password: 인증된 사용자가 올바른 현재 비밀번호로 요청 시 200을 반환한다")
     void changePassword_success_returns200() throws Exception {
         ChangePasswordRequest request = new ChangePasswordRequest("oldPassword1", "newPassword1");
         doNothing().when(authService).changePassword(eq(1L), any(ChangePasswordRequest.class));
 
-        mockMvc.perform(put("/api/auth/password")
+        mockMvc.perform(put("/api/v1/auth/password")
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
@@ -188,13 +188,13 @@ class AuthControllerTest {
 
     @Test
     @WithMockUser(username = "1")
-    @DisplayName("PUT /api/auth/password: 현재 비밀번호가 틀리면 400과 에러 메시지를 반환한다")
+    @DisplayName("PUT /api/v1/auth/password: 현재 비밀번호가 틀리면 400과 에러 메시지를 반환한다")
     void changePassword_wrongPassword_returns400() throws Exception {
         ChangePasswordRequest request = new ChangePasswordRequest("wrongPassword", "newPassword1");
         doThrow(AuthException.wrongPassword())
                 .when(authService).changePassword(eq(1L), any(ChangePasswordRequest.class));
 
-        mockMvc.perform(put("/api/auth/password")
+        mockMvc.perform(put("/api/v1/auth/password")
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
@@ -204,11 +204,11 @@ class AuthControllerTest {
     }
 
     @Test
-    @DisplayName("PUT /api/auth/password: 인증 없이 요청하면 401을 반환한다")
+    @DisplayName("PUT /api/v1/auth/password: 인증 없이 요청하면 401을 반환한다")
     void changePassword_unauthenticated_returns401() throws Exception {
         ChangePasswordRequest request = new ChangePasswordRequest("old", "newPassword1");
 
-        mockMvc.perform(put("/api/auth/password")
+        mockMvc.perform(put("/api/v1/auth/password")
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))

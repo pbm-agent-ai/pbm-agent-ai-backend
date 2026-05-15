@@ -38,7 +38,7 @@ public class SecurityConfig {
                 // JWT 필터를 기본 로그인 필터보다 앞에서 실행.
                 // 즉, 컨트롤러/인가 판단 전에 JWT인증 정보를 SecurityContext에 미리 넣어둠.
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/signup", "/api/auth/login", "/api/auth/refresh",
+                        .requestMatchers("/api/v1/auth/signup", "/api/v1/auth/login", "/api/v1/auth/refresh",
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
                                 "/v3/api-docs/**"

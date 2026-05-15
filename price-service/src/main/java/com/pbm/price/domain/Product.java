@@ -33,8 +33,8 @@ import java.time.Instant;
 @Table(
         name = "products",
         uniqueConstraints = @UniqueConstraint(
-                name = "uk_products_source_external_id",
-                columnNames = {"source_type", "external_product_id"}
+                name = "uk_products_platform_external_id",
+                columnNames = {"platform", "external_product_id"}
         )
 )
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -50,8 +50,8 @@ public class Product {
     private MonitorTarget monitorTarget;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "source_type", nullable = false, length = 30)
-    private SourceType sourceType;
+    @Column(name = "platform", nullable = false, length = 30)
+    private Platform platform;
 
     @Column(name = "external_product_id", nullable = false, length = 120)
     private String externalProductId;
@@ -68,6 +68,9 @@ public class Product {
     @Column(name = "mall_name", length = 120)
     private String mallName;
 
+    @Column(name= "category_path", length=255)
+    private String categoryPath;
+
     @Column(name = "last_seen_at")
     private Instant lastSeenAt;
 
@@ -78,20 +81,22 @@ public class Product {
     private Instant updatedAt;
 
     private Product(MonitorTarget monitorTarget,
-                    SourceType sourceType,
+                    Platform platform,
                     String externalProductId,
                     String title,
                     String productUrl,
                     String imageUrl,
                     String mallName,
+                    String categoryPath,
                     Instant lastSeenAt) {
         this.monitorTarget = monitorTarget;
-        this.sourceType = sourceType;
+        this.platform = platform;
         this.externalProductId = externalProductId;
         this.title = title;
         this.productUrl = productUrl;
         this.imageUrl = imageUrl;
         this.mallName = mallName;
+        this.categoryPath = categoryPath;
         this.lastSeenAt = lastSeenAt;
     }
 
@@ -99,14 +104,15 @@ public class Product {
      * 새 상품 엔티티를 생성한다.
      */
     public static Product create(MonitorTarget monitorTarget,
-                                 SourceType sourceType,
+                                 Platform platform,
                                  String externalProductId,
                                  String title,
                                  String productUrl,
                                  String imageUrl,
                                  String mallName,
+                                 String categoryPath,
                                  Instant lastSeenAt) {
-        return new Product(monitorTarget, sourceType, externalProductId, title, productUrl, imageUrl, mallName, lastSeenAt);
+        return new Product(monitorTarget, platform, externalProductId, title, productUrl, imageUrl, mallName, categoryPath, lastSeenAt);
     }
 
     /**
@@ -117,12 +123,14 @@ public class Product {
                                String productUrl,
                                String imageUrl,
                                String mallName,
+                               String categoryPath,
                                Instant lastSeenAt) {
         this.monitorTarget = monitorTarget;
         this.title = title;
         this.productUrl = productUrl;
         this.imageUrl = imageUrl;
         this.mallName = mallName;
+        this.categoryPath = categoryPath;
         this.lastSeenAt = lastSeenAt;
     }
 

@@ -1,5 +1,7 @@
 """AliExpress Affiliate API 응답 스키마 - price-service가 소비하기 쉬운 정규화된 형태"""
 
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -33,6 +35,19 @@ class AliexpressProductItem(BaseModel):
     lastest_volume: str = Field("", description="최근 판매량")
     shop_name: str = Field("", description="상점명")
     shop_url: str = Field("", description="상점 URL")
+    # 1차 카테고리 ID
+    first_level_category_id: str = Field("", description="1차 카테고리 ID")
+    # 1차 카테고리명
+    first_level_category_name: str = Field("", description="1차 카테고리명")
+    # 2차 카테고리ID
+    second_level_category_id: str = Field("", description="2차 카테고리 ID")
+    # 2차 카테고리명
+    second_level_category_name: str = Field("", description="2차 카테고리명")
+
+
+class AliexpressProductDetailResponse(BaseModel):
+    """AliExpress 상품 단건 조회 정규화 응답"""
+    product: Optional[AliexpressProductItem] = Field(None, description="상품 정보")
 
 
 class AliexpressSearchResponse(BaseModel):

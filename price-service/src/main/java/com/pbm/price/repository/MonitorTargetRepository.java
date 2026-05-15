@@ -1,7 +1,7 @@
 package com.pbm.price.repository;
 
 import com.pbm.price.domain.MonitorTarget;
-import com.pbm.price.domain.SourceType;
+import com.pbm.price.domain.Platform;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.Instant;
@@ -13,7 +13,7 @@ import java.util.Optional;
  */
 public interface MonitorTargetRepository extends JpaRepository<MonitorTarget, Long> {
 
-    Optional<MonitorTarget> findBySourceTypeAndNormalizedKeyword(SourceType sourceType, String normalizedKeyword);
+    Optional<MonitorTarget> findByPlatformAndNormalizedKeyword(Platform platform, String normalizedKeyword);
 
     /**
      * 수집 예정 시각이 도래한 대상 목록을 조회한다.

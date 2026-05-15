@@ -12,6 +12,7 @@ public record PriceAlertEventPayload(
         String productName,
         Integer currentPrice,
         Integer targetPrice,
-        String productUrl
+        String productUrl,
+        String searchKeyword
 ) {
 }

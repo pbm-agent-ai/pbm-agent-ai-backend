@@ -26,6 +26,7 @@ import httpx
 from app.schemas.aliexpress import (
     AliexpressCategoryItem,
     AliexpressCategoryResponse,
+    AliexpressProductDetailResponse,
     AliexpressProductItem,
     AliexpressSearchResponse,
 )
@@ -185,6 +186,10 @@ def _normalize_products(raw_products: list[dict]) -> list[AliexpressProductItem]
             lastest_volume=str(item.get("lastest_volume", "")),
             shop_name=shop_name,
             shop_url=item.get("shop_url", ""),
+            first_level_category_id=str(item.get("first_level_category_id", "")),
+            first_level_category_name=str(item.get("first_level_category_name", "")),
+            second_level_category_id=str(item.get("second_level_category_id", "")),
+            second_level_category_name=str(item.get("second_level_category_name", "")),
         ))
     return normalized
 
@@ -216,6 +221,10 @@ _MOCK_PRODUCTS: list[dict] = [
         "lastest_volume": "2500",
         "shop_name": "TechGadget Store",
         "shop_url": "https://www.aliexpress.com/store/912345678",
+        "first_level_category_id": "200000345",
+        "first_level_category_name": "Consumer Electronics",
+        "second_level_category_id": "200001234",
+        "second_level_category_name": "Earphones & Headphones",
     },
     {
         "product_id": "1005005890123456",
@@ -233,6 +242,10 @@ _MOCK_PRODUCTS: list[dict] = [
         "lastest_volume": "1800",
         "shop_name": "DigitalLife Official",
         "shop_url": "https://www.aliexpress.com/store/923456789",
+        "first_level_category_id": "200000345",
+        "first_level_category_name": "Consumer Electronics",
+        "second_level_category_id": "200001235",
+        "second_level_category_name": "USB Hubs & Adapters",
     },
     {
         "product_id": "1005004567890123",
@@ -250,6 +263,10 @@ _MOCK_PRODUCTS: list[dict] = [
         "lastest_volume": "3200",
         "shop_name": "KeyboardWorld",
         "shop_url": "https://www.aliexpress.com/store/934567890",
+        "first_level_category_id": "200000346",
+        "first_level_category_name": "Computer & Office",
+        "second_level_category_id": "200001236",
+        "second_level_category_name": "Keyboards & Mice",
     },
 ]
 
@@ -272,6 +289,7 @@ async def _search_affiliate_products_mock(
     target_currency: str = "KRW",
     target_language: str = "KO",
     ship_to_country: str = "KR",
+    category_ids: str | None = None,
     tracking_id: str | None = None,
 ) -> AliexpressSearchResponse:
     """모킹 모드: 고정된 검색 결과를 반환한다.
@@ -293,6 +311,120 @@ async def _search_affiliate_products_mock(
         page_size=page_size,
         items=items,
     )
+
+
+async def _get_affiliate_product_detail_mock(
+    product_id: str,
+    arget_currency: str = "KRW",
+    target_language: str = "KO",
+    ship_to_country: str = "KR",) -> AliexpressProductDetailResponse:
+    """모킹 모드: _MOCK_PRODUCTS에서 product_id와 일치하는 상품을 반환한다.
+
+    Args:
+        product_id: 조회할 상품 ID
+
+    Returns:
+        일치하는 상품이 있으면 AliexpressProductDetailResponse, 없으면 product=None
+    """
+    logger.info("모킹 모드 활성화 - 상품 단건 조회 모킹 (product_id: %s)", product_id)
+    for raw in _MOCK_PRODUCTS:
+        if raw.get("product_id") == product_id:
+            items = _normalize_products([raw])
+            return AliexpressProductDetailResponse(product=items[0])
+    return AliexpressProductDetailResponse(product=None)
+
+
+async def get_affiliate_product_detail(
+    product_id: str,
+    target_currency: str = "KRW",
+    target_language: str = "KO",
+    ship_to_country: str = "KR",
+    ) -> AliexpressProductDetailResponse:
+    """AliExpress Affiliate 상품 단건 상세 조회 API 호출 및 정규화된 응답 반환
+
+    공식 메서드: aliexpress.affiliate.productdetail.get
+
+    ALIEXPRESS_MOCK_ENABLED=true인 경우 실제 API 호출 없이 모킹 데이터를 반환한다.
+
+    Args:
+        product_id: 조회할 상품 ID
+
+    Returns:
+        AliexpressProductDetailResponse: 정규화된 상품 상세 정보
+
+    Raises:
+        ValueError: API 에러 응답 또는 자격증명 누락 시
+    """
+    if _is_mock_enabled():
+        return await _get_affiliate_product_detail_mock(
+        product_id,
+        target_currency,
+        target_language,
+        ship_to_country,)
+
+    # extra_params는 알리 API에 보낼 요청값 묶음임.
+    extra_params: dict[str, str] = {
+        "product_ids": product_id,
+        "target_currency": target_currency,
+        "target_language": target_language,
+        "country": ship_to_country,
+    }
+    # 이 값들을 받아서 공통 파라미터랑 합치고, 서명도 만들고, 최종 요청 파라미터를 완성한다.
+    params = _build_signed_params(method="aliexpress.affiliate.productdetail.get", extra_params=extra_params)
+
+    base_url = os.getenv("ALIEXPRESS_BASE_URL", ALIEXPRESS_API_BASE_URL)
+
+    # client.post가 HTTP request를 만들고 그 request를 전송함
+    # 응답을 받아서 response에 담음
+    # request = ..., response = ... 이런식으로 분리할 수 있지만 단순 호출이라 post()로 한번에 처리한 모습임
+    """
+    request = client.build_request(
+    "POST",
+    base_url,
+    data=params,
+    headers={"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"},
+    )
+    response = await client.send(request)
+    이렇게 변경 가능
+    """
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            base_url,
+            data=params,
+            headers={"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"},
+        )
+        response.raise_for_status()
+
+    data = response.json()
+
+    # 에러 응답 확인
+    error_code, error_message = _extract_error(data)
+    if error_code:
+        raise ValueError(f"AliExpress API 에러: code={error_code}, message={error_message}")
+
+    # 상품 상세 응답 파싱: aliexpress_affiliate_productdetail_get_response > resp_result > result > products > product
+    resp_result = data.get(
+        "aliexpress_affiliate_productdetail_get_response",
+        data.get("resp_result", {}),
+    )
+    if isinstance(resp_result, dict) and "resp_result" in resp_result:
+        resp_result = resp_result["resp_result"]
+
+    result = resp_result.get("result", {}) if isinstance(resp_result, dict) else {}
+
+    products_data = result.get("products", result) if isinstance(result, dict) else {}
+    if isinstance(products_data, dict):
+        raw_products = products_data.get("product", [])
+    elif isinstance(products_data, list):
+        raw_products = products_data
+    else:
+        raw_products = []
+
+    if raw_products:
+        items = _normalize_products(raw_products)
+        return AliexpressProductDetailResponse(product=items[0])
+
+    return AliexpressProductDetailResponse(product=None)
 
 
 async def get_affiliate_categories() -> AliexpressCategoryResponse:
@@ -330,6 +462,8 @@ async def get_affiliate_categories() -> AliexpressCategoryResponse:
 
     # 카테고리 응답 파싱: ...resp_result.result.categories.category 경로
     resp_result = data.get("aliexpress_affiliate_category_get_response", data.get("resp_result", {}))
+    # 1. instance함수를 통해 resp_result가 딕셔너리인지 확인
+    # 2. 딕셔너리가 맞으면 그 안에 "resp_result"키가 있는지 확인
     if isinstance(resp_result, dict) and "resp_result" in resp_result:
         resp_result = resp_result["resp_result"]
 
@@ -352,6 +486,7 @@ async def search_affiliate_products(
     target_currency: str = "KRW",
     target_language: str = "KO",
     ship_to_country: str = "KR",
+    category_ids: str | None = None,
     tracking_id: str | None = None,
 ) -> AliexpressSearchResponse:
     """AliExpress Affiliate 상품 검색 API 호출 및 정규화된 응답 반환
@@ -383,6 +518,7 @@ async def search_affiliate_products(
             target_currency=target_currency,
             target_language=target_language,
             ship_to_country=ship_to_country,
+            category_ids=category_ids,
             tracking_id=tracking_id,
         )
 
@@ -407,6 +543,9 @@ async def search_affiliate_products(
 
     if tracking_id:
         extra_params["tracking_id"] = tracking_id
+
+    if category_ids:
+        extra_params["category_ids"] = category_ids
 
     params = _build_signed_params(method="aliexpress.affiliate.product.query", extra_params=extra_params)
 

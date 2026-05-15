@@ -10,11 +10,11 @@
 
 | 서비스 | 진행률 | 상태 |
 |--------|--------|------|
-| auth-service | ~95% | 테스트 코드, Eureka 연동 미완료 |
-| price-service | ~30% | 네이버 쇼핑 API만 구현 |
-| gateway | 0% | |
+| auth-service | 100% | 핵심 인증/JWT/Kafka/Swagger 완료 |
+| price-service | ~60% | 네이버/AliExpress 연동, 스케줄러, Circuit Breaker 완료 |
+| gateway | ~70% | JWT 필터, 라우팅, 헤더 위조 방어 완료 |
 | eureka-server | 0% | |
-| command-service | 0% | |
+| command-service | ~75% | GPT 파싱, 조건 판별, Kafka 연동 완료 |
 | payment-service | 0% | |
 | notification-service | 0% | |
 | blockchain | 0% | |
@@ -64,7 +64,7 @@ JWT 필터가 어떤 순서로 동작하는지 설명해줘"
 - [x] gateway 완성 (JWT 검증 필터 포함)
 - [x] docker-compose에 Kafka 토픽 설정
 - [x] 전 서비스 Kafka 공통 설정
-- [ ] auth-service → Kafka 로그인 이벤트 발행
+- [x] auth-service → Kafka 로그인 이벤트 발행
 - [ ] **Kafka 메시지 스키마 설계 확정** (서비스 간 이벤트 구조 정의)
 - [ ] **AWS EC2 배포 + CI/CD 구축** (gateway 완성 후 진행)
 - [ ] AWS EC2 인스턴스 생성
@@ -76,7 +76,7 @@ JWT 필터가 어떤 순서로 동작하는지 설명해줘"
 ```text
 "Spring Cloud Gateway에서 JWT 검증 필터를 작성해줘.
 인증 실패 시 401 응답을 반환하고
-/api/auth/** 경로는 필터를 건너뛰게 해줘"
+/api/v1/auth/** 경로는 필터를 건너뛰게 해줘"
 ```
 
 ### 팀원 작업
@@ -111,8 +111,8 @@ external-api-service (FastAPI, 8090)
 - [ ] 외부 API 연동 시 예외 처리
 
 ### 개발 작업 - external-api-service (FastAPI)
-- [ ] FastAPI 프로젝트 구조 생성
-- [ ] AliExpress Affiliate API 연동
+- [x] FastAPI 프로젝트 구조 생성
+- [x] AliExpress Affiliate API 연동
 - [ ] 한국수출입은행 환율 API 연동
 - [ ] 한국소비자원 물가정보 API 연동
 - [ ] youtube-transcript-api 자막 수집
@@ -120,10 +120,10 @@ external-api-service (FastAPI, 8090)
 - [ ] **Gemini API 연동** — 이미지 업로드 → 상품명 인식 → 쇼핑몰 검색
 
 ### 개발 작업 - price-service (Spring Boot)
-- [ ] WebClient로 external-api-service 호출 설정
-- [ ] 가격 스케줄러 (cron, 조건별 주기적 가격 수집)
+- [x] WebClient로 external-api-service 호출 설정
+- [x] 가격 스케줄러 (cron, 조건별 주기적 가격 수집)
 - [ ] Redis 캐싱 (환율, 물가 데이터)
-- [ ] Resilience4j Circuit Breaker 적용 (external-api-service 장애 대응)
+- [x] Resilience4j Circuit Breaker 적용 (external-api-service 장애 대응)
 - [ ] price-service Swagger 적용
 
 ### AI 프롬프트 예시
@@ -148,10 +148,10 @@ Spring Boot WebClient로 이 FastAPI를 호출하는 코드도 작성해줘"
 - [ ] Chrome Extension manifest v3 구조
 
 ### 개발 작업
-- [ ] GPT-4o Mini 자연어 파싱 (누락 조건 감지)
+- [x] GPT 기반 자연어 파싱 (누락 조건 감지)
 - [ ] 누락 조건 답변 수집 후 모니터링 등록 완성
 - [ ] 명령 이력 저장 API
-- [ ] command-service → Kafka price-topic 발행
+- [x] command-service → Kafka price-topic 발행
 - [ ] **Chrome Extension 기본 구조 완성**
   - [ ] manifest.json 설정
   - [ ] content.js (DOM 접근)

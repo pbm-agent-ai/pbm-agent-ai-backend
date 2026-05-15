@@ -26,12 +26,12 @@ spring:
         - id: auth-service
           uri: lb://auth-service
           predicates:
-            - Path=/api/auth/**
+            - Path=/api/v1/auth/**
 
-        - id: command-service
+        - id: command-service-v1
           uri: lb://command-service
           predicates:
-            - Path=/api/commands/**
+            - Path=/api/v1/commands/**
 
         - id: price-service-naver
           uri: lb://price-service
@@ -46,12 +46,12 @@ spring:
         - id: payment-service
           uri: lb://payment-service
           predicates:
-            - Path=/api/payment/**
+            - Path=/api/v1/payments/**
 
         - id: notification-service
           uri: lb://notification-service
           predicates:
-            - Path=/api/notification/**
+            - Path=/api/v1/notification/**
 
 eureka:
   client:

@@ -30,6 +30,10 @@ spring:
       properties:
         spring.json.trusted.packages: "*"
         spring.json.value.default.type: com.pbm.price.dto.event.PriceRequestEvent
+        # 외부 API 호출(최대 25초) 동안 컨슈머가 poll을 못 해도 그룹에서 제외되지 않도록 여유를 줌
+        max.poll.interval.ms: 120000
+        session.timeout.ms: 60000
+        heartbeat.interval.ms: 10000
 
 # 모니터링 설정
 # 스케줄러는 fixedDelay 방식으로 이전 수집 완료 후 scheduler-interval-ms 대기 후 재실행
@@ -41,6 +45,10 @@ app:
     topics:
       price-topic: price-topic
       price-alert: price-alert
+      payment-topic: payment-topic
+      product-selection-required-topic: product-selection-required
+      product-selection-topic: product-selection
+      price-validation-result-topic: price-validation-result
   monitoring:
     default-fetch-interval-minutes: 10
     scheduler-interval-ms: 60000
@@ -57,7 +65,7 @@ external-api-service:
   # WebClient 응답 타임아웃 (초) - HTTP 요청 후 전체 응답 수신 대기 시간
   # @TimeLimiter는 비동기(CompletionStage) 메서드에만 적용 가능하므로,
   # 동기 block() 방식에서는 WebClient 레벨에서 타임아웃을 설정함
-  response-timeout-seconds: ${EXTERNAL_API_RESPONSE_TIMEOUT_SECONDS:5}
+  response-timeout-seconds: ${EXTERNAL_API_RESPONSE_TIMEOUT_SECONDS:25}
 
 # Resilience4j: 외부 API 호출 장애 격리 및 복구 설정
 # Circuit Breaker: 연속 장애 발생 시 빠른 실패(Fail-Fast)를 유도하여 시스템 보호
@@ -86,7 +94,7 @@ resilience4j:
       # external-api-service 호출용 Retry 인스턴스
       externalApiService:
         # 최대 재시도 횟수 (초기 호출 1회 + 재시도 2회 = 총 3회)
-        maxAttempts: 3
+        maxAttempts: 1
         # 재시도 간 대기 시간 (1초 고정 대기)
         waitDuration: 1s
         # 재시도할 예외 타입 (모든 예외에 대해 재시도 수행)
@@ -100,3 +108,9 @@ eureka:
       defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
   instance:
     prefer-ip-address: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs

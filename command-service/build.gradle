@@ -1,4 +1,23 @@
 dependencies {
+    // Swagger UI / OpenAPI 문서 자동 생성
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0'
+
     // Eureka Client (서비스 디스커버리)
     implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
+
+    // Resilience4j: external-api-service 호출 장애를 Circuit Breaker, Retry로 보호
+    implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j'
+
+    // AOP: @CircuitBreaker, @Retry 어노테이션을 Aspect 방식으로 동작시키기 위해 필요
+    implementation 'org.springframework.boot:spring-boot-starter-aop'
+
+    // Apache HttpClient 5: SimpleClientHttpRequestFactory 대신 더 안정적인 HTTP 연결 관리
+    // SSH 터널 등 특수 네트워크 환경에서 404 문제 해결을 위해 교체
+    implementation 'org.apache.httpcomponents.client5:httpclient5'
+
+    // @ConfigurationProperties 메타데이터 생성을 도와 IDE 자동완성을 지원한다
+    annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
+
+    // 테스트에서 @DataJpaTest 사용 시 H2 인메모리 DB가 필요하다
+    testRuntimeOnly 'com.h2database:h2'
 }

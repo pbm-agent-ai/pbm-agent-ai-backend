@@ -108,6 +108,7 @@ public class ProductSelectionConsumer {
                     snapshot.currentPrice().toPlainString(),
                     selectedProduct.mallName(),
                     snapshot.productUrl(),
+                    selectedProduct.imageUrl(),
                     snapshot.currency().name(),
                     selectedProduct.platform(),
                     selectedProduct.searchKeyword()

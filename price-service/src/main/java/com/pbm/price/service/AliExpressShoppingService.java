@@ -83,6 +83,7 @@ public class AliExpressShoppingService {
                             item.target_original_price(),
                             item.shop_name(),
                             item.product_detail_url(),
+                            item.product_main_image_url(),
                             currency,
                             item.product_id()
                     );

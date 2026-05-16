@@ -109,8 +109,8 @@ class PriceTopicConsumerTest {
         // given
         PriceRequestEvent event = createRequestEvent(1L, "에어팟 프로", 300000, "NAVER", "KRW");
         List<SearchResponse> results = List.of(
-                new SearchResponse("에어팟 프로 1", "250000", "350000", "애플스토어", "https://example.com/1", "KRW", "naver-1"),
-                new SearchResponse("에어팟 프로 2", "260000", "360000", "애플스토어", "https://example.com/2", "KRW", "naver-2")
+                new SearchResponse("에어팟 프로 1", "250000", "350000", "애플스토어", "https://example.com/1", "https://img.example.com/1.jpg", "KRW", "naver-1"),
+                new SearchResponse("에어팟 프로 2", "260000", "360000", "애플스토어", "https://example.com/2", "https://img.example.com/2.jpg", "KRW", "naver-2")
         );
         when(naverShoppingService.searchProducts("에어팟 프로", 30)).thenReturn(results);
 
@@ -160,7 +160,7 @@ class PriceTopicConsumerTest {
         // given
         PriceRequestEvent event = createRequestEvent(1L, "무선 이어폰", 50000, "ALIEXPRESS", "USD");
         List<SearchResponse> results = List.of(
-                new SearchResponse("무선 이어폰", "90000", "120000", "AliStore", "https://aliexpress.com/item/1", "USD", "ae-1")
+                new SearchResponse("무선 이어폰", "90000", "120000", "AliStore", "https://aliexpress.com/item/1", "https://img.example.com/ae-1.jpg", "USD", "ae-1")
         );
         when(aliExpressShoppingService.searchProducts(
                 eq("무선 이어폰"), eq(1), eq(20), eq(null), eq("USD"), eq("KO"), eq("KR"), eq(null), eq(null)
@@ -246,6 +246,7 @@ class PriceTopicConsumerTest {
                         String.valueOf(20000 + i),
                         "스토어" + i,
                         "https://example.com/" + i,
+                        "https://img.example.com/" + i + ".jpg",
                         "KRW",
                         "naver-" + i
                 ))
@@ -305,6 +306,7 @@ class PriceTopicConsumerTest {
                         "289787",
                         "Stone's Store",
                         "https://ko.aliexpress.com/item/1005006782975346.html",
+                        "https://img.example.com/1005006782975346.jpg",
                         "KRW",
                         "1005006782975346"
                 )
@@ -354,6 +356,7 @@ class PriceTopicConsumerTest {
                         "",
                         "네이버",
                         "https://search.shopping.naver.com/catalog/57981069328",
+                        "https://img.example.com/57981069328.jpg",
                         "KRW",
                         "57981069328"
                 )

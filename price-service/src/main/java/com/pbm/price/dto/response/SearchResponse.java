@@ -9,6 +9,7 @@ package com.pbm.price.dto.response;
  * @param hprice     최고가 (원 또는 USD, 없을 수 있음)
  * @param mallName   쇼핑몰 이름
  * @param productUrl 상품 상세 링크
+ * @param imageUrl   대표 상품 이미지 URL
  * @param currency   통화 코드 ("KRW", "USD" 등)
  * @param productId  플랫폼 상품 식별자 (예: 네이버 productId, AliExpress product_id)
  */
@@ -18,6 +19,7 @@ public record SearchResponse(
         String hprice,
         String mallName,
         String productUrl,
+        String imageUrl,
         String currency,
         String productId
 ) {

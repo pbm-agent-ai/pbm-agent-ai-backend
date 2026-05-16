@@ -65,6 +65,7 @@ public class NaverShoppingService {
                         item.hprice(),
                         item.mallName(),
                         item.link(),
+                        item.image(),
                         "KRW",
                         item.productId()
                 ))

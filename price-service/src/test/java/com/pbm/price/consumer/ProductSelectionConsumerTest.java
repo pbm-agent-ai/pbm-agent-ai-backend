@@ -144,6 +144,7 @@ class ProductSelectionConsumerTest {
                                           String mallName, String productUrl) {
         return new ProductCandidateDto(
                 productId, title, lprice, mallName, productUrl,
+                null, // imageUrl
                 "KRW", "NAVER", "테스트 키워드"
         );
     }

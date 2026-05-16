@@ -223,6 +223,7 @@ public class PriceTopicConsumer {
                         r.lprice(),
                         r.mallName(),
                         r.productUrl(),
+                        r.imageUrl(),
                         r.currency(),
                         platform,
                         searchKeyword

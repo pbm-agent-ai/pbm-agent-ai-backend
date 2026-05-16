@@ -109,6 +109,7 @@ public class AliExpressProductUrlService {
                 hprice,
                 product.shop_name(),
                 product.product_detail_url(),
+                product.product_main_image_url(),
                 currency == null ? "KRW" : currency.toUpperCase(Locale.ROOT),
                 product.product_id()
         );

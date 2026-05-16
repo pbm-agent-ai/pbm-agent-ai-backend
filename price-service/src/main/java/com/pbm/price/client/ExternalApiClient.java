@@ -62,6 +62,7 @@ public class ExternalApiClient {
                         item.hprice(),
                         item.mallName(),
                         item.link(),
+                        item.image(),
                         "KRW",
                         item.productId()
                 ))
@@ -182,6 +183,7 @@ public class ExternalApiClient {
                         item.hprice(),
                         item.mallName(),
                         item.link(),
+                        item.image(),
                         "KRW",
                         item.productId()
                 ))
@@ -430,6 +432,7 @@ public class ExternalApiClient {
                 item.target_original_price(),// hprice ← target_original_price
                 item.shop_name(),            // mallName ← shop_name
                 item.product_detail_url(),   // productUrl ← product_detail_url
+                item.product_main_image_url(), // imageUrl ← product_main_image_url
                 currency,                    // 통화 코드
                 item.product_id()            // productId ← product_id
         );

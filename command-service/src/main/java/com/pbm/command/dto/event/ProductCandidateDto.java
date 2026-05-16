@@ -21,6 +21,8 @@ public record ProductCandidateDto(
         String mallName,
         /** 상품 상세 링크 */
         String productUrl,
+        /** 대표 상품 이미지 URL */
+        String imageUrl,
         /** 통화 코드 */
         String currency,
         /** 플랫폼 코드 */

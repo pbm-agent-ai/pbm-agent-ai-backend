@@ -26,7 +26,7 @@ class PostSearchValidationServiceTest {
     // ── 공통 테스트 픽스처 ──────────────────────────────────────────────
 
     private static SearchResponse searchResult(String title) {
-        return new SearchResponse(title, "10000", "20000", "몰", "https://example.com", "KRW", "product-1");
+        return new SearchResponse(title, "10000", "20000", "몰", "https://example.com", "https://img.example.com/product-1.jpg", "KRW", "product-1");
     }
 
     private static ParsedCommandSnapshot snapshot(String productCategory, String size) {

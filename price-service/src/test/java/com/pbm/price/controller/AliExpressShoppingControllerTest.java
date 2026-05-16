@@ -45,7 +45,7 @@ class AliExpressShoppingControllerTest {
     void searchProducts_success_returns200WithApiResponse() throws Exception {
         // given - 서비스가 정상 검색 결과를 반환하는 상황
         List<SearchResponse> mockResults = List.of(
-                new SearchResponse("무선 이어폰", "15000", "25000", "AliExpress Store", "https://aliexpress.com/item/1", "KRW", "ae-1")
+                new SearchResponse("무선 이어폰", "15000", "25000", "AliExpress Store", "https://aliexpress.com/item/1", "https://img.example.com/ae-1.jpg", "KRW", "ae-1")
         );
         when(aliExpressShoppingService.searchProducts(
                 eq("이어폰"), eq(1), eq(10), eq("SALE_PRICE_ASC"),

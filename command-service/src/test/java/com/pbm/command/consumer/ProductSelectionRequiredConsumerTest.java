@@ -68,7 +68,7 @@ class ProductSelectionRequiredConsumerTest {
         // given
         List<String> missingFields = List.of("size");
         List<ProductCandidateDto> candidates = List.of(
-                new ProductCandidateDto("prod-1", "상품A", "10000", "스토어A", "https://example.com/1", "KRW", null, null)
+                new ProductCandidateDto("prod-1", "상품A", "10000", "스토어A", "https://example.com/1", null, "KRW", null, null)
         );
         ProductSelectionRequiredEvent event = createEvent(
                 "cmd-uuid-1234", missingFields, "사이즈 정보가 필요합니다", null,

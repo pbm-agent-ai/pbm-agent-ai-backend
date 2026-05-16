@@ -395,11 +395,11 @@ class CommandExecutionServiceTest {
 
         List<ProductCandidateDto> candidates = List.of(
                 new ProductCandidateDto("naver-1", "테스트 상품 1", "250000",
-                        "테스트몰", "https://example.com/product-1", "KRW", "NAVER", "나이키 에어포스"),
+                        "테스트몰", "https://example.com/product-1", null, "KRW", "NAVER", "나이키 에어포스"),
                 new ProductCandidateDto("naver-2", "테스트 상품 2", "300000",
-                        "테스트몰2", "https://example.com/product-2", "KRW", "NAVER", "나이키 에어포스"),
+                        "테스트몰2", "https://example.com/product-2", null, "KRW", "NAVER", "나이키 에어포스"),
                 new ProductCandidateDto("naver-3", "테스트 상품 3", "200000",
-                        "테스트몰3", "https://example.com/product-3", "KRW", "NAVER", "나이키 에어포스")
+                        "테스트몰3", "https://example.com/product-3", null, "KRW", "NAVER", "나이키 에어포스")
         );
         String candidatesJson = new ObjectMapper().writeValueAsString(candidates);
 
@@ -465,7 +465,7 @@ class CommandExecutionServiceTest {
 
         List<ProductCandidateDto> candidates = List.of(
                 new ProductCandidateDto("naver-1", "테스트 상품 1", "250000",
-                        "테스트몰", "https://example.com/product-1", "KRW", "NAVER", "나이키 에어포스")
+                        "테스트몰", "https://example.com/product-1", null, "KRW", "NAVER", "나이키 에어포스")
         );
         String candidatesJson = new ObjectMapper().writeValueAsString(candidates);
 
@@ -502,7 +502,7 @@ class CommandExecutionServiceTest {
 
         List<ProductCandidateDto> candidates = List.of(
                 new ProductCandidateDto("naver-1", "테스트 상품 1", "250000",
-                        "테스트몰", "https://example.com/product-1", "KRW", "NAVER", "나이키 에어포스")
+                        "테스트몰", "https://example.com/product-1", null, "KRW", "NAVER", "나이키 에어포스")
         );
         String candidatesJson = new ObjectMapper().writeValueAsString(candidates);
 
@@ -550,7 +550,7 @@ class CommandExecutionServiceTest {
 
         List<ProductCandidateDto> candidates = List.of(
                 new ProductCandidateDto("naver-1", "테스트 상품 1", "250000",
-                        "테스트몰", "https://example.com/product-1", "KRW", "NAVER", "나이키 에어포스")
+                        "테스트몰", "https://example.com/product-1", null, "KRW", "NAVER", "나이키 에어포스")
         );
         String candidatesJson = new ObjectMapper().writeValueAsString(candidates);
 

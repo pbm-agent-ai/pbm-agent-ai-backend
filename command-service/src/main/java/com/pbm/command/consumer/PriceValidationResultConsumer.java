@@ -80,6 +80,7 @@ public class PriceValidationResultConsumer {
                         product.lprice(),
                         product.mallName(),
                         product.productUrl(),
+                        product.imageUrl(),
                         product.currency(),
                         product.platform(),
                         product.searchKeyword()

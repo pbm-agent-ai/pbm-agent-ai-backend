@@ -52,6 +52,7 @@ class MonitoringSubscriptionServiceTest {
                 lprice,                                       // lprice
                 "테스트몰",                                    // mallName
                 "https://example.com/product/prod-1",         // productUrl
+                null,                                          // imageUrl
                 currency,                                     // currency
                 platform,                                     // platform
                 "테스트 키워드"                                // searchKeyword
@@ -104,6 +105,7 @@ class MonitoringSubscriptionServiceTest {
                 "48000",                                       // 변경된 lprice
                 "갱신된몰",                                    // 변경된 mallName
                 "https://example.com/product/prod-1-updated",  // 변경된 URL
+                null,                                          // imageUrl
                 "KRW",                                         // 동일 currency
                 "NAVER",                                       // 동일 platform
                 "갱신된 키워드"                                 // 변경된 searchKeyword
@@ -156,7 +158,7 @@ class MonitoringSubscriptionServiceTest {
         monitoringSubscriptionService.createOrUpdateFromSelection(USER_ID, COMMAND_ID, TARGET_PRICE, INTENT, candidate);
 
         ProductCandidateDto otherCandidate = new ProductCandidateDto(
-                "prod-2", "다른 상품", "51000", "다른몰", "https://example.com/product/prod-2", "KRW", "NAVER", "다른 키워드"
+                "prod-2", "다른 상품", "51000", "다른몰", "https://example.com/product/prod-2", null, "KRW", "NAVER", "다른 키워드"
         );
 
         // when

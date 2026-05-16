@@ -170,7 +170,7 @@ class CommandSessionServiceTest {
         List<com.pbm.command.dto.event.ProductCandidateDto> candidates = List.of(
                 new com.pbm.command.dto.event.ProductCandidateDto(
                         "naver-macbook-1", "맥북 프로 14", "2500000",
-                        "애플스토어", "https://example.com/macbook", "KRW", null, "맥북 프로 14"
+                        "애플스토어", "https://example.com/macbook", null, "KRW", null, "맥북 프로 14"
                 )
         );
         String candidatesJson =
@@ -275,7 +275,7 @@ class CommandSessionServiceTest {
                 true,
                 List.of(new ProductCandidateResponse(
                         "naver-1", "테스트 상품", "250000", "테스트몰",
-                        "https://example.com/product-1", "KRW", "NAVER", "테스트 키워드"
+                        "https://example.com/product-1", null, "KRW", "NAVER", "테스트 키워드"
                 )),
                 "이미 이 상품을 모니터링한 이력이 있습니다."
         );

@@ -117,8 +117,8 @@ class CommandSessionControllerTest {
                 "검색 결과를 확인하고 상품을 선택해주세요.",
                 null,
                 List.of(
-                        new ProductCandidateResponse("naver-11", "상품 11", "11000", "스토어11", "https://example.com/11", "KRW", "NAVER", "키보드"),
-                        new ProductCandidateResponse("naver-12", "상품 12", "12000", "스토어12", "https://example.com/12", "KRW", "NAVER", "키보드")
+                        new ProductCandidateResponse("naver-11", "상품 11", "11000", "스토어11", "https://example.com/11", null, "KRW", "NAVER", "키보드"),
+                        new ProductCandidateResponse("naver-12", "상품 12", "12000", "스토어12", "https://example.com/12", null, "KRW", "NAVER", "키보드")
                 ),
                 List.of(),
                 null,
@@ -325,10 +325,10 @@ class CommandSessionControllerTest {
         List<ProductCandidateResponse> candidates = List.of(
                 new ProductCandidateResponse(
                         "naver-1", "나이키 에어포스 1", "120000",
-                        "스토어A", "https://example.com/1", "KRW", "NAVER", "나이키 에어포스"),
+                        "스토어A", "https://example.com/1", null, "KRW", "NAVER", "나이키 에어포스"),
                 new ProductCandidateResponse(
                         "naver-2", "나이키 에어포스 2", "130000",
-                        "스토어B", "https://example.com/2", "KRW", "NAVER", "나이키 에어포스")
+                        "스토어B", "https://example.com/2", null, "KRW", "NAVER", "나이키 에어포스")
         );
         CommandSessionResponse response = new CommandSessionResponse(
                 commandId,

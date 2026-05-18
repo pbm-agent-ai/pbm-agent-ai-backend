@@ -2,6 +2,8 @@ package com.pbm.price.controller;
 
 import com.pbm.price.common.ApiResponse;
 import com.pbm.price.service.AliExpressCategorySyncService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
  *       external-api-service → category_nodes 동기화를 수행한다.
  * 연관: AliExpressCategorySyncService, ApiResponse.
  */
+@Tag(name = "Price-AliExpress-Admin", description = "AliExpress 카테고리 관리자 API")
 @RestController
 @RequestMapping("api/v1/admin/aliexpress/categories")
 @RequiredArgsConstructor
@@ -34,6 +37,7 @@ public class AliExpressCategoryAdminController {
      *
      * @return 동기화 성공 메시지를 담은 공통 응답
      */
+    @Operation(summary = "AliExpress 카테고리 동기화", description = "운영자가 AliExpress 전체 카테고리를 수동으로 동기화할 때 사용합니다.")
     @PostMapping("/sync")
     public ApiResponse<Void> syncAliExpressCategories(){
         aliExpressCategorySyncService.syncCategories();

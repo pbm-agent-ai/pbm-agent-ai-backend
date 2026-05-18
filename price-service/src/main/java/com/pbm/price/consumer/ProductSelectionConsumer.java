@@ -1,5 +1,6 @@
 package com.pbm.price.consumer;
 
+import com.pbm.price.common.PriceCurrencyConverter;
 import com.pbm.price.domain.MonitoringSubscription;
 import com.pbm.price.dto.event.PriceValidationResultEvent;
 import com.pbm.price.dto.event.PriceValidationResultEventPayload;
@@ -94,10 +95,14 @@ public class ProductSelectionConsumer {
                 : BigDecimal.valueOf(event.payload().targetPrice());
 
         for (ProductCandidateDto selectedProduct : event.payload().selectedProducts()) {
-            SubscriptionMonitoringService.RefreshedProductSnapshot snapshot =
+            SubscriptionMonitoringService.NormalizedProductSnapshot snapshot =
                     subscriptionMonitoringService.refreshSelectedProduct(selectedProduct);
 
-            if (!snapshot.found() || snapshot.currency() != com.pbm.price.domain.CurrencyType.KRW) {
+            // 선택 직후 검증에서도 USD 상품을 바로 탈락시키지 않고,
+            // 고정 환율 1500원을 적용해 KRW 기준으로 비교한다.
+            BigDecimal currentPriceInKrw = PriceCurrencyConverter.toKrw(snapshot.currentPrice(), snapshot.currency());
+
+            if (!snapshot.found() || currentPriceInKrw == null) {
                 monitoringProducts.add(selectedProduct);
                 continue;
             }
@@ -105,17 +110,17 @@ public class ProductSelectionConsumer {
             ProductCandidateDto refreshedCandidate = new ProductCandidateDto(
                     snapshot.productId(),
                     snapshot.title(),
-                    snapshot.currentPrice().toPlainString(),
+                    currentPriceInKrw.toPlainString(),
                     selectedProduct.mallName(),
                     snapshot.productUrl(),
                     selectedProduct.imageUrl(),
-                    snapshot.currency().name(),
+                    "KRW",
                     selectedProduct.platform(),
                     selectedProduct.searchKeyword()
             );
 
-            if (targetPrice != null && snapshot.currentPrice().compareTo(targetPrice) <= 0) {
-                matchedProducts.add(new EvaluatedProduct(refreshedCandidate, snapshot.currentPrice()));
+            if (targetPrice != null && currentPriceInKrw.compareTo(targetPrice) <= 0) {
+                matchedProducts.add(new EvaluatedProduct(refreshedCandidate, currentPriceInKrw));
             } else {
                 monitoringProducts.add(refreshedCandidate);
             }
@@ -183,6 +188,7 @@ public class ProductSelectionConsumer {
         List<ProductCandidateDto> triggeredProducts = new ArrayList<>();
         String purchasedProductId = null;
 
+        // 즉시 구매 조건을 만족하는 상품이 있을 경우 그중 최저가 1건을 실제 브라우저 구매 진행 대상으로 잡음
         if (!matchedProducts.isEmpty()) {
             EvaluatedProduct cheapest = matchedProducts.stream()
                     .min(Comparator.comparing(EvaluatedProduct::currentPrice))
@@ -190,6 +196,7 @@ public class ProductSelectionConsumer {
             triggeredProducts.add(cheapest.candidate());
             purchasedProductId = cheapest.candidate().productId();
 
+            // 선택 시점의 상품 정보를 구독에도 반영. 이후 price-alert/payment/모니터링 공통 흐름과 연결하기 위함.
             MonitoringSubscription subscription = monitoringSubscriptionService.createOrUpdateFromSelection(
                     event.payload().userId(),
                     event.payload().commandId(),
@@ -206,13 +213,31 @@ public class ProductSelectionConsumer {
                 .filter(candidate -> !triggeredProducts.contains(candidate))
                 .forEach(triggeredProducts::add);
 
+        // 즉시 구매 대상이 아닌 상품은 모니터링으로 등록한다.
         List<ProductCandidateDto> registeredMonitoringProducts = registerMonitoringProducts(event, monitoringProducts);
+
+        // 상태 의미를 분리
+        // 1) triggeredProducts가 있으면 -> 브라우저 구매 진행 상태
+        // 2) triggerdProducts는 없고 monitoring만 있으면 -> 모니터링 시작 상태
+        // 3) 둘 다 없으면 -> 자동 구매 완료 상태
+        String nextStatus;
+        if (!triggeredProducts.isEmpty()) {
+            nextStatus = "BROWSER_PURCHASE_IN_PROGRESS";
+        } else if (!registeredMonitoringProducts.isEmpty()) {
+            nextStatus = "MONITORING_STARTED";
+        } else {
+            nextStatus = "AUTO_PURCHASE_COMPLETED";
+        }
+
+        String summaryMessage = "즉시 구매 후보 " + triggeredProducts.size()
+                + "건, 모니터링 등록 " + registeredMonitoringProducts.size() + "건";
+
         return new SelectionProcessingResult(
                 triggeredProducts,
                 registeredMonitoringProducts,
                 purchasedProductId,
-                "즉시 구매 후보 " + triggeredProducts.size() + "건, 모니터링 등록 " + registeredMonitoringProducts.size() + "건",
-                registeredMonitoringProducts.isEmpty() ? "AUTO_PURCHASE_COMPLETED" : "MONITORING_STARTED",
+                summaryMessage,
+                nextStatus,
                 false,
                 List.of(),
                 null

@@ -26,12 +26,40 @@ from typing import Optional
 import httpx
 
 from app.schemas.openai import OpenAiParseCommandRequest, OpenAiParseCommandResponse
+from app.schemas.planner import DomPlannerRequest, DomPlannerResponse
+from app.schemas.vision_planner import VisionPlannerRequest, VisionPlannerResponse
 
 logger = logging.getLogger(__name__)
 
 # OpenAI API 기본 설정
 OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
 OPENAI_DEFAULT_MODEL = "gpt-5.4-mini"
+
+DOM_PLANNER_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "action": {
+            "type": "string",
+            "enum": ["NAVIGATE", "CLICK", "INPUT", "SELECT", "SCROLL", "WAIT", "COMPLETE"],
+        },
+        "target": {
+            "type": ["object", "null"],
+            "properties": {
+                "node_id": {"type": ["string", "null"]},
+                "role": {"type": ["string", "null"]},
+                "label_text": {"type": ["string", "null"]},
+                "selector": {"type": ["string", "null"]},
+            },
+            "required": ["node_id", "role", "label_text", "selector"],
+            "additionalProperties": False,
+        },
+        "value": {"type": ["string", "null"]},
+        "confidence": {"type": "number"},
+        "reason": {"type": "string"},
+    },
+    "required": ["action", "target", "value", "confidence", "reason"],
+    "additionalProperties": False,
+}
 
 
 # command-service가 기대하는 최상위 응답 JSON 스키마.
@@ -287,3 +315,206 @@ async def parse_command(
         confidence=confidence,
         refusal=refusal,
     )
+
+
+def _build_dom_planner_system_prompt() -> str:
+    return (
+        "너는 브라우저 자동화 planner다. "
+        "입력으로 command/session 상태와 DOM 요약을 받고, 다음 브라우저 액션 1개만 JSON으로 반환한다. "
+        "반드시 주어진 interactive_elements / option_groups 안에서 target을 고르고, "
+        "버튼이 보이지 않거나 페이지 아래에 있을 가능성이 있으면 SCROLL을 반환할 수 있다. "
+        "결정할 수 없으면 WAIT 또는 COMPLETE를 반환한다. "
+        "결제 확정/주문 제출을 추정해서 과감하게 누르지 말고, 확실한 구매/장바구니/검색/옵션 선택만 선택한다."
+    )
+
+
+def _build_dom_planner_user_prompt(request: DomPlannerRequest) -> str:
+    return json.dumps(
+        {
+            "commandText": request.command_text,
+            "commandIntent": request.command_intent,
+            "commandStatus": request.command_status,
+            "currentUrl": request.current_url,
+            "title": request.title,
+            "visibleTextSummary": request.visible_text_summary,
+            "targetProduct": request.target_product,
+            "interactiveElements": request.interactive_elements,
+            "optionGroups": request.option_groups,
+        },
+        ensure_ascii=False,
+    )
+
+
+async def _plan_dom_action_mock(request: DomPlannerRequest) -> DomPlannerResponse:
+    logger.info("DOM planner 모킹 모드 활성화 - deterministic planner 결과 반환")
+
+    for element in request.interactive_elements:
+        label = (element.get("labelText") or "").strip()
+        role = (element.get("role") or "").strip().lower()
+        if role == "button" and ("구매" in label or "장바구니" in label or "search" in label.lower()):
+            return DomPlannerResponse(
+                action="CLICK",
+                target={
+                    "node_id": element.get("nodeId"),
+                    "role": element.get("role"),
+                    "label_text": element.get("labelText"),
+                    "selector": element.get("selector"),
+                },
+                value=None,
+                confidence=0.81,
+                reason="mock planner가 interactive element 중 실행 가능 버튼을 선택함",
+            )
+
+    if request.target_product and request.target_product.get("productUrl"):
+        return DomPlannerResponse(
+            action="NAVIGATE",
+            target=None,
+            value=request.target_product.get("productUrl"),
+            confidence=0.75,
+            reason="mock planner가 target product URL로 이동을 선택함",
+        )
+
+    if request.current_url and "aliexpress.com" in request.current_url and not request.interactive_elements:
+        return DomPlannerResponse(
+            action="SCROLL",
+            target=None,
+            value="500",
+            confidence=0.68,
+            reason="보이는 interactive element가 부족해 아래로 더 탐색함",
+        )
+
+    return DomPlannerResponse(
+        action="WAIT",
+        target=None,
+        value=None,
+        confidence=0.6,
+        reason="충분한 target을 찾지 못해 대기함",
+    )
+
+
+async def plan_dom_action(request: DomPlannerRequest) -> DomPlannerResponse:
+    """GPT-5.4-mini로 DOM snapshot 기반 다음 액션을 결정한다."""
+    if _is_mock_enabled():
+        return await _plan_dom_action_mock(request)
+
+    api_key, base_url, model = _get_openai_config()
+    request_body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _build_dom_planner_system_prompt()},
+            {"role": "user", "content": _build_dom_planner_user_prompt(request)},
+        ],
+        "temperature": 0.0,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "dom_planner_response",
+                "strict": True,
+                "schema": DOM_PLANNER_SCHEMA,
+            },
+        },
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{base_url}/chat/completions",
+            json=request_body,
+            headers=headers,
+        )
+        response.raise_for_status()
+
+    data = response.json()
+    if "error" in data:
+        error_info = data["error"]
+        error_message = error_info.get("message", str(error_info))
+        raise ValueError(f"OpenAI API 에러: {error_message}")
+
+    choices: list = data.get("choices", [])
+    if not choices:
+        raise ValueError("OpenAI 응답에 choices가 없습니다.")
+
+    content = choices[0].get("message", {}).get("content")
+    parsed_json = _parse_structured_content(content)
+    return DomPlannerResponse.model_validate(parsed_json)
+
+
+def _get_gemini_config() -> tuple[str, str]:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY 환경변수가 필요합니다")
+    model = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
+    return api_key, model
+
+
+async def _analyze_screenshot_mock(request: VisionPlannerRequest) -> VisionPlannerResponse:
+    logger.info("Vision planner 모킹 모드 활성화 - 고정 클릭 좌표 반환")
+    return VisionPlannerResponse(
+        action="CLICK",
+        viewport_x=0.5,
+        viewport_y=0.8,
+        target_label="mock primary button",
+        confidence=0.74,
+        reason="mock vision planner가 화면 하단 주요 버튼을 선택함",
+    )
+
+
+async def analyze_screenshot_action(request: VisionPlannerRequest) -> VisionPlannerResponse:
+    """Gemini Flash 계열 모델로 스크린샷 기반 클릭 좌표를 분석한다."""
+    if _is_mock_enabled():
+        return await _analyze_screenshot_mock(request)
+
+    api_key, model = _get_gemini_config()
+
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError as exc:
+        raise ValueError("google-genai 패키지가 설치되지 않았습니다.") from exc
+
+    client = genai.Client(api_key=api_key)
+    prompt = (
+        "너는 쇼핑 페이지 스크린샷을 보고 다음 클릭 목표를 찾는 비전 planner다. "
+        "가장 클릭 가능성이 높은 버튼/링크 하나를 찾고, 뷰포트 기준 좌표 비율(x,y)을 0~1 범위로 반환하라. "
+        "명확한 타겟이 없으면 WAIT를 반환하라."
+    )
+
+    screenshot_base64 = request.screenshot_data_url.split(",", 1)[1]
+    mime_type = request.screenshot_data_url.split(";", 1)[0].replace("data:", "")
+
+    response = client.models.generate_content(
+        model=model,
+        contents=[
+            types.Part.from_bytes(data=__import__("base64").b64decode(screenshot_base64), mime_type=mime_type),
+            types.Part.from_text(
+                text=json.dumps(
+                    {
+                        "commandText": request.command_text,
+                        "currentUrl": request.current_url,
+                        "errorCode": request.error_code,
+                        "errorMessage": request.error_message,
+                        "responseSchema": {
+                            "action": "CLICK | WAIT | COMPLETE",
+                            "viewport_x": "0.0~1.0",
+                            "viewport_y": "0.0~1.0",
+                            "target_label": "button label or short description",
+                            "confidence": "0.0~1.0",
+                            "reason": "why"
+                        }
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+        ],
+        config=types.GenerateContentConfig(system_instruction=prompt),
+    )
+
+    text = getattr(response, "text", None)
+    if not text:
+        raise ValueError("Gemini 응답에 text 가 없습니다.")
+
+    parsed_json = json.loads(text.strip().removeprefix("```json").removesuffix("```").strip())
+    return VisionPlannerResponse.model_validate(parsed_json)

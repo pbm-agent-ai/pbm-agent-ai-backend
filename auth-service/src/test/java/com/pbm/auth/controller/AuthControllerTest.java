@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pbm.auth.dto.request.ChangePasswordRequest;
 import com.pbm.auth.dto.request.LoginRequest;
 import com.pbm.auth.dto.request.SignupRequest;
+import com.pbm.auth.dto.response.PairingTokenResponse;
 import com.pbm.auth.dto.response.TokenResponse;
 import com.pbm.auth.dto.response.UserResponse;
 import com.pbm.auth.dto.event.UserEvent;
@@ -18,6 +19,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -37,6 +39,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@TestPropertySource(properties = {
+        "jwt.secret=test-secret-key-for-auth-controller-tests-must-be-at-least-256-bits-long",
+        "jwt.expiration=1800000",
+        "jwt.refresh-expiration=604800000",
+        "jwt.pairing-expiration=600000"
+})
 class AuthControllerTest {
 
     @Autowired
@@ -152,6 +160,21 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.data.accessToken").value("new-access"))
                 .andExpect(jsonPath("$.data.refreshToken").value("new-refresh"))
                 .andExpect(jsonPath("$.data.tokenType").value("Bearer"));
+    }
+
+    @Test
+    @WithMockUser(username = "1")
+    @DisplayName("POST /api/v1/auth/pairing-token: 인증된 사용자는 200과 pairing token 응답을 반환한다")
+    void createPairingToken_success_returns200() throws Exception {
+        PairingTokenResponse response = new PairingTokenResponse("pairing-token", "Bearer", 600000L);
+        when(authService.createPairingToken(1L)).thenReturn(response);
+
+        mockMvc.perform(post("/api/v1/auth/pairing-token").with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.pairingToken").value("pairing-token"))
+                .andExpect(jsonPath("$.data.tokenType").value("Bearer"))
+                .andExpect(jsonPath("$.data.expiresIn").value(600000L));
     }
 
     @Test

@@ -3,6 +3,9 @@ package com.pbm.price.controller;
 import com.pbm.price.common.ApiResponse;
 import com.pbm.price.dto.response.SearchResponse;
 import com.pbm.price.service.AliExpressShoppingService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,6 +23,7 @@ import java.util.List;
  * 모든 선택 파라미터는 기본값이 있어 keyword만 필수이다.
  */
 @Slf4j
+@Tag(name = "Price-AliExpress", description = "AliExpress 상품 검색 API")
 @RestController
 @RequestMapping("/api/v1/aliexpress")
 @RequiredArgsConstructor
@@ -41,10 +45,14 @@ public class AliExpressShoppingController {
      * @param trackingId     트래킹 ID (선택)
      * @return 검색된 상품 목록 (공통 SearchResponse 형식)
      */
+    @Operation(summary = "AliExpress 상품 검색", description = "키워드와 지역/통화 조건으로 AliExpress 상품을 검색하고 공통 SearchResponse 목록으로 반환합니다.")
     @GetMapping("/search")
     public ApiResponse<List<SearchResponse>> searchProducts(
+            @Parameter(description = "검색 키워드", example = "QCY T13 ANC 블루투스 이어폰")
             @RequestParam String keyword,
+            @Parameter(description = "페이지 번호", example = "1")
             @RequestParam(defaultValue = "1") int pageNo,
+            @Parameter(description = "페이지당 결과 수", example = "30")
             @RequestParam(defaultValue = "10") int pageSize,
             @RequestParam(required = false) String sort,
             @RequestParam(defaultValue = "KRW") String targetCurrency,

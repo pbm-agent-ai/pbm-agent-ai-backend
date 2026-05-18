@@ -5,6 +5,8 @@ import com.pbm.price.domain.CurrencyType;
 import com.pbm.price.domain.MonitoringSubscription;
 import com.pbm.price.domain.MonitoringSubscriptionStatus;
 import com.pbm.price.domain.Platform;
+import com.pbm.price.dto.response.AliExpressShoppingItem;
+import com.pbm.price.dto.response.AliexpressProductDetailResponse;
 import com.pbm.price.dto.response.NaverShoppingItem;
 import com.pbm.price.publisher.PaymentRequestEventPublisher;
 import com.pbm.price.publisher.PriceAlertEventPublisher;
@@ -42,7 +44,7 @@ import static org.mockito.Mockito.when;
  * 검증 내용:
  * - ACTIVE 상태가 아니면 process를 건너뛰는지 확인
  * - 상품 미조회 시 miss 처리 및 연속 실패 임계치 도달 시 FAILED 전환 확인
- * - KRW가 아닌 통화로 조회 시 FAILED 전환 확인
+ * - USD 통화로 조회 시 1500 환율로 KRW 변환 후 비교 확인
  * - 목표 가격 이하 시 TRIGGERED 전환 + 이벤트 발행 확인
  * - 목표 가격 초과 시 ACTIVE 유지 + 이벤트 미발행 확인
  * - 존재하지 않는 subscriptionId 조회 시 예외 발생 확인
@@ -65,7 +67,7 @@ class SubscriptionMonitoringServiceTest {
     private ExternalApiClient externalApiClient;
 
     /** 테스트에서 제어할 refreshSubscription 결과 */
-    private SubscriptionMonitoringService.RefreshedProductSnapshot controlledSnapshot;
+    private SubscriptionMonitoringService.NormalizedProductSnapshot controlledSnapshot;
 
     /** refreshSubscription이 제어된 서비스 인스턴스 */
     private SubscriptionMonitoringService service;
@@ -80,7 +82,7 @@ class SubscriptionMonitoringServiceTest {
                 externalApiClient
         ) {
             @Override
-            SubscriptionMonitoringService.RefreshedProductSnapshot refreshSubscription(
+            SubscriptionMonitoringService.NormalizedProductSnapshot refreshSubscription(
                     MonitoringSubscription subscription
             ) {
                 return controlledSnapshot;
@@ -122,14 +124,14 @@ class SubscriptionMonitoringServiceTest {
     }
 
     /**
-     * 테스트용 RefreshedProductSnapshot을 생성한다.
+     * 테스트용 NormalizedProductSnapshot을 생성한다.
      */
-    private SubscriptionMonitoringService.RefreshedProductSnapshot createSnapshot(
+    private SubscriptionMonitoringService.NormalizedProductSnapshot createSnapshot(
             boolean found,
             BigDecimal currentPrice,
             CurrencyType currency
     ) {
-        return new SubscriptionMonitoringService.RefreshedProductSnapshot(
+        return new SubscriptionMonitoringService.NormalizedProductSnapshot(
                 found,
                 "prod-001",
                 "https://example.com/p/prod-001",
@@ -236,13 +238,13 @@ class SubscriptionMonitoringServiceTest {
     }
 
     // =========================================================================
-    // 통화 검증 (currency != KRW)
+    // USD → KRW 변환 (고정 환율 1500)
     // =========================================================================
 
     @Test
-    @DisplayName("조회된 상품의 통화가 KRW가 아니면 FAILED가 된다")
-    void process_foundNonKrwCurrency_marksFailed() {
-        // given: USD로 조회됨
+    @DisplayName("USD로 조회된 상품, 환산 가격(25000*1500=37,500,000)이 목표(30,000) 초과 → ACTIVE 유지, 이벤트 미발행")
+    void process_foundUsdCurrency_convertedAboveTarget_maintainsActive() {
+        // given: USD 가격 25,000 → 환산 37,500,000 KRW > 목표 30,000 KRW
         MonitoringSubscription sub = createSubscription(
                 100L, MonitoringSubscriptionStatus.ACTIVE,
                 Platform.ALIEXPRESS, CurrencyType.USD, 0, BigDecimal.valueOf(30000),
@@ -256,11 +258,62 @@ class SubscriptionMonitoringServiceTest {
         // when
         service.process(100L);
 
-        // then: FAILED로 전환, 이벤트 미발행
-        assertThat(sub.getStatus()).isEqualTo(MonitoringSubscriptionStatus.FAILED);
+        // then: ACTIVE 유지, missCount 리셋, 이벤트 미발행
+        assertThat(sub.getStatus()).isEqualTo(MonitoringSubscriptionStatus.ACTIVE);
+        assertThat(sub.getConsecutiveMissCount()).isZero();
+        assertThat(sub.getLastCheckedAt()).isNotNull();
         verify(monitoringSubscriptionRepository).save(sub);
         verify(priceAlertEventPublisher, never()).publish(any());
         verify(paymentRequestEventPublisher, never()).publish(any());
+    }
+
+    @Test
+    @DisplayName("USD로 조회된 상품, 환산 가격(10*1500=15,000)이 목표(30,000) 이하 → TRIGGERED 전환 및 이벤트 발행")
+    void process_foundUsdCurrency_convertedBelowTarget_triggers() {
+        // given: USD 가격 10 → 환산 15,000 KRW < 목표 30,000 KRW
+        MonitoringSubscription sub = createSubscription(
+                100L, MonitoringSubscriptionStatus.ACTIVE,
+                Platform.ALIEXPRESS, CurrencyType.USD, 0, BigDecimal.valueOf(30000),
+                "AUTO_PURCHASE"
+        );
+        when(monitoringSubscriptionRepository.findById(100L)).thenReturn(Optional.of(sub));
+        when(monitoringSubscriptionRepository.save(sub)).thenReturn(sub);
+
+        controlledSnapshot = createSnapshot(true, BigDecimal.valueOf(10), CurrencyType.USD);
+
+        // when
+        service.process(100L);
+
+        // then: TRIGGERED, 이벤트 발행
+        assertThat(sub.getStatus()).isEqualTo(MonitoringSubscriptionStatus.TRIGGERED);
+        assertThat(sub.getConsecutiveMissCount()).isZero();
+        assertThat(sub.getLastCheckedAt()).isNotNull();
+        verify(monitoringSubscriptionRepository).save(sub);
+        verify(priceAlertEventPublisher).publish(any());
+        verify(paymentRequestEventPublisher).publish(any());
+    }
+
+    @Test
+    @DisplayName("USD로 조회된 상품, 환산 가격(20*1500=30,000)이 목표(30,000)와 동일 → TRIGGERED 전환")
+    void process_foundUsdCurrency_convertedEqualToTarget_triggers() {
+        // given: USD 가격 20 → 환산 30,000 KRW == 목표 30,000 KRW
+        MonitoringSubscription sub = createSubscription(
+                100L, MonitoringSubscriptionStatus.ACTIVE,
+                Platform.ALIEXPRESS, CurrencyType.USD, 0, BigDecimal.valueOf(30000),
+                "AUTO_PURCHASE"
+        );
+        when(monitoringSubscriptionRepository.findById(100L)).thenReturn(Optional.of(sub));
+        when(monitoringSubscriptionRepository.save(sub)).thenReturn(sub);
+
+        controlledSnapshot = createSnapshot(true, BigDecimal.valueOf(20), CurrencyType.USD);
+
+        // when
+        service.process(100L);
+
+        // then: TRIGGERED
+        assertThat(sub.getStatus()).isEqualTo(MonitoringSubscriptionStatus.TRIGGERED);
+        verify(priceAlertEventPublisher).publish(any());
+        verify(paymentRequestEventPublisher).publish(any());
     }
 
     // =========================================================================
@@ -467,7 +520,7 @@ class SubscriptionMonitoringServiceTest {
             SubscriptionMonitoringService realService = createRealService();
 
             // when
-            SubscriptionMonitoringService.RefreshedProductSnapshot snapshot =
+            SubscriptionMonitoringService.NormalizedProductSnapshot snapshot =
                     realService.refreshSubscription(subscription);
 
             // then
@@ -491,7 +544,7 @@ class SubscriptionMonitoringServiceTest {
             SubscriptionMonitoringService realService = createRealService();
 
             // when
-            SubscriptionMonitoringService.RefreshedProductSnapshot snapshot =
+            SubscriptionMonitoringService.NormalizedProductSnapshot snapshot =
                     realService.refreshSubscription(subscription);
 
             // then - link(productUrl)로 매칭되어 found=true
@@ -518,7 +571,7 @@ class SubscriptionMonitoringServiceTest {
             SubscriptionMonitoringService realService = createRealService();
 
             // when
-            SubscriptionMonitoringService.RefreshedProductSnapshot snapshot =
+            SubscriptionMonitoringService.NormalizedProductSnapshot snapshot =
                     realService.refreshSubscription(subscription);
 
             // then - 2차 조회 없이 found=false
@@ -546,7 +599,7 @@ class SubscriptionMonitoringServiceTest {
             SubscriptionMonitoringService realService = createRealService();
 
             // when
-            SubscriptionMonitoringService.RefreshedProductSnapshot snapshot =
+            SubscriptionMonitoringService.NormalizedProductSnapshot snapshot =
                     realService.refreshSubscription(subscription);
 
             // then - 2차 페이지에서 매칭 성공
@@ -568,7 +621,7 @@ class SubscriptionMonitoringServiceTest {
             SubscriptionMonitoringService realService = createRealService();
 
             // when
-            SubscriptionMonitoringService.RefreshedProductSnapshot snapshot =
+            SubscriptionMonitoringService.NormalizedProductSnapshot snapshot =
                     realService.refreshSubscription(subscription);
 
             // then - found=false, 가격은 0
@@ -586,7 +639,7 @@ class SubscriptionMonitoringServiceTest {
             SubscriptionMonitoringService realService = createRealService();
 
             // when
-            SubscriptionMonitoringService.RefreshedProductSnapshot snapshot =
+            SubscriptionMonitoringService.NormalizedProductSnapshot snapshot =
                     realService.refreshSubscription(subscription);
 
             // then
@@ -607,12 +660,227 @@ class SubscriptionMonitoringServiceTest {
             SubscriptionMonitoringService realService = createRealService();
 
             // when
-            SubscriptionMonitoringService.RefreshedProductSnapshot snapshot =
+            SubscriptionMonitoringService.NormalizedProductSnapshot snapshot =
                     realService.refreshSubscription(subscription);
 
             // then - URL로 매칭 성공
             assertThat(snapshot.found()).isTrue();
             assertThat(snapshot.productUrl()).isEqualTo(PRODUCT_URL);
+        }
+    }
+
+    // =========================================================================
+    // AliExpress 재조회 (refreshAliExpress) 검증
+    // =========================================================================
+
+    @Nested
+    @DisplayName("refreshAliExpress - 알리익스프레스 상품 재조회/검색 폴백")
+    class AliExpressRefreshTest {
+
+        private MonitoringSubscription subscription;
+        private final Long SUBSCRIPTION_ID = 300L;
+        private final String PRODUCT_ID = "1005001234567890";
+        private final String PRODUCT_URL = "https://www.aliexpress.com/item/1005001234567890.html";
+        private final String SEARCH_KEYWORD = "test product";
+
+        @BeforeEach
+        void setUp() {
+            subscription = MonitoringSubscription.create(
+                    1L,                              // userId
+                    UUID.randomUUID().toString(),    // commandId
+                    Platform.ALIEXPRESS,             // platform
+                    PRODUCT_ID,                      // productId
+                    PRODUCT_URL,                     // productUrl
+                    "테스트 알리 상품",               // snapshotTitle
+                    BigDecimal.valueOf(30000),        // snapshotPrice
+                    SEARCH_KEYWORD,                  // searchKeyword
+                    BigDecimal.valueOf(50000),        // targetPrice
+                    CurrencyType.USD,                // currency
+                    "PRICE_TRACK",                   // intent
+                    MonitoringSubscriptionStatus.ACTIVE, // status
+                    0,                               // consecutiveMissCount
+                    5                                // checkIntervalMinutes
+            );
+            ReflectionTestUtils.setField(subscription, "id", SUBSCRIPTION_ID);
+        }
+
+        private AliExpressShoppingItem createAliExpressItem(
+                String productId, String productUrl, String title,
+                String salePrice, String targetSalePrice
+        ) {
+            return new AliExpressShoppingItem(
+                    title,                           // product_title
+                    salePrice,                       // sale_price
+                    targetSalePrice,                 // target_sale_price
+                    null,                            // target_original_price
+                    "TestShop",                      // shop_name
+                    productUrl,                      // product_detail_url
+                    productId,                       // product_id
+                    null,                            // product_main_image_url
+                    null,                            // evaluate_rate
+                    null,                            // first_level_category_id
+                    null,                            // first_level_category_name
+                    null,                            // second_level_category_id
+                    null                             // second_level_category_name
+            );
+        }
+
+        @Test
+        @DisplayName("상품 상세 API 조회 성공(target_sale_price 존재) → found=true, KRW 반환")
+        void detailApiSuccess_returnsFoundWithKrw() {
+            // given: detail API가 정상 응답 반환
+            AliExpressShoppingItem product = createAliExpressItem(
+                    PRODUCT_ID, PRODUCT_URL, "테스트 알리 상품",
+                    "25.00", "37500"
+            );
+            AliexpressProductDetailResponse detailResponse =
+                    new AliexpressProductDetailResponse(product);
+
+            when(externalApiClient.getAliExpressProductDetail(PRODUCT_ID, "KRW", "KO", "KR"))
+                    .thenReturn(detailResponse);
+
+            SubscriptionMonitoringService realService = createRealService();
+
+            // when
+            SubscriptionMonitoringService.NormalizedProductSnapshot snapshot =
+                    realService.refreshSubscription(subscription);
+
+            // then: target_sale_price(37500)가 KRW로 사용됨
+            assertThat(snapshot.found()).isTrue();
+            assertThat(snapshot.currentPrice()).isEqualByComparingTo(BigDecimal.valueOf(37500));
+            assertThat(snapshot.currency()).isEqualTo(CurrencyType.KRW);
+            assertThat(snapshot.productId()).isEqualTo(PRODUCT_ID);
+            assertThat(snapshot.productUrl()).isEqualTo(PRODUCT_URL);
+            assertThat(snapshot.title()).isEqualTo("테스트 알리 상품");
+            verify(externalApiClient, times(1)).getAliExpressProductDetail(PRODUCT_ID, "KRW", "KO", "KR");
+            verify(externalApiClient, never()).searchAliExpressProductItems(anyString(), anyInt(), anyInt(),
+                    any(), any(), any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("상세 API product=null → 검색 폴백, productId 정확 매칭 성공")
+        void detailApiNull_fallbackSearch_matchByProductId() {
+            // given: detail API가 null 반환 → 검색 폴백 실행
+            when(externalApiClient.getAliExpressProductDetail(PRODUCT_ID, "KRW", "KO", "KR"))
+                    .thenReturn(new AliexpressProductDetailResponse(null));
+
+            AliExpressShoppingItem matchedItem = createAliExpressItem(
+                    PRODUCT_ID, PRODUCT_URL, "검색된상품",
+                    "20.00", "30000"
+            );
+            when(externalApiClient.searchAliExpressProductItems(
+                    SEARCH_KEYWORD, 1, 30, null, "KRW", "KO", "KR", null, null
+            )).thenReturn(List.of(matchedItem));
+
+            SubscriptionMonitoringService realService = createRealService();
+
+            // when
+            SubscriptionMonitoringService.NormalizedProductSnapshot snapshot =
+                    realService.refreshSubscription(subscription);
+
+            // then: productId 정확 매칭 → found
+            assertThat(snapshot.found()).isTrue();
+            assertThat(snapshot.productId()).isEqualTo(PRODUCT_ID);
+            assertThat(snapshot.productUrl()).isEqualTo(PRODUCT_URL);
+            assertThat(snapshot.currency()).isEqualTo(CurrencyType.KRW);
+            assertThat(snapshot.currentPrice()).isEqualByComparingTo(BigDecimal.valueOf(30000));
+            verify(externalApiClient, times(1)).searchAliExpressProductItems(
+                    SEARCH_KEYWORD, 1, 30, null, "KRW", "KO", "KR", null, null);
+        }
+
+        @Test
+        @DisplayName("검색 폴백, productId 불일치 → productUrl 정확 매칭 성공 (회귀 방지: URL 분기가 productId로 잘못 비교하지 않음)")
+        void detailApiNull_fallbackSearch_matchByProductUrl() {
+            // given: productId는 다르지만 product_detail_url이 정확히 일치하는 아이템
+            when(externalApiClient.getAliExpressProductDetail(PRODUCT_ID, "KRW", "KO", "KR"))
+                    .thenReturn(new AliexpressProductDetailResponse(null));
+
+            String differentProductId = "9999999999999";
+            AliExpressShoppingItem matchedItem = createAliExpressItem(
+                    differentProductId, PRODUCT_URL, "URL매칭상품",
+                    "15.00", "22500"
+            );
+            when(externalApiClient.searchAliExpressProductItems(
+                    SEARCH_KEYWORD, 1, 30, null, "KRW", "KO", "KR", null, null
+            )).thenReturn(List.of(matchedItem));
+
+            SubscriptionMonitoringService realService = createRealService();
+
+            // when
+            SubscriptionMonitoringService.NormalizedProductSnapshot snapshot =
+                    realService.refreshSubscription(subscription);
+
+            // then: productUrl(정확 일치)로 매칭되어 found=true
+            //       (productId 불일치에도 불구하고 URL 매칭이 올바르게 동작)
+            assertThat(snapshot.found()).isTrue();
+            assertThat(snapshot.productId()).isEqualTo(differentProductId);
+            assertThat(snapshot.productUrl()).isEqualTo(PRODUCT_URL);
+            assertThat(snapshot.currency()).isEqualTo(CurrencyType.KRW);
+            assertThat(snapshot.currentPrice()).isEqualByComparingTo(BigDecimal.valueOf(22500));
+            verify(externalApiClient, times(1)).searchAliExpressProductItems(
+                    SEARCH_KEYWORD, 1, 30, null, "KRW", "KO", "KR", null, null);
+        }
+
+        @Test
+        @DisplayName("검색 폴백, productId/URL 정확 불일치 → productId 토큰(/item/{id}.html) URL 포함 매칭 성공")
+        void detailApiNull_fallbackSearch_matchByProductIdTokenInUrl() {
+            // given: productId/URL 모두 정확 불일치, URL에 productId 토큰 포함
+            when(externalApiClient.getAliExpressProductDetail(PRODUCT_ID, "KRW", "KO", "KR"))
+                    .thenReturn(new AliexpressProductDetailResponse(null));
+
+            String differentUrl = "https://www.aliexpress.com/item/" + PRODUCT_ID + ".html?aff=123";
+            AliExpressShoppingItem matchedItem = createAliExpressItem(
+                    "other-id", differentUrl, "토큰매칭상품",
+                    "30.00", "45000"
+            );
+            // productId도 다르고 URL 정확 일치도 아니지만, URL에 /item/{PRODUCT_ID}.html 포함
+            when(externalApiClient.searchAliExpressProductItems(
+                    SEARCH_KEYWORD, 1, 30, null, "KRW", "KO", "KR", null, null
+            )).thenReturn(List.of(matchedItem));
+
+            SubscriptionMonitoringService realService = createRealService();
+
+            // when
+            SubscriptionMonitoringService.NormalizedProductSnapshot snapshot =
+                    realService.refreshSubscription(subscription);
+
+            // then: URL 토큰 포함 매칭으로 found=true
+            assertThat(snapshot.found()).isTrue();
+            assertThat(snapshot.productId()).isEqualTo("other-id");
+            assertThat(snapshot.productUrl()).isEqualTo(differentUrl);
+            assertThat(snapshot.currency()).isEqualTo(CurrencyType.KRW);
+            assertThat(snapshot.currentPrice()).isEqualByComparingTo(BigDecimal.valueOf(45000));
+            verify(externalApiClient, times(1)).searchAliExpressProductItems(
+                    SEARCH_KEYWORD, 1, 30, null, "KRW", "KO", "KR", null, null);
+        }
+
+        @Test
+        @DisplayName("검색 폴백, 모든 매칭 실패 → found=false")
+        void detailApiNull_fallbackSearch_noMatch() {
+            // given: 모든 매칭 전략이 실패
+            when(externalApiClient.getAliExpressProductDetail(PRODUCT_ID, "KRW", "KO", "KR"))
+                    .thenReturn(new AliexpressProductDetailResponse(null));
+
+            AliExpressShoppingItem unrelatedItem = createAliExpressItem(
+                    "unrelated", "https://other.url/item/unrelated.html", "다른상품",
+                    "10.00", "15000"
+            );
+            when(externalApiClient.searchAliExpressProductItems(
+                    SEARCH_KEYWORD, 1, 30, null, "KRW", "KO", "KR", null, null
+            )).thenReturn(List.of(unrelatedItem));
+
+            SubscriptionMonitoringService realService = createRealService();
+
+            // when
+            SubscriptionMonitoringService.NormalizedProductSnapshot snapshot =
+                    realService.refreshSubscription(subscription);
+
+            // then
+            assertThat(snapshot.found()).isFalse();
+            assertThat(snapshot.currentPrice()).isEqualByComparingTo(BigDecimal.ZERO);
+            assertThat(snapshot.currency()).isEqualTo(CurrencyType.USD);
+            verify(externalApiClient, times(1)).searchAliExpressProductItems(
+                    SEARCH_KEYWORD, 1, 30, null, "KRW", "KO", "KR", null, null);
         }
     }
 }

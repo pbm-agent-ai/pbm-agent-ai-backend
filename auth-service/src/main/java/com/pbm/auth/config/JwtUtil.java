@@ -21,6 +21,7 @@ public class JwtUtil {
     private final SecretKey secretKey;
     private final long expiration;
     private final long refreshExpiration;
+    private final long pairingExpiration;
 
     // 역할: JWT 생성/검증/클레임 조회를 한 곳에서 담당
     // 수정: 필터에서 바로 쓸 수 있도록 role 추출과 access 만료시간 조회를 추가
@@ -28,11 +29,13 @@ public class JwtUtil {
             // 생성자, 하드코딩 없이 환경설정 기반으로 동작
             @Value("${jwt.secret}") String secret,
             @Value("${jwt.expiration}") long expiration,
-            @Value("${jwt.refresh-expiration}") long refreshExpiration
+            @Value("${jwt.refresh-expiration}") long refreshExpiration,
+            @Value("${jwt.pairing-expiration}") long pairingExpiration
     ) {
         this.secretKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         this.expiration = expiration;
         this.refreshExpiration = refreshExpiration;
+        this.pairingExpiration = pairingExpiration;
     }
 
     /* 로그인에 성공하면 토큰을 발행해줌
@@ -60,6 +63,22 @@ public class JwtUtil {
                 .subject(String.valueOf(userId))
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + refreshExpiration))
+                .signWith(secretKey)
+                .compact();
+    }
+
+    /**
+     * 확장프로그램 연결용 pairing token을 발급한다.
+     *
+     * @param userId 현재 로그인한 사용자 ID
+     * @return 단기 pairing token
+     */
+    public String generatePairingToken(Long userId) {
+        return Jwts.builder()
+                .subject(String.valueOf(userId))
+                .claim("role", "PAIRING")
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + pairingExpiration))
                 .signWith(secretKey)
                 .compact();
     }
@@ -102,6 +121,10 @@ public class JwtUtil {
 
     public long getRefreshExpiration() {
         return refreshExpiration;
+    }
+
+    public long getPairingExpiration() {
+        return pairingExpiration;
     }
 
     /*

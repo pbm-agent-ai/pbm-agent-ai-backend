@@ -33,6 +33,14 @@ public class JwtUtil {
         return Long.parseLong(getClaims(token).getSubject());
     }
 
+    public String getSubject(String token) {
+        return getClaims(token).getSubject();
+    }
+
+    public String getClaimAsString(String token, String claimName) {
+        return getClaims(token).get(claimName, String.class);
+    }
+
     public String getRole(String token) {
         String role = getClaims(token).get("role", String.class);
         if (role == null || role.isBlank()) {

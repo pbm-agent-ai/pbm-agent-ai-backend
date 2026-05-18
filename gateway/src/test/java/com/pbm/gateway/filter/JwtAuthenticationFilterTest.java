@@ -68,6 +68,22 @@ public class JwtAuthenticationFilterTest {
     }
 
     @Test
+    @DisplayName("디바이스 등록 경로는 토큰 없이 통과")
+    void deviceRegisterPath_shouldPassThrough() {
+        MockServerHttpRequest request = MockServerHttpRequest
+                .post("/api/v1/devices/register")
+                .build();
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+        GatewayFilterChain chain = mock(GatewayFilterChain.class);
+        when(chain.filter(any())).thenReturn(Mono.empty());
+
+        StepVerifier.create(filter.filter(exchange, chain))
+                .verifyComplete();
+
+        verify(chain).filter(any());
+    }
+
+    @Test
     @DisplayName("유효한 토큰으로 요청 시 X-User-Id, X-User-Role 헤더 추가")
     void validToken_shouldAddUserHeaders() {
         String token = Jwts.builder()
@@ -90,6 +106,121 @@ public class JwtAuthenticationFilterTest {
                 .verifyComplete();
 
         verify(chain).filter(any());
+    }
+
+    @Test
+    @DisplayName("DEVICE 토큰으로 요청 시 X-Device-Id, X-User-Role 헤더 추가")
+    void deviceToken_shouldAddDeviceHeaders() {
+        String token = Jwts.builder()
+                .subject("device-123")
+                .claim("role", "DEVICE")
+                .claim("userId", 1)
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 1800000))
+                .signWith(testSecretKey)
+                .compact();
+
+        MockServerHttpRequest request = MockServerHttpRequest
+                .post("/api/v1/devices/device-123/heartbeat")
+                .header("Authorization", "Bearer " + token)
+                .build();
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+        GatewayFilterChain chain = mock(GatewayFilterChain.class);
+        ArgumentCaptor<ServerWebExchange> exchangeCaptor = ArgumentCaptor.forClass(ServerWebExchange.class);
+        when(chain.filter(exchangeCaptor.capture())).thenReturn(Mono.empty());
+
+        StepVerifier.create(filter.filter(exchange, chain))
+                .verifyComplete();
+
+        HttpHeaders headers = exchangeCaptor.getValue().getRequest().getHeaders();
+        assertEquals("DEVICE", headers.getFirst("X-User-Role"));
+        assertEquals("device-123", headers.getFirst("X-Device-Id"));
+        assertNull(headers.getFirst("X-User-Id"));
+    }
+
+    @Test
+    @DisplayName("AGENT 토큰으로 요청 시 X-Run-Id, X-Device-Id, X-User-Role 헤더 추가")
+    void agentToken_shouldAddRunAndDeviceHeaders() {
+        String token = Jwts.builder()
+                .subject("run-123")
+                .claim("role", "AGENT")
+                .claim("userId", 1)
+                .claim("deviceId", "device-123")
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 1800000))
+                .signWith(testSecretKey)
+                .compact();
+
+        MockServerHttpRequest request = MockServerHttpRequest
+                .post("/api/v1/runs/run-123/steps")
+                .header("Authorization", "Bearer " + token)
+                .build();
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+        GatewayFilterChain chain = mock(GatewayFilterChain.class);
+        ArgumentCaptor<ServerWebExchange> exchangeCaptor = ArgumentCaptor.forClass(ServerWebExchange.class);
+        when(chain.filter(exchangeCaptor.capture())).thenReturn(Mono.empty());
+
+        StepVerifier.create(filter.filter(exchange, chain))
+                .verifyComplete();
+
+        HttpHeaders headers = exchangeCaptor.getValue().getRequest().getHeaders();
+        assertEquals("AGENT", headers.getFirst("X-User-Role"));
+        assertEquals("run-123", headers.getFirst("X-Run-Id"));
+        assertEquals("device-123", headers.getFirst("X-Device-Id"));
+    }
+
+    @Test
+    @DisplayName("AGENT 토큰으로 /runs/{runId}/start 요청 시 X-Run-Id, X-Device-Id 헤더를 유지한다")
+    void agentToken_shouldAddRunAndDeviceHeadersOnStartEndpoint() {
+        String token = Jwts.builder()
+                .subject("run-123")
+                .claim("role", "AGENT")
+                .claim("userId", 1)
+                .claim("deviceId", "device-123")
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 1800000))
+                .signWith(testSecretKey)
+                .compact();
+
+        MockServerHttpRequest request = MockServerHttpRequest
+                .post("/api/v1/runs/run-123/start")
+                .header("Authorization", "Bearer " + token)
+                .build();
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+        GatewayFilterChain chain = mock(GatewayFilterChain.class);
+        ArgumentCaptor<ServerWebExchange> exchangeCaptor = ArgumentCaptor.forClass(ServerWebExchange.class);
+        when(chain.filter(exchangeCaptor.capture())).thenReturn(Mono.empty());
+
+        StepVerifier.create(filter.filter(exchange, chain))
+                .verifyComplete();
+
+        HttpHeaders headers = exchangeCaptor.getValue().getRequest().getHeaders();
+        assertEquals("AGENT", headers.getFirst("X-User-Role"));
+        assertEquals("run-123", headers.getFirst("X-Run-Id"));
+        assertEquals("device-123", headers.getFirst("X-Device-Id"));
+    }
+
+    @Test
+    @DisplayName("role claim 없는 토큰은 401 반환")
+    void tokenWithoutRole_shouldReturn401() {
+        String token = Jwts.builder()
+                .subject("1")
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 1800000))
+                .signWith(testSecretKey)
+                .compact();
+
+        MockServerHttpRequest request = MockServerHttpRequest
+                .get("/api/v1/commands/parse")
+                .header("Authorization", "Bearer " + token)
+                .build();
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+        GatewayFilterChain chain = mock(GatewayFilterChain.class);
+
+        StepVerifier.create(filter.filter(exchange, chain))
+                .verifyComplete();
+
+        assertEquals(401, exchange.getResponse().getStatusCode().value());
     }
 
     @Test

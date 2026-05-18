@@ -44,7 +44,7 @@ public class CommandSession {
     private String originalCommand;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 30)
+    @Column(nullable = false, length = 50)
     private CommandSessionStatus status;
 
     @Column(columnDefinition = "TEXT")
@@ -227,6 +227,14 @@ public class CommandSession {
      */
     public void toMonitoringStarted() {
         this.status = CommandSessionStatus.MONITORING_STARTED;
+    }
+
+    /**
+     *  브라우저 구매 진행 상태로 전환한다.
+     *  역할: AUTO_PURCHASE 의도에서 가격 검증은 끝났고, 이제 extension이 실제 브라우저 구매 액션을 계속 수행할떄 사용한다.
+     */
+    public void toBrowserPurchaseInProgress(){
+        this.status = CommandSessionStatus.BROWSER_PURCHASE_IN_PROGRESS;
     }
 
     /**

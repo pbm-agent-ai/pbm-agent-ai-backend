@@ -50,6 +50,63 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 브라우저 디바이스를 찾을 수 없을 때 발생하는 예외 처리.
+     *
+     * @param e 디바이스 미발견 예외
+     * @return 404 Not Found 응답
+     */
+    @ExceptionHandler(BrowserDeviceNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleBrowserDeviceNotFoundException(BrowserDeviceNotFoundException e) {
+        log.warn("브라우저 디바이스를 찾을 수 없음: {}", e.getMessage());
+
+        return ResponseEntity
+                .status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error(e.getMessage()));
+    }
+
+    @ExceptionHandler(AgentRunNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAgentRunNotFoundException(AgentRunNotFoundException e) {
+        log.warn("AgentRun을 찾을 수 없음: {}", e.getMessage());
+
+        return ResponseEntity
+                .status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error(e.getMessage()));
+    }
+
+    @ExceptionHandler(AgentRunConflictException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAgentRunConflictException(AgentRunConflictException e) {
+        log.warn("AgentRun 충돌: {}", e.getMessage());
+
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error(e.getMessage()));
+    }
+
+    @ExceptionHandler(AgentRunAccessDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAgentRunAccessDeniedException(AgentRunAccessDeniedException e) {
+        log.warn("AgentRun 접근 거부: {}", e.getMessage());
+
+        return ResponseEntity
+                .status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error(e.getMessage()));
+    }
+
+    /**
+     * 브라우저 에이전트 토큰 검증 실패 예외 처리.
+     *
+     * @param e 토큰 검증 실패 예외
+     * @return 401 Unauthorized 응답
+     */
+    @ExceptionHandler(InvalidBrowserAgentTokenException.class)
+    public ResponseEntity<ApiResponse<Void>> handleInvalidBrowserAgentTokenException(InvalidBrowserAgentTokenException e) {
+        log.warn("브라우저 에이전트 토큰 검증 실패: {}", e.getMessage());
+
+        return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
+                .body(ApiResponse.error(e.getMessage()));
+    }
+
+    /**
      * PRODUCT_SELECTION_REQUIRED fast-path에서 유효하지 않은 productId 선택 시 예외 처리.
      *
      * @param e 유효하지 않은 상품 선택 예외

@@ -225,6 +225,21 @@ class CommandSessionServiceTest {
     }
 
     @Test
+    @DisplayName("browser-purchase-in-progress로 상태를 전환한다")
+    void updateToBrowserPurchaseInProgress_updatesStatus() {
+        // given
+        CommandSession session = CommandSession.createSearching(1L, "테스트 상품");
+        given(commandSessionRepository.findByCommandId(TEST_COMMAND_ID))
+                .willReturn(Optional.of(session));
+
+        // when
+        CommandSessionResponse response = commandSessionService.updateToBrowserPurchaseInProgress(TEST_COMMAND_ID);
+
+        // then
+        assertThat(response.status()).isEqualTo(CommandSessionStatus.BROWSER_PURCHASE_IN_PROGRESS);
+    }
+
+    @Test
     @DisplayName("존재하지 않는 세션에 product-selection-required 전환을 시도하면 예외를 던진다")
     void updateToProductSelectionRequired_withNonExistentId_throwsException() {
         // given

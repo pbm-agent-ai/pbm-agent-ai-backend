@@ -185,6 +185,16 @@ public class CommandSessionService {
         return CommandSessionResponse.from(session);    // Entity를 그대로 반환하면 DB 내부 구조가 외부에 노출되므로 DTO로 변환해서 반환
     }
 
+    @Transactional
+    public CommandSessionResponse updateToBrowserPurchaseInProgress(String commandId){
+        CommandSession session = commandSessionRepository.findByCommandId(commandId)
+                .orElseThrow(() -> new CommandSessionNotFoundException(
+                        "세션을 찾을 수 없습니다. commandId: " + commandId));
+
+        session.toBrowserPurchaseInProgress();
+        return CommandSessionResponse.from(session);
+    }
+
     /**
      * 세션을 PRICE_VALIDATING 상태로 전환한다.
      * <p>

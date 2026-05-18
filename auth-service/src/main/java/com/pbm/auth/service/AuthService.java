@@ -5,6 +5,7 @@ import com.pbm.auth.domain.User;
 import com.pbm.auth.dto.request.ChangePasswordRequest;
 import com.pbm.auth.dto.request.LoginRequest;
 import com.pbm.auth.dto.request.SignupRequest;
+import com.pbm.auth.dto.response.PairingTokenResponse;
 import com.pbm.auth.dto.response.TokenResponse;
 import com.pbm.auth.dto.response.UserResponse;
 import com.pbm.auth.exception.AuthException;
@@ -160,6 +161,17 @@ public class AuthService {
         );
 
         return new TokenResponse(newAccessToken, newRefreshToken, "Bearer", jwtUtil.getAccessExpiration());
+    }
+
+    /**
+     * 브라우저 extension 연결용 pairing token을 발급한다.
+     *
+     * @param userId 현재 로그인 사용자 ID
+     * @return extension 등록 1회에 사용할 단기 토큰 응답
+     */
+    public PairingTokenResponse createPairingToken(Long userId) {
+        String pairingToken = jwtUtil.generatePairingToken(userId);
+        return new PairingTokenResponse(pairingToken, "Bearer", jwtUtil.getPairingExpiration());
     }
 
     // 내 정보 조회

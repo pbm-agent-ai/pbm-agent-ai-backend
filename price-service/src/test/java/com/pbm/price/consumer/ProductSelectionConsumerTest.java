@@ -78,7 +78,7 @@ class ProductSelectionConsumerTest {
      * 선택한 상품 1건에 대해 재조회 결과가 KRW + 목표 가격 이하인 스냅샷을 mock으로 설정한다.
      */
     private void mockRefreshedFound(String productId, String title, String lprice, String productUrl) {
-        var snapshot = new SubscriptionMonitoringService.RefreshedProductSnapshot(
+        var snapshot = new SubscriptionMonitoringService.NormalizedProductSnapshot(
                 true, productId, productUrl, title,
                 new BigDecimal(lprice), CurrencyType.KRW
         );
@@ -91,7 +91,7 @@ class ProductSelectionConsumerTest {
      */
     private void mockRefreshedWith(ProductCandidateDto candidate,
                                    boolean found, BigDecimal price, CurrencyType currency) {
-        var snapshot = new SubscriptionMonitoringService.RefreshedProductSnapshot(
+        var snapshot = new SubscriptionMonitoringService.NormalizedProductSnapshot(
                 found, candidate.productId(), candidate.productUrl(),
                 candidate.title(), price, currency
         );
@@ -157,6 +157,26 @@ class ProductSelectionConsumerTest {
                 "https://example.com/" + productId);
     }
 
+    /**
+     * 테스트용 USD 통화 ProductCandidateDto 생성 헬퍼.
+     */
+    private ProductCandidateDto candidateUsd(String productId, String title, String lprice,
+                                              String mallName, String productUrl) {
+        return new ProductCandidateDto(
+                productId, title, lprice, mallName, productUrl,
+                null, // imageUrl
+                "USD", "NAVER", "테스트 키워드"
+        );
+    }
+
+    /**
+     * 테스트용 USD 통화 ProductCandidateDto 생성 헬퍼 (기본값 사용).
+     */
+    private ProductCandidateDto candidateUsd(String productId, String lprice) {
+        return candidateUsd(productId, "상품 " + productId, lprice, "스토어A",
+                "https://example.com/" + productId);
+    }
+
     // =========================================================================
     // PRICE_CHECK intent
     // =========================================================================
@@ -213,6 +233,31 @@ class ProductSelectionConsumerTest {
         assertThat(resultEvent.payload().triggeredProducts()).hasSize(1);   // p1만 충족
         assertThat(resultEvent.payload().monitoringProducts()).isEmpty();
         assertThat(resultEvent.payload().nextStatus()).isEqualTo("PRICE_CHECK_COMPLETED");
+    }
+
+    @Test
+    @DisplayName("PRICE_CHECK - USD/KRW 혼합 상품, 환산 가격 기준으로 triggered/monitoring 분리")
+    void priceCheck_mixedUsdAndKrw_separatedByConvertedPrice() {
+        // given: KRW p1(200,000) 충족, USD p2($10→15,000KRW) 충족, USD p3($250→375,000KRW) 초과
+        ProductCandidateDto prod1 = candidate("p1", "200000");
+        ProductCandidateDto prod2 = candidateUsd("p2", "10");
+        ProductCandidateDto prod3 = candidateUsd("p3", "250");
+        List<ProductCandidateDto> products = List.of(prod1, prod2, prod3);
+        ProductSelectionEvent event = createEvent("PRICE_CHECK", products);
+
+        mockRefreshedWith(prod1, true, BigDecimal.valueOf(200000), CurrencyType.KRW);
+        mockRefreshedWith(prod2, true, BigDecimal.valueOf(10), CurrencyType.USD);
+        mockRefreshedWith(prod3, true, BigDecimal.valueOf(250), CurrencyType.USD);
+
+        // when
+        productSelectionConsumer.consume(event);
+
+        // then: p1(200,000KRW) + p2(환산15,000KRW)만 PRICE_CHECK 충족 목록에 포함된다.
+        // PRICE_CHECK은 목표 가격 초과 상품을 모니터링 등록하지 않으므로 p3는 결과에서 제외된다.
+        verify(priceValidationResultEventPublisher).publish(resultEventCaptor.capture());
+        PriceValidationResultEvent resultEvent = resultEventCaptor.getValue();
+        assertThat(resultEvent.payload().triggeredProducts()).hasSize(2);
+        assertThat(resultEvent.payload().monitoringProducts()).isEmpty();
     }
 
     // =========================================================================
@@ -293,6 +338,54 @@ class ProductSelectionConsumerTest {
     }
 
     @Test
+    @DisplayName("PRICE_TRACK - USD 상품 환산 가격($10→15,000KRW) 목표 이하 → triggered + process")
+    void priceTrack_usdConvertedBelowTarget_triggersAndProcesses() {
+        // given: USD $10 → 15,000 KRW ≤ 300,000 (TARGET_PRICE)
+        ProductCandidateDto prod1 = candidateUsd("p1", "10");
+        ProductSelectionEvent event = createEvent("PRICE_TRACK", List.of(prod1));
+
+        mockRefreshedWith(prod1, true, BigDecimal.valueOf(10), CurrencyType.USD);
+
+        MonitoringSubscription sub1 = createSubscription(100L, "p1");
+        when(monitoringSubscriptionService.createOrUpdateFromSelection(
+                anyLong(), anyString(), anyInt(), anyString(), any()
+        )).thenReturn(sub1);
+
+        // when
+        productSelectionConsumer.consume(event);
+
+        // then
+        verify(subscriptionMonitoringService).process(100L);
+        verify(priceValidationResultEventPublisher).publish(resultEventCaptor.capture());
+        assertThat(resultEventCaptor.getValue().payload().triggeredProducts()).hasSize(1);
+        assertThat(resultEventCaptor.getValue().payload().monitoringProducts()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("PRICE_TRACK - USD 상품 환산 가격($250→375,000KRW) 목표 초과 → monitoring만 등록")
+    void priceTrack_usdConvertedAboveTarget_onlyMonitoring() {
+        // given: USD $250 → 375,000 KRW > 300,000 (TARGET_PRICE)
+        ProductCandidateDto prod1 = candidateUsd("p1", "250");
+        ProductSelectionEvent event = createEvent("PRICE_TRACK", List.of(prod1));
+
+        mockRefreshedWith(prod1, true, BigDecimal.valueOf(250), CurrencyType.USD);
+
+        MonitoringSubscription sub1 = createSubscription(100L, "p1");
+        when(monitoringSubscriptionService.createOrUpdateFromSelection(
+                anyLong(), anyString(), anyInt(), anyString(), any()
+        )).thenReturn(sub1);
+
+        // when
+        productSelectionConsumer.consume(event);
+
+        // then
+        verify(subscriptionMonitoringService, never()).process(anyLong());
+        verify(priceValidationResultEventPublisher).publish(resultEventCaptor.capture());
+        assertThat(resultEventCaptor.getValue().payload().triggeredProducts()).isEmpty();
+        assertThat(resultEventCaptor.getValue().payload().monitoringProducts()).hasSize(1);
+    }
+
+    @Test
     @DisplayName("forceResubscribe가 true이면 중복 구독 확인을 건너뛰고 정상 처리한다")
     void duplicateSelection_withForceResubscribeTrue_skipsDuplicateCheck() {
         // given
@@ -334,7 +427,7 @@ class ProductSelectionConsumerTest {
         verify(priceValidationResultEventPublisher).publish(resultEventCaptor.capture());
         PriceValidationResultEvent resultEvent = resultEventCaptor.getValue();
         assertThat(resultEvent.payload().confirmationRequired()).isFalse();
-        assertThat(resultEvent.payload().nextStatus()).isEqualTo("AUTO_PURCHASE_COMPLETED");
+        assertThat(resultEvent.payload().nextStatus()).isEqualTo("BROWSER_PURCHASE_IN_PROGRESS");
     }
 
     @Test
@@ -408,7 +501,7 @@ class ProductSelectionConsumerTest {
         assertThat(resultEvent.payload().triggeredProducts().get(1).productId()).isEqualTo("p1");
         assertThat(resultEvent.payload().purchasedProductId()).isEqualTo("p2");
         assertThat(resultEvent.payload().monitoringProducts()).hasSize(1);  // p3
-        assertThat(resultEvent.payload().nextStatus()).isEqualTo("MONITORING_STARTED");
+        assertThat(resultEvent.payload().nextStatus()).isEqualTo("BROWSER_PURCHASE_IN_PROGRESS");
     }
 
     @Test
@@ -445,8 +538,8 @@ class ProductSelectionConsumerTest {
     }
 
     @Test
-    @DisplayName("AUTO_PURCHASE - monitoringProducts가 없으면 AUTO_PURCHASE_COMPLETED 상태 반환")
-    void autoPurchase_noMonitoringProducts_completedStatus() {
+    @DisplayName("AUTO_PURCHASE - triggeredProducts가 존재하면 monitoringProducts 유무와 관계없이 BROWSER_PURCHASE_IN_PROGRESS 반환")
+    void autoPurchase_withTriggeredProducts_returnsBrowserPurchaseStatus() {
         // given
         ProductCandidateDto prod1 = candidate("p1", "200000");  // 충족 (최저가)
         List<ProductCandidateDto> products = List.of(prod1);
@@ -464,8 +557,73 @@ class ProductSelectionConsumerTest {
 
         // then
         verify(priceValidationResultEventPublisher).publish(resultEventCaptor.capture());
-        assertThat(resultEventCaptor.getValue().payload().nextStatus()).isEqualTo("AUTO_PURCHASE_COMPLETED");
+        assertThat(resultEventCaptor.getValue().payload().nextStatus()).isEqualTo("BROWSER_PURCHASE_IN_PROGRESS");
         assertThat(resultEventCaptor.getValue().payload().triggeredProducts()).hasSize(1);
         assertThat(resultEventCaptor.getValue().payload().monitoringProducts()).isEmpty();
+    }
+
+    // =========================================================================
+    // USD → KRW 변환 (고정 환율 1500)
+    // =========================================================================
+
+    @Test
+    @DisplayName("AUTO_PURCHASE - USD 상품 중 환산 최저가($10→15,000KRW) 목표 이하 → 구매 대상")
+    void autoPurchase_usdProducts_cheapestConvertedBelowTarget_purchased() {
+        // given: p1=$10(→15,000KRW) 충족, p2=$20(→30,000KRW) 충족 → p1이 최저가
+        ProductCandidateDto prod1 = candidateUsd("p1", "10");
+        ProductCandidateDto prod2 = candidateUsd("p2", "20");
+        List<ProductCandidateDto> products = List.of(prod1, prod2);
+        ProductSelectionEvent event = createEvent("AUTO_PURCHASE", products);
+
+        mockRefreshedWith(prod1, true, BigDecimal.valueOf(10), CurrencyType.USD);
+        mockRefreshedWith(prod2, true, BigDecimal.valueOf(20), CurrencyType.USD);
+
+        MonitoringSubscription subPurchased = createSubscription(100L, "p1");
+        when(monitoringSubscriptionService.createOrUpdateFromSelection(
+                eq(USER_ID), eq(COMMAND_ID), eq(TARGET_PRICE), eq("AUTO_PURCHASE"),
+                any()
+        )).thenReturn(subPurchased);
+
+        // when
+        productSelectionConsumer.consume(event);
+
+        // then: p1이 최저가로 구매 대상 선정, triggered 존재 → BROWSER_PURCHASE_IN_PROGRESS
+        verify(priceValidationResultEventPublisher).publish(resultEventCaptor.capture());
+        PriceValidationResultEvent resultEvent = resultEventCaptor.getValue();
+        assertThat(resultEvent.payload().purchasedProductId()).isEqualTo("p1");
+        assertThat(resultEvent.payload().triggeredProducts()).hasSize(2);
+        assertThat(resultEvent.payload().triggeredProducts().get(0).productId()).isEqualTo("p1");
+        assertThat(resultEvent.payload().nextStatus()).isEqualTo("BROWSER_PURCHASE_IN_PROGRESS");
+    }
+
+    @Test
+    @DisplayName("AUTO_PURCHASE - USD 상품 환산 가격 모두 목표 초과 → 구매 없음, 전부 monitoring")
+    void autoPurchase_usdAllConvertedAboveTarget_noPurchase() {
+        // given: p1=$250(→375,000KRW) 초과, p2=$300(→450,000KRW) 초과
+        ProductCandidateDto prod1 = candidateUsd("p1", "250");
+        ProductCandidateDto prod2 = candidateUsd("p2", "300");
+        List<ProductCandidateDto> products = List.of(prod1, prod2);
+        ProductSelectionEvent event = createEvent("AUTO_PURCHASE", products);
+
+        mockRefreshedWith(prod1, true, BigDecimal.valueOf(250), CurrencyType.USD);
+        mockRefreshedWith(prod2, true, BigDecimal.valueOf(300), CurrencyType.USD);
+
+        MonitoringSubscription sub1 = createSubscription(100L, "p1");
+        MonitoringSubscription sub2 = createSubscription(200L, "p2");
+        when(monitoringSubscriptionService.createOrUpdateFromSelection(
+                anyLong(), anyString(), anyInt(), anyString(), any()
+        )).thenReturn(sub1, sub2);
+
+        // when
+        productSelectionConsumer.consume(event);
+
+        // then
+        verify(subscriptionMonitoringService, never()).process(anyLong());
+        verify(priceValidationResultEventPublisher).publish(resultEventCaptor.capture());
+        PriceValidationResultEvent resultEvent = resultEventCaptor.getValue();
+        assertThat(resultEvent.payload().triggeredProducts()).isEmpty();
+        assertThat(resultEvent.payload().purchasedProductId()).isNull();
+        assertThat(resultEvent.payload().monitoringProducts()).hasSize(2);
+        assertThat(resultEvent.payload().nextStatus()).isEqualTo("MONITORING_STARTED");
     }
 }

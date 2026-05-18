@@ -26,6 +26,9 @@ public enum CommandSessionStatus {
     /** 기존 구독 갱신/재시작 여부에 대한 사용자 확인이 필요함 */
     RESUBSCRIBE_CONFIRMATION_REQUIRED,
 
+    /** AUTO_PURCHASE 의도에서 브라우저가 실제 구매 단계를 진행 중인 상태 */
+    BROWSER_PURCHASE_IN_PROGRESS,
+
     /** 최종 확인 완료, 가격 모니터링 시작됨 */
     MONITORING_STARTED,
 

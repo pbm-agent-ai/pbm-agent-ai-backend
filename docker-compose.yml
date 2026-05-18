@@ -106,6 +106,7 @@ services:
     depends_on:
       - kafka
       - eureka-server
+      - redis
     environment:
       - EUREKA_SERVER_URL=http://eureka-server:8761/eureka/
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
@@ -113,6 +114,11 @@ services:
       - COMMAND_DB_URL=jdbc:postgresql://postgres:5432/command_db
       - COMMAND_DB_USERNAME=${COMMAND_DB_USERNAME:-postgres}
       - COMMAND_DB_PASSWORD=${COMMAND_DB_PASSWORD:-password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - JWT_DEVICE_EXPIRATION=${JWT_DEVICE_EXPIRATION:-2592000000}
+      - JWT_AGENT_EXPIRATION=${JWT_AGENT_EXPIRATION:-1800000}
 
   # ─── 가격 서비스 ──────────────────────────────────────────
   price-service:

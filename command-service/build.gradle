@@ -1,4 +1,12 @@
 dependencies {
+    // Redis (브라우저 디바이스 online/offline heartbeat 캐시)
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+
+    // JWT (pairing/device/agent 토큰 발급 및 검증)
+    implementation 'io.jsonwebtoken:jjwt-api:0.12.3'
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.3'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.3'
+
     // Swagger UI / OpenAPI 문서 자동 생성
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0'
 

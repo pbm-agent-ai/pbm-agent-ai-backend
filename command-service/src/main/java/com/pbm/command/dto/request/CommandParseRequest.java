@@ -1,5 +1,7 @@
 package com.pbm.command.dto.request;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * 자연어 명령 파싱 요청 DTO.
  *
@@ -8,8 +10,11 @@ package com.pbm.command.dto.request;
  *       commandText는 앞뒤 공백을 제거하여 불필요한 오탐을 줄인다.
  * 연관: 향후 CommandParseController, CommandParsingService.
  */
+@Schema(description = "자연어 명령 파싱 요청 DTO")
 public record CommandParseRequest(
+        @Schema(description = "명령을 생성한 사용자 ID", example = "1")
         Long userId,
+        @Schema(description = "자연어 명령문", example = "AliExpress에서 QCY T13 ANC 블루투스 이어폰 검정색 상품 10만원 이하면 구매해줘.")
         String commandText
 ) {
     public CommandParseRequest {

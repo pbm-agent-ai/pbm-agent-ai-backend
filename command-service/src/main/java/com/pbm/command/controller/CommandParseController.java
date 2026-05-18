@@ -4,6 +4,10 @@ import com.pbm.command.common.ApiResponse;
 import com.pbm.command.dto.request.CommandParseRequest;
 import com.pbm.command.dto.response.CommandParseResponse;
 import com.pbm.command.service.CommandExecutionService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -19,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
  *       ApiResponse 반환. 추가 확인이 필요 없으면 price-topic으로 가격 요청이 자동 발행된다.
  * 연관: CommandExecutionService, CommandParseRequest, CommandParseResponse.
  */
+@Tag(name = "Command", description = "자연어 명령 파싱, 세션 상태 조회, 상품 선택/보완 API")
 @RestController
 @RequestMapping("/api/v1/commands")
 public class CommandParseController {
@@ -36,6 +41,12 @@ public class CommandParseController {
      * @param request 사용자 자연어 명령 요청 DTO
      * @return 파싱 결과 응답 DTO
      */
+    @SecurityRequirement(name = "bearerAuth")
+    @Operation(summary = "자연어 명령 파싱", description = "자연어 구매/모니터링 명령을 구조화된 데이터로 파싱하고, 추가 확인이 없으면 후속 처리까지 이어집니다.")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "파싱 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "인증 필요")
+    })
     @PostMapping("/parse")
     public ResponseEntity<ApiResponse<CommandParseResponse>> parseCommand(
             @RequestBody CommandParseRequest request

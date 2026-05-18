@@ -19,6 +19,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -45,6 +46,12 @@ import static org.mockito.Mockito.when;
  */
 @SpringBootTest
 @ActiveProfiles("test")
+@TestPropertySource(properties = {
+        "jwt.secret=test-secret-key-for-auth-integration-tests-must-be-at-least-256-bits-long",
+        "jwt.expiration=1800000",
+        "jwt.refresh-expiration=604800000",
+        "jwt.pairing-expiration=600000"
+})
 class AuthIntegrationTest {
 
     @Autowired

@@ -1,5 +1,7 @@
 package com.pbm.command.dto.request;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import java.util.List;
 
 /**
@@ -11,7 +13,9 @@ import java.util.List;
  *       초기 버전에서는 사용성/안정성을 위해 최대 5개까지 허용한다.
  * 연관: CommandSessionController, CommandExecutionService.
  */
+@Schema(description = "사용자 직접 입력 상품 URL 제출 DTO")
 public record ProductUrlSubmitRequest(
+        @Schema(description = "직접 입력한 상품 URL 목록", example = "[\"https://ko.aliexpress.com/item/1005006918061844.html\"]")
         List<String> productUrls
 ) {
     public ProductUrlSubmitRequest {

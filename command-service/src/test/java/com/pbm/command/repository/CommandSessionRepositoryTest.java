@@ -122,4 +122,19 @@ class CommandSessionRepositoryTest {
         assertThat(updated.getStatus()).isEqualTo(CommandSessionStatus.MONITORING_STARTED);
         assertThat(updated.getMissingFieldsJson()).isNull(); // 변경되지 않음
     }
+
+    @Test
+    @DisplayName("browser-purchase-in-progress 상태를 저장하고 조회한다")
+    void saveAndFind_sessionWithBrowserPurchaseInProgress_persistsStatus() {
+        // given
+        CommandSession session = CommandSession.createSearching(1L, "브라우저 구매 진행 테스트");
+        CommandSession saved = commandSessionRepository.save(session);
+
+        // when
+        saved.toBrowserPurchaseInProgress();
+        CommandSession updated = commandSessionRepository.save(saved);
+
+        // then
+        assertThat(updated.getStatus()).isEqualTo(CommandSessionStatus.BROWSER_PURCHASE_IN_PROGRESS);
+    }
 }

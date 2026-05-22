@@ -70,8 +70,8 @@ class CommandFieldEvaluationServiceTest {
     }
 
     @Test
-    @DisplayName("카테고리를 알 수 없으면 productCategory를 모호 필드로 반환한다")
-    void evaluate_unknownCategory_returnsProductCategoryAsAmbiguousField() {
+    @DisplayName("카테고리가 UNKNOWN이어도 다른 검색 핵심 정보가 있으면 키워드 검색을 위해 모호 필드를 비워둔다")
+    void evaluate_unknownCategoryWithSearchableFields_allowsKeywordSearchWithoutClarification() {
         ParsedCommand parsedCommand = new ParsedCommand(
                 ProductCategory.UNKNOWN,
                 "에어팟 프로",
@@ -89,8 +89,8 @@ class CommandFieldEvaluationServiceTest {
         FieldEvaluationResult result = commandFieldEvaluationService.evaluate(CommandIntent.PRICE_TRACK, parsedCommand);
 
         assertThat(result.missingRequiredFields()).isEmpty();
-        assertThat(result.ambiguousFields()).containsExactly("productCategory");
-        assertThat(result.needsClarification()).isTrue();
+        assertThat(result.ambiguousFields()).isEmpty();
+        assertThat(result.needsClarification()).isFalse();
     }
 
     @Test

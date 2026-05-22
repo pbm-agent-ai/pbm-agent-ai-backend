@@ -55,13 +55,14 @@ public class CommandSessionService {
             Long userId,
             String originalCommand,
             List<String> missingFields,
-            String clarificationMessage
+            String clarificationMessage,
+            String platform
     ) {
         String missingFieldsJson = serializeMissingFields(missingFields);
 
         // 아직 DB에 저장되지 않고 메모리에만 존재하는 객체
         CommandSession session = CommandSession.createPreSearchClarification(
-                userId, originalCommand, missingFieldsJson, clarificationMessage
+                userId, originalCommand, missingFieldsJson, clarificationMessage, platform
         );
 
         // session: save 전이므로 id가 null
@@ -69,6 +70,17 @@ public class CommandSessionService {
         CommandSession saved = commandSessionRepository.save(session);
         // 따라서 saved를 받고 진행해야 한다.
         return CommandSessionResponse.from(saved);
+    }
+
+    /** 기존 호출부와의 하위 호환 메서드 */
+    @Transactional
+    public CommandSessionResponse createPreSearchClarificationSession(
+            Long userId,
+            String originalCommand,
+            List<String> missingFields,
+            String clarificationMessage
+    ) {
+        return createPreSearchClarificationSession(userId, originalCommand, missingFields, clarificationMessage, null);
     }
 
     /**
@@ -83,12 +95,22 @@ public class CommandSessionService {
     @Transactional
     public CommandSessionResponse createSearchingSession(
             Long userId,
-            String originalCommand
+            String originalCommand,
+            String platform
     ) {
-        CommandSession session = CommandSession.createSearching(userId, originalCommand);
+        CommandSession session = CommandSession.createSearching(userId, originalCommand, platform);
 
         CommandSession saved = commandSessionRepository.save(session);
         return CommandSessionResponse.from(saved);
+    }
+
+    /** 기존 호출부와의 하위 호환 메서드 */
+    @Transactional
+    public CommandSessionResponse createSearchingSession(
+            Long userId,
+            String originalCommand
+    ) {
+        return createSearchingSession(userId, originalCommand, null);
     }
 
     /**
@@ -284,12 +306,24 @@ public class CommandSessionService {
     public CommandSessionResponse updateToPreSearchClarification(
             String commandId,
             List<String> missingFields,
-            String clarificationMessage
+            String clarificationMessage,
+            String platform
     ) {
         CommandSession session = getSessionEntityByCommandId(commandId);
         String missingFieldsJson = serializeMissingFields(missingFields);
         session.toPreSearchClarification(missingFieldsJson, clarificationMessage);
+        session.updatePlatform(platform);
         return CommandSessionResponse.from(session);
+    }
+
+    /** 기존 호출부와의 하위 호환 메서드 */
+    @Transactional
+    public CommandSessionResponse updateToPreSearchClarification(
+            String commandId,
+            List<String> missingFields,
+            String clarificationMessage
+    ) {
+        return updateToPreSearchClarification(commandId, missingFields, clarificationMessage, null);
     }
 
     /**
@@ -302,10 +336,17 @@ public class CommandSessionService {
      * @throws CommandSessionNotFoundException 해당 commandId의 세션이 없을 때
      */
     @Transactional
-    public CommandSessionResponse updateToSearching(String commandId) {
+    public CommandSessionResponse updateToSearching(String commandId, String platform) {
         CommandSession session = getSessionEntityByCommandId(commandId);
         session.toSearching();
+        session.updatePlatform(platform);
         return CommandSessionResponse.from(session);
+    }
+
+    /** 기존 호출부와의 하위 호환 메서드 */
+    @Transactional
+    public CommandSessionResponse updateToSearching(String commandId) {
+        return updateToSearching(commandId, null);
     }
 
     // =========================================================================

@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -49,9 +50,10 @@ public class CommandParseController {
     })
     @PostMapping("/parse")
     public ResponseEntity<ApiResponse<CommandParseResponse>> parseCommand(
+            @RequestHeader("X-User-Id") Long userId,
             @RequestBody CommandParseRequest request
     ) {
-        CommandParseResponse response = commandExecutionService.parseAndPublishIfReady(request);
+        CommandParseResponse response = commandExecutionService.parseAndPublishIfReady(request, userId);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 }

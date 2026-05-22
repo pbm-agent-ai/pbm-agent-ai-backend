@@ -11,14 +11,19 @@ import com.pbm.command.domain.AgentRun;
 public record AssignedRunResponse(
         String runId,
         String agentToken,
-        String commandId
+        String commandId,
+        String platform
 ) {
 
+    // 주의: platform 정보를 포함하려면 CommandSession을 함께 조회해야 한다.
+    // 현재 이 메서드는 사용되지 않으며, platform=null로 내려가면 extension이 ALIEXPRESS 기본값을 사용한다.
+    @Deprecated
     public static AssignedRunResponse from(AgentRun agentRun, String agentToken) {
         return new AssignedRunResponse(
                 agentRun.getRunId(),
                 agentToken,
-                agentRun.getCommandId()
+                agentRun.getCommandId(),
+                null
         );
     }
 }

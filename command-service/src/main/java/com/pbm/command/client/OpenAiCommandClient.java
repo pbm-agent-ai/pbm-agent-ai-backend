@@ -106,12 +106,20 @@ public class OpenAiCommandClient {
             throw new OpenAiClientException("external-api-service OpenAI 프록시 호출 중 오류가 발생했습니다.", e);
         }
 
+        log.info("[OpenAiCommandClient] OpenAI 프록시 응답 수신 - finishReason={}, confidence={}, refusal={}, parsedJson={}",
+                response == null ? null : response.finishReason(),
+                response == null ? null : response.confidence(),
+                response == null ? null : response.refusal(),
+                response == null ? null : response.parsedJson());
+
         validateProxyResponse(response);    // HTTP 200응답이 왔어도 내용이 이상할 수 있으니 추가 검증
 
         try {
             // response.parseJson(): JSON 타입을 -> OpenAiParsedCommandPayload: 반환할 목표 타입
             OpenAiParsedCommandPayload payload = objectMapper.treeToValue(response.parsedJson(), OpenAiParsedCommandPayload.class);
             validateParsedPayload(payload);
+            log.info("[OpenAiCommandClient] OpenAI 프록시 응답 역직렬화 완료 - intent={}, parsedCommand={}, confidence={}",
+                    payload.intent(), payload.parsedCommand(), payload.confidence());
             return payload;
         } catch (OpenAiResponseParseException e) {
             throw e;

@@ -4,11 +4,13 @@ import com.pbm.command.common.ApiResponse;
 import com.pbm.command.dto.request.BrowserDeviceRegisterRequest;
 import com.pbm.command.dto.response.BrowserDeviceRegisterResponse;
 import com.pbm.command.dto.response.BrowserHeartbeatResponse;
+import com.pbm.command.dto.response.MyDevicesResponse;
 import com.pbm.command.exception.BrowserDeviceNotFoundException;
 import com.pbm.command.service.BrowserDeviceService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -33,6 +35,22 @@ public class BrowserDeviceController {
 
     public BrowserDeviceController(BrowserDeviceService browserDeviceService) {
         this.browserDeviceService = browserDeviceService;
+    }
+
+    /**
+     * 로그인한 사용자의 디바이스 목록을 조회한다.
+     * Redis TTL 기준으로 각 디바이스의 실시간 online 상태를 반영한다.
+     *
+     * @param userId Gateway가 accessToken에서 추출해 주입한 사용자 ID
+     * @return 내 디바이스 목록 응답 DTO
+     */
+    @Operation(summary = "내 디바이스 목록 조회", description = "로그인한 사용자의 페어링된 디바이스 목록과 실시간 online 상태를 반환합니다.")
+    @GetMapping("/my")
+    public ResponseEntity<ApiResponse<MyDevicesResponse>> getMyDevices(
+            @RequestHeader("X-User-Id") Long userId
+    ) {
+        MyDevicesResponse response = browserDeviceService.getMyDevices(userId);
+        return ResponseEntity.ok(new ApiResponse<>(true, response, "내 디바이스 목록 조회 성공"));
     }
 
     /**

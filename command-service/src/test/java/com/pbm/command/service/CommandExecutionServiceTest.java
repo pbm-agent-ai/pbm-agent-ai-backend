@@ -72,7 +72,8 @@ class CommandExecutionServiceTest {
     void parseAndPublishIfReady_noClarificationNeeded_publishesPriceRequest() {
         // given
         String expectedCommandId = "cmd-uuid-7890";
-        CommandParseRequest request = new CommandParseRequest(1L, "나이키 에어맥스 270 네이버에서 15만원 이하 가격 알려줘");
+        Long userId = 1L;
+        CommandParseRequest request = new CommandParseRequest("나이키 에어맥스 270 네이버에서 15만원 이하 가격 알려줘");
 
         ParsedCommand parsedCommand = new ParsedCommand(
                 ProductCategory.SHOES,
@@ -103,20 +104,20 @@ class CommandExecutionServiceTest {
         // SEARCHING 세션 생성 mock
         CommandSessionResponse sessionResponse = new CommandSessionResponse(
                 expectedCommandId, 1L, request.commandText(), null, null, null, null,
-                List.of(), null, null, null, null, null, null
+                List.of(), null, null, null, null, "NAVER", null, null
         );
-        given(commandSessionService.createSearchingSession(request.userId(), request.commandText()))
+        given(commandSessionService.createSearchingSession(userId, request.commandText(), null))
                 .willReturn(sessionResponse);
 
         // when
-        CommandParseResponse actual = commandExecutionService.parseAndPublishIfReady(request);
+        CommandParseResponse actual = commandExecutionService.parseAndPublishIfReady(request, userId);
 
         // then
         assertThat(actual.commandId()).isEqualTo(expectedCommandId);
         assertThat(actual.intent()).isEqualTo(response.intent());
         assertThat(actual.needsClarification()).isFalse();
         verify(priceRequestService).publishParsedCommandRequest(
-                request.userId(), "PRICE_CHECK", parsedCommand, expectedCommandId);
+                userId, "PRICE_CHECK", parsedCommand, expectedCommandId);
     }
 
     @Test
@@ -124,7 +125,8 @@ class CommandExecutionServiceTest {
     void parseAndPublishIfReady_clarificationNeeded_doesNotPublish() {
         // given
         String expectedCommandId = "cmd-uuid-clarify-1234";
-        CommandParseRequest request = new CommandParseRequest(1L, "나이키 조던 20만원 이하면 결제해줘");
+        Long userId = 1L;
+        CommandParseRequest request = new CommandParseRequest("나이키 조던 20만원 이하면 결제해줘");
 
         ParsedCommand parsedCommand = new ParsedCommand(
                 ProductCategory.SHOES,
@@ -155,23 +157,72 @@ class CommandExecutionServiceTest {
         // PRE_SEARCH_CLARIFICATION 세션 생성 mock
         CommandSessionResponse sessionResponse = new CommandSessionResponse(
                 expectedCommandId, 1L, request.commandText(), null, null, null, null,
-                List.of(), null, null, null, null, null, null
+                List.of(), null, null, null, null, null, null, null
         );
         given(commandSessionService.createPreSearchClarificationSession(
-                eq(request.userId()),
+                eq(userId),
                 eq(request.commandText()),
                 eq(List.of("size", "platform")),
-                anyString()
+                anyString(),
+                eq(null)
         )).willReturn(sessionResponse);
 
         // when
-        CommandParseResponse actual = commandExecutionService.parseAndPublishIfReady(request);
+        CommandParseResponse actual = commandExecutionService.parseAndPublishIfReady(request, userId);
 
         // then
         assertThat(actual.commandId()).isEqualTo(expectedCommandId);
         assertThat(actual.intent()).isEqualTo(response.intent());
         assertThat(actual.needsClarification()).isTrue();
         verify(priceRequestService, never()).publishParsedCommandRequest(anyLong(), anyString(), any(), anyString());
+    }
+
+    @Test
+    @DisplayName("productCategory가 UNKNOWN이어도 키워드 검색 가능한 정보가 있으면 SEARCHING 세션 생성 후 발행한다")
+    void parseAndPublishIfReady_unknownCategoryButSearchable_publishes() {
+        String expectedCommandId = "cmd-uuid-unknown-1234";
+        Long userId = 6L;
+        CommandParseRequest request = new CommandParseRequest("네이버에서 칠성사이다 210ml 30개가 50000원 이하면 구매해줘");
+
+        ParsedCommand parsedCommand = new ParsedCommand(
+                ProductCategory.UNKNOWN,
+                "칠성사이다 210ml 30개",
+                "칠성사이다",
+                null,
+                null,
+                null,
+                "210ml 30개",
+                PlatformType.NAVER,
+                50000,
+                null,
+                "KRW"
+        );
+
+        CommandParseResponse response = new CommandParseResponse(
+                CommandIntent.AUTO_PURCHASE,
+                parsedCommand,
+                List.of(),
+                List.of(),
+                false,
+                0.98,
+                null
+        );
+
+        when(commandParsingService.parse(any(CommandParseRequest.class))).thenReturn(response);
+
+        CommandSessionResponse sessionResponse = new CommandSessionResponse(
+                expectedCommandId, userId, request.commandText(), null, null, null, null,
+                List.of(), null, null, null, null, "NAVER", null, null
+        );
+        given(commandSessionService.createSearchingSession(eq(userId), eq(request.commandText()), eq("NAVER")))
+                .willReturn(sessionResponse);
+
+        CommandParseResponse actual = commandExecutionService.parseAndPublishIfReady(request, userId);
+
+        assertThat(actual.commandId()).isEqualTo(expectedCommandId);
+        assertThat(actual.needsClarification()).isFalse();
+        verify(priceRequestService).publishParsedCommandRequest(userId, "AUTO_PURCHASE", parsedCommand, expectedCommandId);
+        verify(commandSessionService, never()).createPreSearchClarificationSession(anyLong(), anyString(), anyList(), anyString(), any());
     }
 
     @Test

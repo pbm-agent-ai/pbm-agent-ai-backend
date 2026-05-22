@@ -87,9 +87,10 @@ public class CommandFieldEvaluationService {
     public List<String> calculateAmbiguousFields(CommandIntent intent, ParsedCommand parsedCommand) {
         LinkedHashSet<String> ambiguousFields = new LinkedHashSet<>();
 
-        // 카테고리 자체를 모르는 경우 -> 카테고리 자체를 모르면 다른 판단이 무의미하므로 productCategory만 ambiguous에 넣고 즉시 반환
-        // ex) "아이템 하나 추천해줘" -> 뭘 사려는지 조차 모름 -> productCategory 물어봐야 함
-        if (parsedCommand == null || parsedCommand.productCategory() == null || parsedCommand.productCategory() == ProductCategory.UNKNOWN) {
+        // GPT가 아무 값도 뽑지 못한 경우에는 무엇을 검색해야 할지 자체가 불명확하므로 카테고리를 다시 물어본다.
+        // 단, productCategory가 UNKNOWN이어도 productName / platform / 가격 정보가 있으면 키워드 검색은 진행할 수 있으므로
+        // UNKNOWN만을 이유로 즉시 clarification으로 막지 않는다.
+        if (parsedCommand == null || parsedCommand.productCategory() == null) {
             ambiguousFields.add(CommandFieldType.PRODUCT_CATEGORY.fieldKey());
             return List.copyOf(ambiguousFields);
         }

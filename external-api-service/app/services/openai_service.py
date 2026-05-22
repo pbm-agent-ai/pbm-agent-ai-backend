@@ -309,6 +309,16 @@ async def parse_command(
     if isinstance(parsed_json.get("confidence"), (int, float)):
         confidence = float(parsed_json["confidence"])
 
+    # 디버깅용 로그 추가
+    logger.info(
+        "parse_command result - model=%s finish_reason=%s confidence=%s refusal=%s parsed_json=%s",
+        model,
+        finish_reason,
+        confidence,
+        refusal,
+        parsed_json,
+    )
+
     return OpenAiParseCommandResponse(
         parsed_json=parsed_json,
         finish_reason=finish_reason,
@@ -318,31 +328,192 @@ async def parse_command(
 
 
 def _build_dom_planner_system_prompt() -> str:
-    return (
-        "너는 브라우저 자동화 planner다. "
-        "입력으로 command/session 상태와 DOM 요약을 받고, 다음 브라우저 액션 1개만 JSON으로 반환한다. "
-        "반드시 주어진 interactive_elements / option_groups 안에서 target을 고르고, "
-        "버튼이 보이지 않거나 페이지 아래에 있을 가능성이 있으면 SCROLL을 반환할 수 있다. "
-        "결정할 수 없으면 WAIT 또는 COMPLETE를 반환한다. "
-        "결제 확정/주문 제출을 추정해서 과감하게 누르지 말고, 확실한 구매/장바구니/검색/옵션 선택만 선택한다."
-    )
+    """범용 DOM planner 프롬프트 (agent_type 미지정 시 사용)."""
+    return """너는 쇼핑몰 브라우저 자동화 planner다.
+입력으로 현재 페이지 상태(URL, DOM 요약, interactive_elements)와 목표 상품(targetProduct)을 받고,
+다음에 실행할 브라우저 액션 1개만 JSON으로 반환한다.
+
+[페이지 유형별 행동 지침]
+
+1. 검색 결과 페이지 (URL에 "search", "query", "SearchText", "wholesale" 등 포함):
+   - targetProduct의 title과 가장 유사한 상품 링크를 interactiveElements에서 찾아 CLICK한다.
+   - 일치하는 상품이 없으면 SCROLL로 더 탐색한다.
+   - 검색창(input)이 비어있으면 targetProduct.title을 INPUT한 뒤 검색 버튼을 CLICK한다.
+
+2. 상품 상세 페이지 (URL에 "/item/", "/product/", "/goods/" 등 포함):
+   - 색상/사이즈 등 옵션 선택이 필요하면 optionGroups 또는 interactiveElements에서 SELECT/CLICK한다.
+   - "구매하기", "Buy Now", "지금 구매", "장바구니", "Add to Cart" 버튼을 찾아 CLICK한다.
+   - 버튼이 보이지 않으면 SCROLL로 아래를 탐색한다.
+
+3. 메인 페이지 / 차단된 페이지 / 에러 페이지:
+   - 검색창(input[type=search] 또는 검색 input)을 찾아 targetProduct.title을 INPUT한다.
+   - 검색 버튼(돋보기, "검색", "Search")을 찾아 CLICK한다.
+   - 검색창도 없으면 SCROLL로 탐색한다.
+
+4. navigationStrategy가 "SEARCH"인 경우 (예: 네이버):
+   - 상품 URL로 직접 이동하지 않는다.
+   - 반드시 검색 결과 페이지 또는 메인 검색창을 통해 상품을 탐색한다.
+   - 검색 결과에서 targetProduct.title과 가장 유사한 상품 링크를 클릭한다.
+
+[공통 규칙]
+- target은 반드시 interactiveElements 또는 optionGroups 안에서만 선택한다.
+- 결제 확정, 주문 제출, 결제 버튼은 절대 클릭하지 않는다.
+- 확신할 수 없으면 WAIT를 반환한다."""
+
+
+def _build_search_navigator_system_prompt() -> str:
+    """검색 결과 페이지 전문 AI 프롬프트.
+
+    역할: 검색 결과 목록에서 targetProduct와 가장 일치하는 상품 링크를 찾아 클릭한다.
+    이 AI는 오직 검색 결과 탐색과 상품 링크 클릭만 담당한다.
+    """
+    return """너는 쇼핑몰 검색 결과 페이지 전문 탐색 AI다.
+네 유일한 임무는 검색 결과에서 targetProduct와 가장 일치하는 상품 링크를 찾아 클릭하는 것이다.
+
+[상품 매칭 기준 - 우선순위 순]
+1. 브랜드 일치: targetProduct의 brand가 있으면 반드시 동일 브랜드 상품 선택
+2. 모델명 일치: line, model 키워드가 상품명에 포함되는지 확인
+3. 색상/사이즈 일치: color, size가 상품명이나 옵션에 포함되는지 확인
+4. 가격 범위: maxPrice 이하인 상품 우선 (가격 정보가 visible_text_summary에 있는 경우)
+5. 광고 상품 회피: 라벨에 "광고", "AD", "Sponsored"가 붙은 상품보다 일반 상품 우선
+
+[행동 순서]
+1. interactiveElements에서 상품 링크(role=link 또는 role=a)를 목록화한다.
+2. 위 매칭 기준으로 가장 적합한 상품 1개를 선택해 CLICK한다.
+3. 스크롤해도 적합한 상품이 없으면 SCROLL로 더 탐색한다.
+4. 페이지에 검색창이 있고 현재 검색어가 부정확하다면 targetProduct.title로 INPUT 후 검색 버튼 CLICK한다.
+
+[절대 금지]
+- 구매하기, Buy Now, 장바구니 버튼 클릭 금지 (검색 결과 페이지 임무가 아님)
+- target은 반드시 interactiveElements 또는 optionGroups에서만 선택한다.
+- 확신할 수 없으면 WAIT를 반환한다."""
+
+
+def _build_catalog_navigator_system_prompt(product_name: str | None = None, price: int | None = None) -> str:
+    """카탈로그 페이지 전문 AI 프롬프트.
+
+    역할: 네이버 쇼핑 카탈로그 페이지(여러 판매처 비교)에서
+          targetProduct의 가격과 일치하는 판매처의 구매 링크 URL을 추출해 NAVIGATE한다.
+    """
+
+    target_info = ""
+    if product_name or price:
+        target_info = f"\n[찾아야 할 상품]\n- 상품명: {product_name or '알 수 없음'}\n- 목표가격: {f'{price:,}원' if price else '알 수 없음'}\n"
+    return target_info + """너는 네이버 쇼핑 카탈로그 페이지 전문 탐색 AI다.
+카탈로그 페이지는 동일 상품을 여러 판매처가 각기 다른 가격에 판매하는 비교 페이지다.
+네 임무는 rawHtml에서 목표가격과 정확히 일치하는 판매처의 adcr 링크 URL을 찾아 NAVIGATE로 이동하는 것이다.
+
+[판매처 링크 추출 절차 - 반드시 이 순서대로 실행]
+1. rawHtml에서 목표가격(예: "139,000원", "139000")과 정확히 일치하는 가격 텍스트를 먼저 찾는다.
+2. 그 가격 텍스트와 가장 가까이 위치한 <a href="https://cr.shopping.naver.com/adcr?..."> 태그를 찾는다.
+3. 해당 href 전체 URL을 value에 넣고 action=NAVIGATE로 반환한다.
+4. target은 null, value에 adcr URL 전체를 담는다.
+
+[가격 매칭 규칙 - 엄격히 준수]
+- 목표가격과 정확히 일치하는 판매처만 선택한다.
+- "가장 근접한" 가격이 아니라 반드시 "완전히 동일한" 가격이어야 한다.
+- 예: 목표가격 139,000원 → 139,000원인 판매처만 선택, 140,000원 판매처는 절대 선택하지 않는다.
+- 정확히 일치하는 가격의 판매처가 없으면 WAIT를 반환한다.
+
+[절대 금지]
+- search.shopping.naver.com/catalog/ URL 반환 금지 (카탈로그 내부 URL)
+- brand.naver.com URL 반환 금지 (브랜드 스토어 메인)
+- shopping.naver.com/home URL 반환 금지 (쇼핑 메인)
+- 가격이 불일치하는 판매처 선택 금지
+
+[반환 형식]
+action=NAVIGATE, value=<정확히 일치하는 가격의 판매처 adcr URL 전체>, target=null"""
+
+
+def _build_purchase_executor_system_prompt() -> str:
+    """상품 상세 페이지 전문 AI 프롬프트.
+
+    역할: 상품 상세 페이지에서 옵션(색상/사이즈)을 선택하고 구매 버튼을 클릭한다.
+    이 AI는 오직 옵션 선택과 구매 버튼 클릭만 담당한다.
+    rawHtml에서 직접 버튼 CSS selector를 추출해 반환한다.
+    """
+    return """너는 쇼핑몰 상품 상세 페이지 구매 실행 전문 AI다.
+네 임무는 targetProduct의 옵션(색상/사이즈 등)을 선택하고 구매 버튼을 클릭하는 것이다.
+
+[버튼 탐색 방법 - rawHtml 우선]
+rawHtml이 제공된 경우, 반드시 rawHtml을 직접 분석하여 구매 버튼의 CSS selector를 추출한다.
+interactiveElements의 nodeId/labelText는 .blind 처리된 버튼을 누락할 수 있으므로 rawHtml을 우선한다.
+
+rawHtml에서 버튼을 찾는 방법:
+1. "구매하기", "바로구매", "Buy Now", "지금 구매", "장바구니", "Add to Cart" 텍스트가 포함된 <button>, <a>, <span class="..."> 요소를 찾는다.
+2. 해당 요소의 CSS selector를 반드시 target.selector에 넣어야 한다. (절대 null 금지)
+   - id가 있으면: "#buyNow", "#purchaseBtn"
+   - class가 있으면: "button.buyBtn", "a.buy-now-btn"
+   - data 속성이 있으면: "button[data-nclick*='buy']", "a[data-log-click*='purchase']"
+   - 형제 순서: "ul.seller-list li:first-child button"
+   구매 버튼이 rawHtml에 존재하는 한 반드시 selector를 추출할 수 있다.
+3. target.node_id와 target.label_text는 null로 설정해도 된다.
+   (content script가 selector로 document.querySelector()를 실행해 직접 클릭)
+
+⚠️ 중요: 구매 버튼을 확인했다면 target.selector는 반드시 비어있지 않은 문자열이어야 한다.
+   selector=null로 반환하면 시스템이 버튼을 클릭할 수 없어 무한 루프에 빠진다.
+
+[행동 순서]
+1. 옵션 확인: optionGroups 또는 interactiveElements에서 미선택된 필수 옵션을 확인한다.
+   - targetProduct의 color → 색상 옵션 SELECT/CLICK
+   - targetProduct의 size → 사이즈 옵션 SELECT/CLICK
+   - targetProduct의 model → 모델/용량 옵션 SELECT/CLICK
+2. 모든 필수 옵션 선택 완료 후 구매 버튼을 찾아 CLICK한다.
+   - rawHtml에서 버튼 selector 추출 → target.selector에 반환
+   - rawHtml이 없으면 interactiveElements에서 labelText로 탐색
+3. 버튼이 화면에 없으면 SCROLL로 아래를 탐색한다.
+4. 옵션 선택이 완전히 완료되고 더 이상 할 일이 없으면 COMPLETE를 반환한다.
+
+[절대 금지]
+- "결제하기", "주문하기", "결제 완료", "Pay Now", "주문완료", "결제" 등 최종 결제 버튼 클릭 절대 금지.
+  (구매하기/Add to Cart까지만 허용. 결제 버튼은 사용자 최종 확인 단계임)
+- 아직 미선택 옵션이 있는 상태에서 구매 버튼 클릭 금지.
+- 확신할 수 없으면 WAIT를 반환한다."""
+
+
+def _select_system_prompt(agent_type: str | None, request: DomPlannerRequest | None = None) -> str:
+    """agent_type에 따라 적절한 시스템 프롬프트를 선택한다.
+
+    Args:
+        agent_type: SEARCH_NAVIGATOR | PURCHASE_EXECUTOR | None(범용)
+
+    Returns:
+        해당 agent_type의 시스템 프롬프트 문자열
+    """
+    if agent_type == "SEARCH_NAVIGATOR":
+        return _build_search_navigator_system_prompt()
+    if agent_type == "PURCHASE_EXECUTOR":
+        return _build_purchase_executor_system_prompt()
+    if agent_type == "CATALOG_NAVIGATOR":
+        product_name = None
+        price = None
+        if request and request.target_product:
+            product_name = request.target_product.get("title")
+            price = request.target_product.get("price")
+        return _build_catalog_navigator_system_prompt(product_name, price)
+    return _build_dom_planner_system_prompt()
 
 
 def _build_dom_planner_user_prompt(request: DomPlannerRequest) -> str:
-    return json.dumps(
-        {
-            "commandText": request.command_text,
-            "commandIntent": request.command_intent,
-            "commandStatus": request.command_status,
-            "currentUrl": request.current_url,
-            "title": request.title,
-            "visibleTextSummary": request.visible_text_summary,
-            "targetProduct": request.target_product,
-            "interactiveElements": request.interactive_elements,
-            "optionGroups": request.option_groups,
-        },
-        ensure_ascii=False,
-    )
+    payload: dict = {
+        "commandText": request.command_text,
+        "commandIntent": request.command_intent,
+        "commandStatus": request.command_status,
+        "platform": request.platform,
+        "navigationStrategy": request.navigation_strategy,
+        "agentType": request.agent_type,
+        "currentUrl": request.current_url,
+        "title": request.title,
+        "visibleTextSummary": request.visible_text_summary,
+        "targetProduct": request.target_product,
+        "interactiveElements": request.interactive_elements,
+        "optionGroups": request.option_groups,
+    }
+    # CATALOG_NAVIGATOR / PURCHASE_EXECUTOR는 rawHtml을 직접 포함해서
+    # 전처리 없이 AI가 판매처 링크 또는 구매버튼을 직접 추출하게 한다
+    if request.agent_type in ("CATALOG_NAVIGATOR", "PURCHASE_EXECUTOR") and request.raw_html:
+        payload["rawHtml"] = request.raw_html
+    return json.dumps(payload, ensure_ascii=False)
 
 
 async def _plan_dom_action_mock(request: DomPlannerRequest) -> DomPlannerResponse:
@@ -393,15 +564,29 @@ async def _plan_dom_action_mock(request: DomPlannerRequest) -> DomPlannerRespons
 
 
 async def plan_dom_action(request: DomPlannerRequest) -> DomPlannerResponse:
-    """GPT-5.4-mini로 DOM snapshot 기반 다음 액션을 결정한다."""
+    """GPT-5.4-mini로 DOM snapshot 기반 다음 액션을 결정한다.
+
+    agent_type에 따라 전문화된 프롬프트를 선택한다:
+    - SEARCH_NAVIGATOR: 검색 결과 → 상품 링크 클릭 전문
+    - PURCHASE_EXECUTOR: 상품 상세 → 옵션 선택 + 구매버튼 전문
+    - None(미지정): 범용 planner
+    """
     if _is_mock_enabled():
         return await _plan_dom_action_mock(request)
 
     api_key, base_url, model = _get_openai_config()
+    system_prompt = _select_system_prompt(request.agent_type, request)
+    logger.info("[plan_dom_action] agent_type=%s → prompt 선택 완료", request.agent_type or "GENERIC")
+    if request.agent_type == "CATALOG_NAVIGATOR":
+        elements_summary = [
+            {"nodeId": el.get("nodeId"), "role": el.get("role"), "labelText": el.get("labelText")}
+            for el in (request.interactive_elements or [])
+        ]
+        logger.info("[plan_dom_action] CATALOG_NAVIGATOR interactiveElements=%s", json.dumps(elements_summary, ensure_ascii=False))
     request_body = {
         "model": model,
         "messages": [
-            {"role": "system", "content": _build_dom_planner_system_prompt()},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": _build_dom_planner_user_prompt(request)},
         ],
         "temperature": 0.0,
@@ -419,12 +604,17 @@ async def plan_dom_action(request: DomPlannerRequest) -> DomPlannerResponse:
         "Content-Type": "application/json",
     }
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
             f"{base_url}/chat/completions",
             json=request_body,
             headers=headers,
         )
+        # 429 Rate Limit: 별도 처리 (uvicorn 크래시 방지)
+        if response.status_code == 429:
+            retry_after = response.headers.get("Retry-After", "60")
+            logger.warning("[plan_dom_action] OpenAI rate limit (429) - Retry-After=%s", retry_after)
+            raise ValueError(f"OpenAI API rate limit 초과 (429). {retry_after}초 후 재시도 가능합니다.")
         response.raise_for_status()
 
     data = response.json()

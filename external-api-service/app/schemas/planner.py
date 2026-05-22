@@ -32,6 +32,28 @@ class DomPlannerRequest(BaseModel):
     interactive_elements: list[dict] = Field(default_factory=list, description="interactive element 목록")
     option_groups: list[dict] = Field(default_factory=list, description="select/option group 목록")
     target_product: Optional[dict] = Field(None, description="선택/트리거된 대상 상품 정보")
+    platform: Optional[str] = Field(None, description="플랫폼 식별자. 예: ALIEXPRESS, NAVER")
+    navigation_strategy: Optional[str] = Field(
+        None,
+        description=(
+            "페이지 접근 전략. "
+            "DIRECT=상품 URL 직접 접근(알리 등), "
+            "SEARCH=검색 페이지 경유(네이버 등 봇 차단 우회)"
+        ),
+    )
+    agent_type: Optional[str] = Field(
+        None,
+        description=(
+            "호출할 전문 AI 에이전트 유형. "
+            "SEARCH_NAVIGATOR=검색 결과에서 상품 링크를 찾아 클릭, "
+            "PURCHASE_EXECUTOR=상품 상세 페이지에서 옵션 선택 및 구매버튼 클릭. "
+            "null이면 단일 범용 planner 사용."
+        ),
+    )
+    raw_html: Optional[str] = Field(
+        None,
+        description="전체 페이지 HTML (전처리 없이 AI에게 직접 전달, 최대 80KB). CATALOG_NAVIGATOR에서 판매처 링크 직접 추출에 사용."
+    )
 
 
 class DomPlannerResponse(BaseModel):

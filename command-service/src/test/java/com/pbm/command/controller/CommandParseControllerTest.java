@@ -22,6 +22,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -55,7 +56,7 @@ class CommandParseControllerTest {
     @Test
     @DisplayName("자연어 파싱 요청 - 공통 응답 형식으로 parse 결과 반환")
     void parseCommand_returnsSuccessResponse() throws Exception {
-        CommandParseRequest request = new CommandParseRequest(1L, "나이키 조던 20만원 이하면 결제해줘");
+        CommandParseRequest request = new CommandParseRequest("나이키 조던 20만원 이하면 결제해줘");
         CommandParseResponse response = new CommandParseResponse(
                 CommandIntent.AUTO_PURCHASE,
                 new ParsedCommand(
@@ -78,9 +79,10 @@ class CommandParseControllerTest {
                 "test-command-uuid"
         );
 
-        when(commandExecutionService.parseAndPublishIfReady(any(CommandParseRequest.class))).thenReturn(response);
+        when(commandExecutionService.parseAndPublishIfReady(any(CommandParseRequest.class), eq(1L))).thenReturn(response);
 
         mockMvc.perform(post("/api/v1/commands/parse")
+                        .header("X-User-Id", "1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
@@ -98,12 +100,13 @@ class CommandParseControllerTest {
     @Test
     @DisplayName("자연어 파싱 요청 - external-api-service 장애 시 503 응답 반환")
     void parseCommand_returnsServiceUnavailableWhenProxyFails() throws Exception {
-        CommandParseRequest request = new CommandParseRequest(1L, "나이키 조던 20만원 이하면 결제해줘");
+        CommandParseRequest request = new CommandParseRequest("나이키 조던 20만원 이하면 결제해줘");
 
-        when(commandExecutionService.parseAndPublishIfReady(any(CommandParseRequest.class)))
+        when(commandExecutionService.parseAndPublishIfReady(any(CommandParseRequest.class), eq(1L)))
                 .thenThrow(new ExternalApiProxyException("external-api-service 장애"));
 
         mockMvc.perform(post("/api/v1/commands/parse")
+                        .header("X-User-Id", "1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isServiceUnavailable())

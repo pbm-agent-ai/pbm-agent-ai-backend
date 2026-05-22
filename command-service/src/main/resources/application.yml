@@ -21,10 +21,10 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false   # SQL 로그 비활성화 (필요 시 true로 변경)
     properties:
       hibernate:
-        format_sql: true
+        format_sql: false
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
@@ -99,10 +99,16 @@ springdoc:
   api-docs:
     path: /v3/api-docs
 
-# 디버그 로깅: external-api-service 호출 및 HTTP 클라이언트 동작 추적용
+# 로깅 레벨 설정
 logging:
   level:
-    com.pbm.command.client: DEBUG
-    com.pbm.command.config.RestClientConfig: DEBUG
-    org.springframework.web.client: DEBUG
-    org.apache.hc.client5: DEBUG
+    # 비즈니스 로직 디버그 (external-api-service 호출 추적)
+    com.pbm.command: INFO
+    # HTTP 클라이언트: WARN으로 설정 (DEBUG 시 Eureka wire 로그 폭탄 발생)
+    org.apache.hc.client5: WARN
+    org.springframework.web.client: WARN
+    # Eureka 통신 로그 억제
+    com.netflix.discovery: WARN
+    # Hibernate SQL 로그 억제 (show-sql: false 와 함께 사용)
+    org.hibernate.SQL: WARN
+    org.hibernate.orm.jdbc.bind: WARN

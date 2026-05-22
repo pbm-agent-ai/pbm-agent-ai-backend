@@ -17,6 +17,7 @@ import com.pbm.command.exception.BrowserDeviceNotFoundException;
 import com.pbm.command.exception.CommandSessionNotFoundException;
 import com.pbm.command.domain.ActionExecutionStatus;
 import com.pbm.command.domain.BrowserActionType;
+import com.pbm.command.domain.BrowserDeviceStatus;
 import com.pbm.command.domain.CommandSession;
 import com.pbm.command.repository.AgentRunRepository;
 import com.pbm.command.repository.BrowserDeviceRepository;
@@ -25,6 +26,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -39,6 +42,7 @@ import java.util.Set;
  *       디바이스 할당/복구/승인/중단 같은 상태 전이를 수행한다.
  * 연관: AgentRunRepository, CommandSessionRepository, BrowserAgentTokenUtil.
  */
+@Slf4j
 @Service
 @Transactional(readOnly = true)
 public class AgentRunService {
@@ -86,20 +90,46 @@ public class AgentRunService {
 
     /**
      * 웹 앱 요청으로 새 AgentRun을 생성한다.
+     * <p>
+     * INTERRUPTED 상태의 기존 run은 새 run 생성 시 자동으로 ABORTED 처리한다.
+     * 이는 디바이스가 오프라인 상태에서 새로운 명령이 들어온 경우를 처리한다.
      */
     @Transactional
     public AgentRunCreatedResponse createRun(Long userId, String commandId) {
         commandSessionRepository.findByCommandId(commandId)
                 .orElseThrow(() -> new CommandSessionNotFoundException("세션을 찾을 수 없습니다. commandId: " + commandId));
 
-        if (agentRunRepository.existsByUserIdAndStatusIn(userId, ACTIVE_STATUSES)) {
-            throw new AgentRunConflictException("이미 진행 중인 AgentRun이 있습니다. userId=" + userId);
+        // INTERRUPTED 상태의 기존 run을 ABORTED로 전환 (새 run으로 대체됨)
+        List<AgentRun> interruptedRuns = agentRunRepository.findAllByUserIdAndStatusIn(
+                userId, Set.of(AgentRunStatus.INTERRUPTED)
+        );
+        if (!interruptedRuns.isEmpty()) {
+            log.info("INTERRUPTED 상태의 기존 AgentRun {}건을 ABORTED로 전환합니다. userId={}", interruptedRuns.size(), userId);
+            interruptedRuns.forEach(run -> run.abort("SUPERSEDED_BY_NEW_RUN"));
+        }
+
+        // INTERRUPTED 외의 활성 run이 있으면 모두 ABORTED 처리 후 새 run 허용
+        // 새 명령을 내렸다는 것은 이전 run을 포기한다는 의미이므로 충돌 예외 대신 강제 종료
+        Set<AgentRunStatus> activeExcludingInterrupted = Set.of(
+                AgentRunStatus.QUEUED,
+                AgentRunStatus.ASSIGNED,
+                AgentRunStatus.RUNNING,
+                AgentRunStatus.AWAITING_APPROVAL,
+                AgentRunStatus.RECOVERING
+        );
+        List<AgentRun> activeRuns = agentRunRepository.findAllByUserIdAndStatusIn(userId, activeExcludingInterrupted);
+        if (!activeRuns.isEmpty()) {
+            log.warn("기존 활성 AgentRun {}건을 ABORTED 처리합니다 (새 run으로 대체). userId={}",
+                    activeRuns.size(), userId);
+            activeRuns.forEach(run -> run.abort("SUPERSEDED_BY_NEW_RUN"));
         }
 
         AgentRun agentRun = AgentRun.createQueued(userId, commandId);
-        assignLatestOnlineDeviceIfPossible(agentRun);
+        assignLatestOnlineDeviceIfPossible(agentRun);   // 온라인 디바이스가 있으면 바로 할당, 없으면 그냥 패스함
 
         AgentRun saved = agentRunRepository.save(agentRun);
+        log.info("AgentRun 생성 완료 - runId: {}, status: {}, assignedDevice: {}",
+                saved.getRunId(), saved.getStatus(), saved.getAssignedDeviceId());
         return new AgentRunCreatedResponse(
                 saved.getRunId(),
                 saved.getCommandId(),
@@ -110,6 +140,7 @@ public class AgentRunService {
 
     /**
      * 특정 디바이스에 대기 중으로 할당된 run 1건을 조회한다.
+     * 크롬 익스텐션측이 할 일이 있는지 체크하고자 폴링할때 호출
      */
     @Transactional
     public AssignedRunResponse getPendingRunForDevice(String deviceId) {
@@ -120,9 +151,15 @@ public class AgentRunService {
             return null;
         }
 
-        return AssignedRunResponse.from(
-                assignedRun,
-                getOrCreateAssignedAgentToken(assignedRun, deviceId)
+        CommandSession commandSession = commandSessionRepository.findByCommandId(assignedRun.getCommandId())
+                .orElseThrow(() -> new CommandSessionNotFoundException(
+                        "세션을 찾을 수 없습니다. commandId: " + assignedRun.getCommandId()));
+
+        return new AssignedRunResponse(
+                assignedRun.getRunId(),
+                getOrCreateAssignedAgentToken(assignedRun, deviceId),
+                assignedRun.getCommandId(),
+                commandSession.getPlatform()
         );
     }
 
@@ -131,6 +168,18 @@ public class AgentRunService {
      */
     public AgentRunResponse getRun(String runId) {
         return AgentRunResponse.from(getRunEntity(runId));
+    }
+
+    /**
+     * 특정 디바이스에 할당된 활성 run 목록을 반환한다.
+     * 사이드패널의 "Run 현황" 화면에서 조회/중단 용도로 사용된다.
+     */
+    public List<AgentRunResponse> getActiveRunsForDevice(String deviceId) {
+        return agentRunRepository
+                .findAllByAssignedDeviceIdAndStatusInOrderByCreatedAtDesc(deviceId, ACTIVE_STATUSES)
+                .stream()
+                .map(AgentRunResponse::from)
+                .toList();
     }
 
     /**
@@ -244,6 +293,7 @@ public class AgentRunService {
 
     /**
      * Extension의 step 결과를 반영하고 다음 action instruction을 반환한다.
+     * 익스텐션이 "이번 액션 했어. 다음엔 뭐해?"하고 호출
      */
     @Transactional
     public AgentRunStepResponse processStep(String runId, String deviceId, AgentRunStepRequest request) {
@@ -254,10 +304,12 @@ public class AgentRunService {
             throw new AgentRunConflictException("stepIndex는 필수입니다. runId=" + runId);
         }
 
+        // applyPreviousActionResult를 통해 run.currentStepIndex + 1 (다음 스텝으로 전진)
         if (request.previousActionResult() != null) {
             applyPreviousActionResult(run, request.previousActionResult());
         }
 
+        // index르 바꾼 뒤 서버와 익스텐션의 스텝이 일치하는지 확인
         if (!run.getCurrentStepIndex().equals(request.stepIndex())) {
             throw new AgentRunConflictException(
                     "요청 stepIndex가 현재 Run 상태와 일치하지 않습니다. current=" + run.getCurrentStepIndex()
@@ -265,6 +317,7 @@ public class AgentRunService {
             );
         }
 
+        // 이미 끝난 run이면 다음 액션 없이 상태만 반환
         if (Set.of(AgentRunStatus.ABORTED, AgentRunStatus.FAILED, AgentRunStatus.COMPLETED, AgentRunStatus.APPROVAL_EXPIRED)
                 .contains(run.getStatus())) {
             return new AgentRunStepResponse(run.getRunId(), run.getStatus(), run.getCurrentStepIndex(), null);
@@ -277,14 +330,16 @@ public class AgentRunService {
                 run.getRunId(),
                 run.getCurrentStepIndex(),
                 commandSession,
-                request.snapshot(),
+                request.snapshot(),     // 현재 브라우저 화면 상태
                 request.previousActionResult()
         );
 
+        // 승인이 필요한 액션일 경우
         if (instruction.action() == BrowserActionType.AWAIT_APPROVAL && run.getStatus() == AgentRunStatus.RUNNING) {
             run.awaitApproval(LocalDateTime.now());
         }
 
+        // 모든 작업 완료일 경우
         if (instruction.action() == BrowserActionType.COMPLETE && run.getStatus() == AgentRunStatus.RUNNING) {
             run.complete();
         }
@@ -294,8 +349,8 @@ public class AgentRunService {
                 run.getStatus(),
                 run.getCurrentStepIndex(),
                 Set.of(AgentRunStatus.COMPLETED, AgentRunStatus.ABORTED, AgentRunStatus.FAILED, AgentRunStatus.APPROVAL_EXPIRED).contains(run.getStatus())
-                        ? null
-                        : instruction
+                        ? null          // 종료 상태면 다음 액션 없음
+                        : instruction   // 진행 중이면 다음 액션 전달
         );
     }
 

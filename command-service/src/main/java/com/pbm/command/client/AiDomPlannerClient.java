@@ -53,6 +53,18 @@ public class AiDomPlannerClient {
     @Retry(name = "openAiProxyService")
     @CircuitBreaker(name = "openAiProxyService", fallbackMethod = "planFallback")
     public DomPlannerInstructionPayload plan(CommandSession commandSession, PageSnapshotRequest snapshot, ProductCandidateResponse targetProduct) {
+        return plan(commandSession, snapshot, targetProduct, null, null);
+    }
+
+    @Retry(name = "openAiProxyService")
+    @CircuitBreaker(name = "openAiProxyService", fallbackMethod = "planFallbackWithStrategy")
+    public DomPlannerInstructionPayload plan(CommandSession commandSession, PageSnapshotRequest snapshot, ProductCandidateResponse targetProduct, String platform, String navigationStrategy) {
+        return plan(commandSession, snapshot, targetProduct, platform, navigationStrategy, null);
+    }
+
+    @Retry(name = "openAiProxyService")
+    @CircuitBreaker(name = "openAiProxyService", fallbackMethod = "planFallbackWithAgentType")
+    public DomPlannerInstructionPayload plan(CommandSession commandSession, PageSnapshotRequest snapshot, ProductCandidateResponse targetProduct, String platform, String navigationStrategy, String agentType) {
         DomPlannerProxyRequest proxyRequest = new DomPlannerProxyRequest(
                 commandSession.getOriginalCommand(),
                 commandSession.getCommandIntent(),
@@ -62,7 +74,11 @@ public class AiDomPlannerClient {
                 snapshot == null ? null : snapshot.visibleTextSummary(),
                 snapshot == null ? java.util.List.of() : snapshot.interactiveElements(),
                 snapshot == null ? java.util.List.of() : snapshot.optionGroups(),
-                targetProduct
+                targetProduct,
+                platform,
+                navigationStrategy,
+                agentType,
+                snapshot == null ? null : snapshot.rawHtml()
         );
 
         DomPlannerInstructionPayload response;
@@ -92,6 +108,14 @@ public class AiDomPlannerClient {
         throw new ExternalApiProxyException("external-api-service DOM planner를 사용할 수 없습니다.", t);
     }
 
+    DomPlannerInstructionPayload planFallbackWithStrategy(CommandSession commandSession, PageSnapshotRequest snapshot, ProductCandidateResponse targetProduct, String platform, String navigationStrategy, Throwable t) {
+        throw new ExternalApiProxyException("external-api-service DOM planner를 사용할 수 없습니다.", t);
+    }
+
+    DomPlannerInstructionPayload planFallbackWithAgentType(CommandSession commandSession, PageSnapshotRequest snapshot, ProductCandidateResponse targetProduct, String platform, String navigationStrategy, String agentType, Throwable t) {
+        throw new ExternalApiProxyException("external-api-service DOM planner를 사용할 수 없습니다.", t);
+    }
+
     private String buildPlannerUrl(String baseUrl) {
         String normalizedBaseUrl = baseUrl == null ? "http://localhost:8090" : baseUrl.replaceAll("/+$", "");
         return normalizedBaseUrl + "/api/v1/planner/analyze-dom";
@@ -106,7 +130,11 @@ public class AiDomPlannerClient {
             @JsonProperty("visible_text_summary") String visibleTextSummary,
             @JsonProperty("interactive_elements") java.util.List<?> interactiveElements,
             @JsonProperty("option_groups") java.util.List<?> optionGroups,
-            @JsonProperty("target_product") ProductCandidateResponse targetProduct
+            @JsonProperty("target_product") ProductCandidateResponse targetProduct,
+            String platform,
+            @JsonProperty("navigation_strategy") String navigationStrategy,
+            @JsonProperty("agent_type") String agentType,
+            @JsonProperty("raw_html") String rawHtml
     ) {
     }
 

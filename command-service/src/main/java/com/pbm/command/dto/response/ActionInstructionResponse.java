@@ -31,6 +31,10 @@ public record ActionInstructionResponse(
         return new ActionInstructionResponse(stepIndex, actionId, BrowserActionType.CLICK, ActionTargetResponse.from(element), null, null, null, null, null);
     }
 
+    public static ActionInstructionResponse input(Integer stepIndex, String actionId, InteractiveElementRequest element, String value) {
+        return new ActionInstructionResponse(stepIndex, actionId, BrowserActionType.INPUT, ActionTargetResponse.from(element), null, value, null, null, null);
+    }
+
     public static ActionInstructionResponse select(Integer stepIndex, String actionId, ActionTargetResponse target, String value) {
         return new ActionInstructionResponse(stepIndex, actionId, BrowserActionType.SELECT, target, null, value, null, null, null);
     }
@@ -73,6 +77,10 @@ public record ActionInstructionResponse(
 
     public static ActionInstructionResponse complete(Integer stepIndex, String actionId) {
         return new ActionInstructionResponse(stepIndex, actionId, BrowserActionType.COMPLETE, null, null, null, null, null, null);
+    }
+
+    public static ActionInstructionResponse abort(Integer stepIndex, String actionId, String reason) {
+        return new ActionInstructionResponse(stepIndex, actionId, BrowserActionType.ABORT, null, null, reason, null, null, null);
     }
 
     public static ActionInstructionResponse awaitApproval(Integer stepIndex, String actionId, String summaryText, Integer timeoutMs) {

@@ -84,6 +84,7 @@ class CommandSessionControllerTest {
                 null,
                 null,
                 null,
+                "NAVER",
                 LocalDateTime.of(2026, 5, 11, 10, 0),
                 LocalDateTime.of(2026, 5, 11, 10, 0)
         );
@@ -124,6 +125,7 @@ class CommandSessionControllerTest {
                 null,
                 100000,
                 "AUTO_PURCHASE",
+                "NAVER",
                 LocalDateTime.of(2026, 5, 11, 10, 0),
                 LocalDateTime.of(2026, 5, 11, 10, 0)
         );

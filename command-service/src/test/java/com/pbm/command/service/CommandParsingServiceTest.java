@@ -54,7 +54,7 @@ class CommandParsingServiceTest {
                 ));
 
         CommandParseResponse response = commandParsingService.parse(
-                new CommandParseRequest(1L, "나이키 조던 20만원 이하면 결제해줘")
+                new CommandParseRequest("나이키 조던 20만원 이하면 결제해줘")
         );
 
         assertThat(response.intent()).isEqualTo(CommandIntent.AUTO_PURCHASE);
@@ -89,7 +89,7 @@ class CommandParsingServiceTest {
                 ));
 
         CommandParseResponse response = commandParsingService.parse(
-                new CommandParseRequest(1L, "아이폰 15 프로 256GB 140만원 이하 가격 알려줘")
+                new CommandParseRequest("아이폰 15 프로 256GB 140만원 이하 가격 알려줘")
         );
 
         assertThat(response.intent()).isEqualTo(CommandIntent.PRICE_CHECK);
@@ -99,5 +99,38 @@ class CommandParsingServiceTest {
         assertThat(response.confidence()).isEqualTo(0.95);
         assertThat(response.missingRequiredFields()).containsExactly("color");
         assertThat(response.needsClarification()).isTrue();
+    }
+
+    @Test
+    @DisplayName("카테고리가 UNKNOWN이어도 상품명/플랫폼/가격이 있으면 키워드 검색을 위해 clarification 없이 진행한다")
+    void parse_unknownCategoryButSearchableCommand_doesNotNeedClarification() {
+        when(openAiCommandClient.parseCommand(any(CommandParseRequest.class)))
+                .thenReturn(new OpenAiParsedCommandPayload(
+                        CommandIntent.AUTO_PURCHASE,
+                        new com.pbm.command.dto.response.ParsedCommand(
+                                ProductCategory.UNKNOWN,
+                                "칠성사이다 210ml 30개",
+                                "칠성사이다",
+                                null,
+                                null,
+                                null,
+                                "210ml 30개",
+                                PlatformType.NAVER,
+                                50000,
+                                null,
+                                "KRW"
+                        ),
+                        0.98
+                ));
+
+        CommandParseResponse response = commandParsingService.parse(
+                new CommandParseRequest("네이버에서 칠성사이다 210ml 30개가 50000원 이하면 구매해줘")
+        );
+
+        assertThat(response.intent()).isEqualTo(CommandIntent.AUTO_PURCHASE);
+        assertThat(response.parsedCommand().productCategory()).isEqualTo(ProductCategory.UNKNOWN);
+        assertThat(response.missingRequiredFields()).isEmpty();
+        assertThat(response.ambiguousFields()).isEmpty();
+        assertThat(response.needsClarification()).isFalse();
     }
 }

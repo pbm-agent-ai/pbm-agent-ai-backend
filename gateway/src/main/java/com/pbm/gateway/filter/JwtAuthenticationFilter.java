@@ -28,7 +28,8 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             "/api/v1/auth/signup",
             "/api/v1/auth/login",
             "/api/v1/auth/refresh",
-            "/api/v1/devices/register"
+            "/api/v1/devices/register",
+            "/api/v1/platforms/"          // 플랫폼 설정 조회 (익스텐션이 인증 없이 호출)
     );
 
     @Override

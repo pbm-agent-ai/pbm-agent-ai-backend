@@ -99,7 +99,6 @@ public class CommandParsePromptBuilder {
         return """
                 아래 사용자 명령을 파싱하라.
                 
-                userId: %d
                 commandText: %s
                 
                 다시 한 번 강조한다.
@@ -108,7 +107,6 @@ public class CommandParsePromptBuilder {
                 - 애매하면 null을 사용하라.
                 - intent/productCategory/platform은 허용 목록 밖의 값을 쓰지 마라.
                 """.formatted(
-                request.userId() == null ? 0L : request.userId(),
                 request.commandText() == null ? "" : request.commandText()
         );
     }

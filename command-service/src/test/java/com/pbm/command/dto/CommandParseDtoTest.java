@@ -29,9 +29,8 @@ class CommandParseDtoTest {
     @Test
     @DisplayName("파싱 요청 DTO는 commandText 앞뒤 공백을 제거한다")
     void commandParseRequest_trimsCommandText() {
-        CommandParseRequest request = new CommandParseRequest(1L, "  나이키 조던 20만원 이하면 결제해줘  ");
+        CommandParseRequest request = new CommandParseRequest("  나이키 조던 20만원 이하면 결제해줘  ");
 
-        assertThat(request.userId()).isEqualTo(1L);
         assertThat(request.commandText()).isEqualTo("나이키 조던 20만원 이하면 결제해줘");
     }
 

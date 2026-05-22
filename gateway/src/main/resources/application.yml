@@ -43,6 +43,11 @@ spring:
           predicates:
             - Path=/api/v1/runs/**
 
+        - id: command-service-platforms
+          uri: lb://command-service
+          predicates:
+            - Path=/api/v1/platforms/**
+
         - id: price-service-naver
           uri: lb://price-service
           predicates:

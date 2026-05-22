@@ -44,7 +44,7 @@ class OpenAiCommandClientTest {
                 .andRespond(withSuccess(successResponseJson(), MediaType.APPLICATION_JSON));
 
         OpenAiParsedCommandPayload payload = fixture.client.parseCommand(
-                new CommandParseRequest(1L, "나이키 조던 20만원 이하면 결제해줘")
+                new CommandParseRequest("나이키 조던 20만원 이하면 결제해줘")
         );
 
         assertThat(payload.intent()).isEqualTo(CommandIntent.AUTO_PURCHASE);
@@ -62,7 +62,7 @@ class OpenAiCommandClientTest {
                 .andExpect(method(HttpMethod.POST))
                 .andRespond(withSuccess(refusalResponseJson(), MediaType.APPLICATION_JSON));
 
-        assertThatThrownBy(() -> fixture.client.parseCommand(new CommandParseRequest(1L, "위험한 요청")))
+        assertThatThrownBy(() -> fixture.client.parseCommand(new CommandParseRequest("위험한 요청")))
                 .isInstanceOf(OpenAiClientException.class)
                 .hasMessageContaining("거부");
     }
@@ -75,7 +75,7 @@ class OpenAiCommandClientTest {
                 .andExpect(method(HttpMethod.POST))
                 .andRespond(withSuccess(invalidJsonResponse(), MediaType.APPLICATION_JSON));
 
-        assertThatThrownBy(() -> fixture.client.parseCommand(new CommandParseRequest(1L, "에어팟 프로 가격 알려줘")))
+        assertThatThrownBy(() -> fixture.client.parseCommand(new CommandParseRequest("에어팟 프로 가격 알려줘")))
                 .isInstanceOf(OpenAiResponseParseException.class);
     }
 
@@ -85,7 +85,7 @@ class OpenAiCommandClientTest {
         TestFixture fixture = createFixture();
 
         assertThatThrownBy(() -> fixture.client.parseCommandFallback(
-                new CommandParseRequest(1L, "나이키 조던 20만원 이하면 결제해줘"),
+                new CommandParseRequest("나이키 조던 20만원 이하면 결제해줘"),
                 new RuntimeException("circuit open")
         )).isInstanceOf(ExternalApiProxyException.class)
                 .hasMessageContaining("external-api-service OpenAI 프록시");

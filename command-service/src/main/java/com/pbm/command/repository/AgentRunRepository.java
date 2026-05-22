@@ -26,5 +26,9 @@ public interface AgentRunRepository extends JpaRepository<AgentRun, Long> {
 
     List<AgentRun> findAllByAssignedDeviceIdInAndStatusIn(Collection<String> assignedDeviceIds, Collection<AgentRunStatus> statuses);
 
+    List<AgentRun> findAllByAssignedDeviceIdAndStatusInOrderByCreatedAtDesc(String assignedDeviceId, Collection<AgentRunStatus> statuses);
+
     List<AgentRun> findAllByStatusAndApprovalRequestedAtBefore(AgentRunStatus status, java.time.LocalDateTime threshold);
+
+    List<AgentRun> findAllByUserIdAndStatusIn(Long userId, Collection<AgentRunStatus> statuses);
 }

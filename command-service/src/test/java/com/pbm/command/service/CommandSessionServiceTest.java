@@ -67,7 +67,8 @@ class CommandSessionServiceTest {
                 1L,
                 "나이키 조던 20만원 이하면 결제해줘",
                 missingFields,
-                "사이즈와 플랫폼을 알려주세요."
+                "사이즈와 플랫폼을 알려주세요.",
+                "NAVER"
         );
 
         // then
@@ -77,6 +78,7 @@ class CommandSessionServiceTest {
         assertThat(savedSession.getCommandId()).isNotNull();
         assertThat(savedSession.getStatus()).isEqualTo(CommandSessionStatus.PRE_SEARCH_CLARIFICATION);
         assertThat(savedSession.getMissingFieldsJson()).isEqualTo(missingFieldsJson);
+        assertThat(savedSession.getPlatform()).isEqualTo("NAVER");
 
         assertThat(response.commandId()).isNotNull();
         assertThat(response.status()).isEqualTo(CommandSessionStatus.PRE_SEARCH_CLARIFICATION);
@@ -93,7 +95,8 @@ class CommandSessionServiceTest {
         // when
         CommandSessionResponse response = commandSessionService.createSearchingSession(
                 2L,
-                "아이폰 15 프로 256GB 140만원 이하 가격 알려줘"
+                "아이폰 15 프로 256GB 140만원 이하 가격 알려줘",
+                "NAVER"
         );
 
         // then
@@ -102,6 +105,7 @@ class CommandSessionServiceTest {
 
         assertThat(savedSession.getStatus()).isEqualTo(CommandSessionStatus.SEARCHING);
         assertThat(savedSession.getOriginalCommand()).contains("아이폰 15 프로");
+        assertThat(savedSession.getPlatform()).isEqualTo("NAVER");
         assertThat(response.status()).isEqualTo(CommandSessionStatus.SEARCHING);
     }
 
@@ -109,7 +113,7 @@ class CommandSessionServiceTest {
     @DisplayName("commandId로 세션을 조회한다")
     void getByCommandId_returnsSessionResponse() {
         // given
-        CommandSession session = CommandSession.createSearching(1L, "테스트 명령");
+        CommandSession session = CommandSession.createSearching(1L, "테스트 명령", "NAVER");
         given(commandSessionRepository.findByCommandId(TEST_COMMAND_ID))
                 .willReturn(Optional.of(session));
 
@@ -125,7 +129,7 @@ class CommandSessionServiceTest {
     @Test
     @DisplayName("commandId 조회 시 후보 상품을 페이지 단위로 잘라서 반환한다")
     void getByCommandId_withPaging_returnsSlicedCandidates() {
-        CommandSession session = CommandSession.createSearching(1L, "테스트 명령");
+        CommandSession session = CommandSession.createSearching(1L, "테스트 명령", "NAVER");
         session.toProductSelectionRequired(
                 "[]",
                 "검색 결과를 확인하고 상품을 선택해주세요.",
@@ -164,7 +168,7 @@ class CommandSessionServiceTest {
     @DisplayName("product-selection-required로 상태를 전환한다 (candidates/targetPrice/intent 포함)")
     void updateToProductSelectionRequired_updatesStatusAndFields() throws Exception {
         // given
-        CommandSession session = CommandSession.createSearching(1L, "맥북 프로");
+        CommandSession session = CommandSession.createSearching(1L, "맥북 프로", "NAVER");
         List<String> missingFields = List.of("model");
         String missingFieldsJson = "[\"model\"]";
         List<com.pbm.command.dto.event.ProductCandidateDto> candidates = List.of(

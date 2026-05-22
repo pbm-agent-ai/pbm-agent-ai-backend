@@ -70,22 +70,27 @@ public class CommandExecutionService {
      * 파싑 결과에 따라 세션을 생성하고 commandId를 응답에 포함시킨다.
      *
      * @param request 사용자 자연어 명령 요청
+     * @param userId  인증 기준 사용자 ID
      * @return 파싱 결과와 모달 보완 정보, commandId가 포함된 응답 DTO
      */
-    public CommandParseResponse parseAndPublishIfReady(CommandParseRequest request) {
+    public CommandParseResponse parseAndPublishIfReady(CommandParseRequest request, Long userId) {
         CommandParseResponse response = commandParsingService.parse(request);
 
         if (!response.needsClarification()) {
-            log.info("파싱 결과 추가 확인 불필요 - userId: {} 즉시 가격 요청 발행", request.userId());
+            log.info("파싱 결과 추가 확인 불필요 - userId: {} 즉시 가격 요청 발행", userId);
 
             // SEARCHING 세션 생성 및 commandId 확보
             CommandSessionResponse sessionResponse = commandSessionService.createSearchingSession(
-                    request.userId(), request.commandText());
+                    userId,
+                    request.commandText(),
+                    response.parsedCommand() == null || response.parsedCommand().platform() == null
+                            ? null
+                            : response.parsedCommand().platform().name());
             String commandId = sessionResponse.commandId();
 
             // 확보한 commandId를 Kafka 이벤트에 포함시켜 발행
             priceRequestService.publishParsedCommandRequest(
-                    request.userId(),
+                    userId,
                     response.intent().name(),
                     response.parsedCommand(),
                     commandId
@@ -102,14 +107,17 @@ public class CommandExecutionService {
             );
         } else {
             log.info("파싱 결과 추가 확인 필요 - userId: {} 발행 보류, missing: {}, ambiguous: {}",
-                    request.userId(), response.missingRequiredFields(), response.ambiguousFields());
+                    userId, response.missingRequiredFields(), response.ambiguousFields());
 
             // PRE_SEARCH_CLARIFICATION 세션 생성 및 commandId 확보
             CommandSessionResponse sessionResponse = commandSessionService.createPreSearchClarificationSession(
-                    request.userId(),
+                    userId,
                     request.commandText(),
                     response.missingRequiredFields(),
-                    buildClarificationMessage(response)
+                    buildClarificationMessage(response),
+                    response.parsedCommand() == null || response.parsedCommand().platform() == null
+                            ? null
+                            : response.parsedCommand().platform().name()
             );
             String commandId = sessionResponse.commandId();
 
@@ -163,7 +171,7 @@ public class CommandExecutionService {
         String mergedText = session.getOriginalCommand().trim() + " " + request.toMergedText();
 
         // 3b. 병합된 텍스트로 기존 파싱 플로우 재실행
-        CommandParseRequest parseRequest = new CommandParseRequest(session.getUserId(), mergedText);
+        CommandParseRequest parseRequest = new CommandParseRequest(mergedText);
         CommandParseResponse response = commandParsingService.parse(parseRequest);
 
         if (response.needsClarification()) {
@@ -175,7 +183,10 @@ public class CommandExecutionService {
             commandSessionService.updateToPreSearchClarification(
                     commandId,
                     response.missingRequiredFields(),
-                    buildClarificationMessage(response)
+                    buildClarificationMessage(response),
+                    response.parsedCommand() == null || response.parsedCommand().platform() == null
+                            ? null
+                            : response.parsedCommand().platform().name()
             );
 
             return new CommandParseResponse(
@@ -194,8 +205,13 @@ public class CommandExecutionService {
 
             // 세션의 originalCommand를 병합된 텍스트로 갱신
             session.updateOriginalCommand(mergedText);
-            // 상태를 SEARCHING으로 전환 (JPA dirty checking으로 자동 반영)
-            session.toSearching();
+            // 상태를 SEARCHING으로 전환하면서 parse 결과 플랫폼도 세션에 저장한다.
+            commandSessionService.updateToSearching(
+                    commandId,
+                    response.parsedCommand() == null || response.parsedCommand().platform() == null
+                            ? null
+                            : response.parsedCommand().platform().name()
+            );
 
             // 기존 발행 플로우 재사용 (세션의 commandId를 그대로 재사용)
             priceRequestService.publishParsedCommandRequest(
@@ -310,7 +326,7 @@ public class CommandExecutionService {
         // URL fallback은 원본 자연어 명령문보다 1차 검색 때 실제로 사용했던 searchKeyword를 재사용해야
         // 네이버/알리 재검색 결과와 URL 매칭이 안정적으로 맞아진다.
 
-        commandSessionService.updateToSearching(commandId);
+        commandSessionService.updateToSearching(commandId, session.getPlatform());
 
         priceRequestService.publishProductUrlRequest(
                 session.getUserId(),

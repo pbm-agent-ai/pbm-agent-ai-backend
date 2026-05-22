@@ -7,6 +7,8 @@ import com.pbm.command.dto.request.BrowserDeviceRegisterRequest;
 import com.pbm.command.dto.response.AssignedRunResponse;
 import com.pbm.command.dto.response.BrowserDeviceRegisterResponse;
 import com.pbm.command.dto.response.BrowserHeartbeatResponse;
+import com.pbm.command.dto.response.MyDeviceResponse;
+import com.pbm.command.dto.response.MyDevicesResponse;
 import com.pbm.command.exception.BrowserDeviceNotFoundException;
 import com.pbm.command.exception.InvalidBrowserAgentTokenException;
 import com.pbm.command.repository.BrowserDeviceRepository;
@@ -130,6 +132,37 @@ public class BrowserDeviceService {
         // 이 시점에 현재 디바이스에 할당된 run 또는 새로 할당 가능한 queued run을 함께 내려준다.
         AssignedRunResponse assignedRun = agentRunService.getPendingRunForDevice(saved.getDeviceId());
         return BrowserHeartbeatResponse.from(saved, assignedRun);
+    }
+
+    /**
+     * 로그인한 사용자의 디바이스 목록을 반환한다.
+     * Redis TTL 기준으로 각 디바이스의 실시간 online 상태를 반영한다.
+     *
+     * @param userId 로그인한 사용자 ID (Gateway가 X-User-Id 헤더로 주입)
+     * @return 내 디바이스 목록 응답 DTO
+     */
+    public MyDevicesResponse getMyDevices(Long userId) {
+        List<MyDeviceResponse> devices = browserDeviceRepository.findAllByUserId(userId)
+                .stream()
+                .map(device -> {
+                    // DB status 대신 Redis TTL 기준으로 실시간 상태 반영
+                    BrowserDeviceStatus realtimeStatus = isOnline(device.getDeviceId())
+                            ? BrowserDeviceStatus.ONLINE
+                            : BrowserDeviceStatus.OFFLINE;
+
+                    return new MyDeviceResponse(
+                            device.getDeviceId(),
+                            realtimeStatus,
+                            device.getPlatform(),
+                            device.getExtensionVersion(),
+                            device.getBrowserInfo(),
+                            device.getLastSeenAt(),
+                            device.getCreatedAt()
+                    );
+                })
+                .toList();
+
+        return MyDevicesResponse.of(devices);
     }
 
     /**

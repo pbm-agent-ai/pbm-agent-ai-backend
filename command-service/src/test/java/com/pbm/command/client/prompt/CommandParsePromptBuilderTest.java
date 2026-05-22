@@ -68,13 +68,12 @@ class CommandParsePromptBuilderTest {
     }
 
     @Test
-    @DisplayName("user prompt는 실제 사용자 명령문과 userId를 포함한다")
+    @DisplayName("user prompt는 실제 사용자 명령문을 포함한다")
     void buildUserPrompt_containsRequestData() {
         String userPrompt = commandParsePromptBuilder.buildUserPrompt(
-                new CommandParseRequest(1L, "나이키 조던 20만원 이하면 결제해줘")
+                new CommandParseRequest("나이키 조던 20만원 이하면 결제해줘")
         );
 
-        assertThat(userPrompt).contains("userId: 1");
         assertThat(userPrompt).contains("commandText: 나이키 조던 20만원 이하면 결제해줘");
         assertThat(userPrompt).contains("JSON만 반환하라");
     }
@@ -83,11 +82,10 @@ class CommandParsePromptBuilderTest {
     @DisplayName("build는 system prompt와 user prompt를 함께 반환한다")
     void build_returnsPromptBundle() {
         CommandParsePrompt prompt = commandParsePromptBuilder.build(
-                new CommandParseRequest(7L, "에어팟 프로 가격 알려줘")
+                new CommandParseRequest("에어팟 프로 가격 알려줘")
         );
 
         assertThat(prompt.systemPrompt()).isNotBlank();
-        assertThat(prompt.userPrompt()).contains("userId: 7");
         assertThat(prompt.userPrompt()).contains("에어팟 프로 가격 알려줘");
     }
 }

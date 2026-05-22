@@ -5,6 +5,7 @@ import com.pbm.command.client.dto.OpenAiParsedCommandPayload;
 import com.pbm.command.dto.request.CommandParseRequest;
 import com.pbm.command.dto.response.CommandParseResponse;
 import com.pbm.command.dto.response.ParsedCommand;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -19,6 +20,7 @@ import java.util.List;
  * 연관: CommandParseController, CommandFieldEvaluationService, 향후 GPT Client.
  */
 // Service 어노테이션을 이용해 Spring이 이 클래스의 객체를 만듦
+@Slf4j
 @Service
 public class CommandParsingService {
 
@@ -42,7 +44,21 @@ public class CommandParsingService {
      * @return 파싱 결과와 clarification 정보가 포함된 응답 DTO
      */
     public CommandParseResponse parse(CommandParseRequest request) {
+        log.info("자연어 파싱 요청 - commandText: {}", request.commandText());
         OpenAiParsedCommandPayload aiPayload = openAiCommandClient.parseCommand(request);
+        log.info("AI 자연어 파싱 최종 payload - intent: {}, parsedCommand: {}, confidence: {}",
+                aiPayload.intent(), aiPayload.parsedCommand(), aiPayload.confidence());
+
+        // 파싱 결과 로그 - 가격 파싱 오류 디버깅용
+        if (aiPayload.parsedCommand() != null) {
+            log.info("GPT 파싱 결과 - intent: {}, maxPrice: {}, minPrice: {}, platform: {}, productName: {}",
+                    aiPayload.intent(),
+                    aiPayload.parsedCommand().maxPrice(),
+                    aiPayload.parsedCommand().minPrice(),
+                    aiPayload.parsedCommand().platform(),
+                    aiPayload.parsedCommand().productName()
+            );
+        }
 
         // intent가 null이면 GPT가 의도를 파악하지 못한 것 → 프론트에 모달 요청
         if (aiPayload.intent() == null) {

@@ -12,6 +12,7 @@ public record InteractiveElementRequest(
         String role,
         String labelText,
         String selector,
+        String href,       // <a> 태그의 href (상품 URL productId 매칭에 사용)
         boolean isVisible,
         Boolean disabled
 ) {

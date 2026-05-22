@@ -4,6 +4,8 @@ services:
     image: postgres:15
     environment:
       POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:-password}
+      TZ: Asia/Seoul
+      PGTZ: Asia/Seoul
     ports:
       - "5432:5432"
     volumes:

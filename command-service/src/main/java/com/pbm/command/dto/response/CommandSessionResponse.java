@@ -33,11 +33,50 @@ public record CommandSessionResponse(
         SelectionValidationResultResponse validationResult,
         Integer targetPrice,
         String commandIntent,
+        String platform,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {
     // Jackson ObjectMapper — JSON 파싱용 (spring-boot-starter-web 의존성으로 사용 가능)
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /**
+     * platform 필드가 추가되기 전 기존 테스트/호출부와의 하위 호환 생성자.
+     */
+    public CommandSessionResponse(
+            String commandId,
+            Long userId,
+            String originalCommand,
+            CommandSessionStatus status,
+            List<String> missingFields,
+            String clarificationMessage,
+            String categoryPath,
+            List<ProductCandidateResponse> candidates,
+            List<String> selectedProductIds,
+            SelectionValidationResultResponse validationResult,
+            Integer targetPrice,
+            String commandIntent,
+            LocalDateTime createdAt,
+            LocalDateTime updatedAt
+    ) {
+        this(
+                commandId,
+                userId,
+                originalCommand,
+                status,
+                missingFields,
+                clarificationMessage,
+                categoryPath,
+                candidates,
+                selectedProductIds,
+                validationResult,
+                targetPrice,
+                commandIntent,
+                null,
+                createdAt,
+                updatedAt
+        );
+    }
 
     /**
      * 엔티티를 응답 DTO로 변환한다.
@@ -74,6 +113,7 @@ public record CommandSessionResponse(
                 parseValidationResult(session.getValidationResultJson()),
                 session.getTargetPrice(),
                 session.getCommandIntent(),
+                session.getPlatform(),
                 session.getCreatedAt(),
                 session.getUpdatedAt()
         );

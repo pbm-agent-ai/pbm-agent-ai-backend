@@ -26,6 +26,9 @@ dependencies {
     // @ConfigurationProperties 메타데이터 생성을 도와 IDE 자동완성을 지원한다
     annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
 
+    // @WebMvcTest 컨트롤러 테스트에서 Mock 인증 객체, 인증 관련 테스트 유틸을 사용한다
+    testImplementation 'org.springframework.security:spring-security-test'
+
     // 테스트에서 @DataJpaTest 사용 시 H2 인메모리 DB가 필요하다
     testRuntimeOnly 'com.h2database:h2'
 }

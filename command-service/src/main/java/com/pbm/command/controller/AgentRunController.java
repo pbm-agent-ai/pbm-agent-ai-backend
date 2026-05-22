@@ -10,6 +10,7 @@ import com.pbm.command.dto.response.AgentRunResponse;
 import com.pbm.command.dto.response.AgentRunStepResponse;
 import com.pbm.command.exception.AgentRunAccessDeniedException;
 import com.pbm.command.service.AgentRunService;
+import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -50,6 +51,15 @@ public class AgentRunController {
     ) {
         AgentRunCreatedResponse response = agentRunService.createRun(userId, commandId);
         return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @Operation(summary = "디바이스 활성 Run 목록 조회", description = "사이드패널에서 현재 디바이스에 할당된 모든 활성 run을 조회합니다.")
+    @GetMapping("/devices/runs")
+    public ResponseEntity<ApiResponse<List<AgentRunResponse>>> getActiveRunsForDevice(
+            @RequestHeader("X-Device-Id") String deviceId
+    ) {
+        List<AgentRunResponse> runs = agentRunService.getActiveRunsForDevice(deviceId);
+        return ResponseEntity.ok(ApiResponse.success(runs));
     }
 
     @Operation(summary = "Pending run 조회", description = "extension이 현재 디바이스에 할당된 대기 중 run이 있는지 확인합니다.")

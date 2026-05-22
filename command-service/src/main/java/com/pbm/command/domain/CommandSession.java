@@ -69,6 +69,15 @@ public class CommandSession {
     @Column(length = 30)
     private String commandIntent; // 사용자 의도 (예: "AUTO_PURCHASE", "PRICE_CHECK")
 
+    /**
+     * 자연어 파싱 결과 확정된 플랫폼.
+     * <p>
+     * 역할: step planner가 validationResult가 비어 있는 초기 단계에서도
+     *       정확한 플랫폼(NAVER/ALIEXPRESS)을 잃지 않도록 세션에 직접 저장한다.
+     */
+    @Column(length = 30)
+    private String platform;
+
     @CreatedDate
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -90,7 +99,8 @@ public class CommandSession {
             String selectedProductIdsJson,
             String validationResultJson,
             Integer targetPrice,
-            String commandIntent
+            String commandIntent,
+            String platform
     ) {
         this.commandId = commandId;
         this.userId = userId;
@@ -104,6 +114,7 @@ public class CommandSession {
         this.validationResultJson = validationResultJson;
         this.targetPrice = targetPrice;
         this.commandIntent = commandIntent;
+        this.platform = platform;
     }
 
     // =========================================================================
@@ -125,7 +136,8 @@ public class CommandSession {
             Long userId,
             String originalCommand,
             String missingFieldsJson,
-            String clarificationMessage
+            String clarificationMessage,
+            String platform
     ) {
         return CommandSession.builder()
                 .commandId(UUID.randomUUID().toString())
@@ -134,7 +146,18 @@ public class CommandSession {
                 .status(CommandSessionStatus.PRE_SEARCH_CLARIFICATION)
                 .missingFieldsJson(missingFieldsJson)
                 .clarificationMessage(clarificationMessage)
+                .platform(platform)
                 .build();
+    }
+
+    /** 기존 호출부와의 하위 호환을 위한 보조 팩토리 메서드 */
+    public static CommandSession createPreSearchClarification(
+            Long userId,
+            String originalCommand,
+            String missingFieldsJson,
+            String clarificationMessage
+    ) {
+        return createPreSearchClarification(userId, originalCommand, missingFieldsJson, clarificationMessage, null);
     }
 
     /**
@@ -148,14 +171,24 @@ public class CommandSession {
      */
     public static CommandSession createSearching(
             Long userId,
-            String originalCommand
+            String originalCommand,
+            String platform
     ) {
         return CommandSession.builder()
                 .commandId(UUID.randomUUID().toString())
                 .userId(userId)
                 .originalCommand(originalCommand)
                 .status(CommandSessionStatus.SEARCHING)
+                .platform(platform)
                 .build();
+    }
+
+    /** 기존 호출부와의 하위 호환을 위한 보조 팩토리 메서드 */
+    public static CommandSession createSearching(
+            Long userId,
+            String originalCommand
+    ) {
+        return createSearching(userId, originalCommand, null);
     }
 
     // =========================================================================
@@ -266,6 +299,16 @@ public class CommandSession {
         this.candidatesJson = null;
         this.selectedProductIdsJson = null;
         this.validationResultJson = null;
+    }
+
+    /**
+     * 세션에 플랫폼 값을 저장한다.
+     * <p>
+     * 역할: parse 또는 clarification 재파싱 결과의 platform을 세션에 반영하여
+     *       이후 브라우저 step planner가 기본값(ALIEXPRESS)로 폴백하지 않게 한다.
+     */
+    public void updatePlatform(String platform) {
+        this.platform = platform;
     }
 
     /**

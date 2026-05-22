@@ -11,6 +11,8 @@ import com.pbm.command.domain.CommandIntent;
 import com.pbm.command.domain.BrowserActionType;
 import com.pbm.command.domain.CommandSession;
 import com.pbm.command.domain.CommandSessionStatus;
+import com.pbm.command.domain.PlatformConfig;
+import com.pbm.command.domain.PlatformType;
 import com.pbm.command.dto.request.AgentRunActionResultRequest;
 import com.pbm.command.dto.request.InteractiveElementRequest;
 import com.pbm.command.dto.request.OptionGroupRequest;
@@ -46,13 +48,21 @@ public class AgentStepPlannerService {
     private static final int DEFAULT_APPROVAL_TIMEOUT_MS = 600000;
     private static final double MIN_AI_CONFIDENCE = 0.55d;
     private static final double MIN_VISION_CONFIDENCE = 0.60d;
+    /** 잘못된 도메인 감지 후 플랫폼 이동을 시도하는 최대 횟수 (초과 시 ABORT) */
+    private static final int MAX_DOMAIN_REDIRECT_ATTEMPTS = 10;
 
     private final AiDomPlannerClient aiDomPlannerClient;
     private final AiVisionPlannerClient aiVisionPlannerClient;
+    private final PlatformConfigService platformConfigService;
 
-    public AgentStepPlannerService(AiDomPlannerClient aiDomPlannerClient, AiVisionPlannerClient aiVisionPlannerClient) {
+    public AgentStepPlannerService(
+            AiDomPlannerClient aiDomPlannerClient,
+            AiVisionPlannerClient aiVisionPlannerClient,
+            PlatformConfigService platformConfigService
+    ) {
         this.aiDomPlannerClient = aiDomPlannerClient;
         this.aiVisionPlannerClient = aiVisionPlannerClient;
+        this.platformConfigService = platformConfigService;
     }
 
     /**
@@ -78,7 +88,10 @@ public class AgentStepPlannerService {
 
         String actionId = buildActionId(runId, stepIndex);
         String currentUrl = snapshot == null ? null : snapshot.currentUrl();
+        // 현재 페이지 타입을 미리 판단 (rule-based fallback에서도 활용)
+        PageType currentPageType = snapshot != null ? detectPageType(snapshot) : PageType.MAIN_PAGE;
 
+        // 사용자 입력 필요
         if (commandSession.getStatus() == CommandSessionStatus.PRE_SEARCH_CLARIFICATION) {
             return ActionInstructionResponse.awaitApproval(
                     stepIndex,
@@ -88,6 +101,7 @@ public class AgentStepPlannerService {
             );
         }
 
+        // 상품 선택 필요
         if (commandSession.getStatus() == CommandSessionStatus.PRODUCT_SELECTION_REQUIRED) {
             return ActionInstructionResponse.awaitApproval(
                     stepIndex,
@@ -97,6 +111,7 @@ public class AgentStepPlannerService {
             );
         }
 
+        // 가격 검증 중 -> 잠시 대기
         if (commandSession.getStatus() == CommandSessionStatus.RESUBSCRIBE_CONFIRMATION_REQUIRED) {
             return ActionInstructionResponse.awaitApproval(
                     stepIndex,
@@ -106,6 +121,21 @@ public class AgentStepPlannerService {
             );
         }
 
+        // 로그인 페이지
+        if (currentPageType == PageType.LOGIN_PAGE){
+            // "로그인"버튼 찾아서 클릭
+            Optional<InteractiveElementRequest> loginBtn = snapshot.interactiveElements().stream().filter(el -> el.labelText() != null && el.labelText().contains("로그인")).findFirst();
+            if (loginBtn.isPresent()){
+                log.info("[AgentStepPlannerService] 로그인 페이지 감지 -> 로그인 버튼 클릭 - runId={}", runId);
+
+                return ActionInstructionResponse.click(stepIndex, actionId, loginBtn.get());
+            }
+            // 버튼 못 찾으면 잠시 대기 후 재시도
+            log.warn("[AgentStepPlannerService] 로그인 페이지 - 로그인 버튼 미발견 -> WAIT - runId = {}", runId);
+            return ActionInstructionResponse.waitAction(stepIndex, actionId, DEFAULT_WAIT_MS, DEFAULT_NAVIGATION_TIMEOUT_MS);
+        }
+
+        // 이미 완료
         if (commandSession.getStatus() == CommandSessionStatus.PRICE_VALIDATING) {
             return ActionInstructionResponse.waitAction(stepIndex, actionId, DEFAULT_WAIT_MS, DEFAULT_NAVIGATION_TIMEOUT_MS);
         }
@@ -144,8 +174,45 @@ public class AgentStepPlannerService {
             return optionInstruction.get();
         }
 
+        // PRODUCT_DETAIL 페이지: AI가 버튼을 못 찾아도 메인 페이지로 이동하지 않는다.
+        // (카탈로그 → 판매처 상세로 정상 이동한 상태. productUrl이 카탈로그 URL과 달라 보이지만
+        //  메인으로 돌아가면 안 됨 → SCROLL로 버튼이 보일 때까지 재시도)
+        // 단, 무한 SCROLL 루프 방지: stepIndex가 임계치를 넘으면 ABORT
+        if (currentPageType == PageType.PRODUCT_DETAIL) {
+            if (stepIndex >= MAX_DOMAIN_REDIRECT_ATTEMPTS) {
+                log.error("[AgentStepPlannerService] PRODUCT_DETAIL SCROLL {}회 초과 → ABORT - runId={}", MAX_DOMAIN_REDIRECT_ATTEMPTS, runId);
+                return ActionInstructionResponse.abort(stepIndex, actionId,
+                        "구매 버튼을 " + MAX_DOMAIN_REDIRECT_ATTEMPTS + "회 이상 탐색 실패 - 판매처 페이지를 확인해주세요.");
+            }
+            log.info("[AgentStepPlannerService] PRODUCT_DETAIL AI 미결과 → SCROLL 재시도 - runId={}", runId);
+            return ActionInstructionResponse.scroll(stepIndex, actionId, "500");
+        }
+
+        // 플랫폼 설정 조회 (URL 이동 전략 결정에 사용)
+        PlatformConfig platformConfig = resolvePlatformConfig(commandSession);
+
         if (targetProduct != null && targetProduct.productUrl() != null && !targetProduct.productUrl().isBlank()) {
             if (!isSamePage(currentUrl, targetProduct.productUrl())) {
+                if (platformConfig.isPreferSearchNavigation()) {
+                    if (currentPageType == PageType.SEARCH_RESULTS) {
+                        // 검색 결과 페이지에서 AI가 상품을 못 찾은 경우:
+                        // 메인 페이지로 돌아가면 무한 루프 발생 → WAIT 후 재시도
+                        // (스크롤은 ELEMENT_NOT_FOUND 시 buildVisionFallbackInstruction에서 처리)
+                        log.info("[AgentStepPlannerService] 검색 결과 AI 미발견 → WAIT 후 재시도 - runId={}", runId);
+                        return ActionInstructionResponse.waitAction(stepIndex, actionId, DEFAULT_WAIT_MS, DEFAULT_NAVIGATION_TIMEOUT_MS);
+                    }
+                    // 검색 결과가 아닌 다른 페이지에 있는 경우: 메인 페이지 경유
+                    // (네이버: 상품 URL 직접 접근 금지 → 봇 차단 위험)
+                    String mainPageUrl = platformConfig.buildMainPageUrl();
+                    log.info("검색창 경유 전략 적용 - platform: {}, 메인 페이지: {}", platformConfig.getPlatform(), mainPageUrl);
+                    return ActionInstructionResponse.navigate(
+                            stepIndex,
+                            actionId,
+                            mainPageUrl,
+                            DEFAULT_NAVIGATION_TIMEOUT_MS
+                    );
+                }
+                // 알리익스프레스 등: 상품 URL 직접 이동
                 return ActionInstructionResponse.navigate(
                         stepIndex,
                         actionId,
@@ -155,11 +222,21 @@ public class AgentStepPlannerService {
             }
         }
 
-        if (currentUrl == null || !currentUrl.contains("aliexpress.com")) {
+        // 현재 URL이 세션의 플랫폼 도메인이 아니면 해당 플랫폼으로 이동
+        if (currentUrl == null || !platformConfig.matchesDomain(currentUrl)) {
+            if (stepIndex >= MAX_DOMAIN_REDIRECT_ATTEMPTS) {
+                log.error("[AgentStepPlannerService] 잘못된 도메인 이동 {}회 초과 → ABORT - runId={}, url={}",
+                        MAX_DOMAIN_REDIRECT_ATTEMPTS, runId, currentUrl);
+                return ActionInstructionResponse.abort(stepIndex, actionId,
+                        "플랫폼 이동 " + MAX_DOMAIN_REDIRECT_ATTEMPTS + "회 초과 실패 - 브라우저 상태를 확인해주세요.");
+            }
+            String targetUrl = platformConfig.isPreferSearchNavigation()
+                    ? platformConfig.buildMainPageUrl()  // 네이버: 메인 페이지에서 검색창 탐색
+                    : buildSearchUrl(platformConfig, commandSession, targetProduct); // 알리: 검색 URL 직접
             return ActionInstructionResponse.navigate(
                     stepIndex,
                     actionId,
-                    buildAliExpressSearchUrl(commandSession, targetProduct),
+                    targetUrl,
                     DEFAULT_NAVIGATION_TIMEOUT_MS
             );
         }
@@ -192,22 +269,28 @@ public class AgentStepPlannerService {
             return null;
         }
 
+        // toolResult가 없거나, 스크린샷이 없을 경우
         if (previousActionResult.toolResult() == null || previousActionResult.toolResult().screenshot() == null) {
+            // 이전 액션이 "요소 못 찾음" 실패였을 경우
             if (previousActionResult.status() == com.pbm.command.domain.ActionExecutionStatus.FAILURE
                     && previousActionResult.errorCode() == com.pbm.command.domain.ActionErrorCode.ELEMENT_NOT_FOUND) {
+
+                // 스크린샷을 찍어달라고 익스텐션에게 요청
                 return ActionInstructionResponse.useTool(stepIndex, buildActionId(runId, stepIndex), "CAPTURE_VISIBLE_TAB", java.util.Map.of("format", "png"));
             }
             return null;
         }
 
         try {
+            // 스크린샷 결과를 받음
             VisionPlannerInstructionPayload payload = aiVisionPlannerClient.analyze(
                     commandSession.getOriginalCommand(),
                     snapshot == null ? null : snapshot.currentUrl(),
                     previousActionResult,
-                    previousActionResult.toolResult().screenshot()
+                    previousActionResult.toolResult().screenshot()  // 스크린샷 내용
             );
 
+            // 확신도가 0.6 미만이면 다음 방법으로
             if (payload.confidence() != null && payload.confidence() < MIN_VISION_CONFIDENCE) {
                 log.info("[AgentStepPlannerService] Vision planner confidence 부족 - runId={}, stepIndex={}, confidence={}",
                         runId, stepIndex, payload.confidence());
@@ -245,20 +328,416 @@ public class AgentStepPlannerService {
             return null;
         }
 
+        // 플랫폼 설정에서 platform 이름과 navigationStrategy를 추출해 AI에게 전달한다.
+        PlatformConfig platformConfig = resolvePlatformConfig(commandSession);
+        String platformName = platformConfig.getPlatform().name();
+        String navigationStrategy = platformConfig.isPreferSearchNavigation() ? "SEARCH" : "DIRECT";
+
+        // 페이지 타입을 룰 기반으로 판단하여 전문 AI 에이전트 타입을 결정한다.
+        // (planNextAction 에서 이미 계산한 값이 있으나, 여기서는 독립적으로 재계산)
+        PageType pageType = detectPageType(snapshot);
+        String agentType = resolveAgentType(pageType, platformConfig);
+
+        log.info("[AgentStepPlannerService] 페이지 타입 판단 - runId={}, stepIndex={}, pageType={}, agentType={}",
+                runId, stepIndex, pageType, agentType);
+
+        // 검색 결과 페이지 + preferSearchNavigation 플랫폼:
+        // targetProduct의 productUrl에서 productId를 추출해 href로 매칭 → AI 없이 deterministic CLICK
+        // 네이버 상품 링크는 target="_blank"(새 탭)로 열리므로,
+        // extension이 새 탭 감지 후 targetTabId를 교체하는 방식으로 처리한다.
+        if (pageType == PageType.SEARCH_RESULTS
+                && platformConfig.isPreferSearchNavigation()
+                && targetProduct != null
+                && targetProduct.productUrl() != null) {
+            Optional<InteractiveElementRequest> matchedProduct =
+                    findProductByUrlId(snapshot, targetProduct.productUrl());
+            if (matchedProduct.isPresent()) {
+                log.info("[AgentStepPlannerService] productId href 매칭 성공 → CLICK - runId={}, nodeId={}",
+                        runId, matchedProduct.get().nodeId());
+                return ActionInstructionResponse.click(stepIndex, buildActionId(runId, stepIndex), matchedProduct.get());
+            }
+            log.info("[AgentStepPlannerService] productId href 매칭 실패 → AI fallback - runId={}", runId);
+        }
+
+
+        // 봇 차단/CAPTCHA 페이지: AI 호출 없이 사용자 개입 요청
+        if (pageType == PageType.BLOCKED) {
+            String actionId = buildActionId(runId, stepIndex);
+            log.warn("[AgentStepPlannerService] 봇 차단/캡챠 페이지 감지 → 사용자 개입 요청 - runId={}, url={}", runId, snapshot.currentUrl());
+            return ActionInstructionResponse.awaitApproval(
+                    stepIndex,
+                    actionId,
+                    "네이버 캡챠 보안 인증이 필요합니다. 브라우저에서 직접 캡챠를 해결하면 자동으로 재개됩니다.",
+                    DEFAULT_APPROVAL_TIMEOUT_MS
+            );
+        }
+
+        // 플랫폼 메인 페이지 처리
+        if (pageType == PageType.MAIN_PAGE) {
+            String actionId = buildActionId(runId, stepIndex);
+            String currentUrlLower = snapshot.currentUrl() != null ? snapshot.currentUrl().toLowerCase() : "";
+
+            // 현재 URL이 대상 플랫폼 도메인이 아니면 올바른 플랫폼으로 먼저 이동
+            // (예: 네이버 명령인데 알리익스프레스 메인에 있는 경우)
+            if (!platformConfig.matchesDomain(currentUrlLower)) {
+                if (stepIndex >= MAX_DOMAIN_REDIRECT_ATTEMPTS) {
+                    log.error("[AgentStepPlannerService] 잘못된 도메인 이동 {}회 초과 → ABORT - runId={}, url={}",
+                            MAX_DOMAIN_REDIRECT_ATTEMPTS, runId, currentUrlLower);
+                    return ActionInstructionResponse.abort(stepIndex, actionId,
+                            "플랫폼 이동 " + MAX_DOMAIN_REDIRECT_ATTEMPTS + "회 초과 실패 - 브라우저 상태를 확인해주세요.");
+                }
+                String targetUrl = platformConfig.isPreferSearchNavigation()
+                        ? platformConfig.buildMainPageUrl()  // 네이버: 항상 메인 페이지로
+                        : buildSearchUrl(platformConfig, commandSession, targetProduct); // 알리: 검색 URL
+                log.warn("[AgentStepPlannerService] 잘못된 도메인에서 MAIN_PAGE 감지 → 플랫폼 이동 - runId={}, from={}, to={}",
+                        runId, currentUrlLower, targetUrl);
+                return ActionInstructionResponse.navigate(stepIndex, actionId, targetUrl, DEFAULT_NAVIGATION_TIMEOUT_MS);
+            }
+
+            if (platformConfig.isPreferSearchNavigation()) {
+                // 네이버 등: 검색창을 찾아 직접 타이핑 → Enter로 검색 (자연스러운 Referer 체인 형성)
+                Optional<InteractiveElementRequest> searchInput = findSearchInput(snapshot);
+                if (searchInput.isPresent()) {
+                    String searchKeyword = buildSearchKeyword(commandSession, targetProduct);
+                    log.info("[AgentStepPlannerService] 메인 페이지 검색창 INPUT - runId={}, keyword={}", runId, searchKeyword);
+                    // 값 끝에 '\n' 추가 → Extension이 타이핑 후 Enter 키로 검색 실행
+                    return ActionInstructionResponse.input(stepIndex, actionId, searchInput.get(), searchKeyword + "\n");
+                }
+                // 검색창 못 찾으면 메인 페이지 재진입 (검색 URL 직접 이동 금지 — 봇 차단 위험)
+                String mainPageUrl = platformConfig.buildMainPageUrl();
+                log.warn("[AgentStepPlannerService] 검색창 미발견 → 메인 페이지 재진입 - runId={}, url={}", runId, mainPageUrl);
+                return ActionInstructionResponse.navigate(stepIndex, actionId, mainPageUrl, DEFAULT_NAVIGATION_TIMEOUT_MS);
+            } else {
+                // 알리익스프레스 등: 검색 URL로 직접 이동
+                String searchUrl = buildSearchUrl(platformConfig, commandSession, targetProduct);
+                log.info("[AgentStepPlannerService] 메인 페이지 → 검색 URL 직접 이동 - runId={}, url={}", runId, searchUrl);
+                return ActionInstructionResponse.navigate(stepIndex, actionId, searchUrl, DEFAULT_NAVIGATION_TIMEOUT_MS);
+            }
+        }
+
         try {
-            DomPlannerInstructionPayload payload = aiDomPlannerClient.plan(commandSession, snapshot, targetProduct);
+            DomPlannerInstructionPayload payload = aiDomPlannerClient.plan(
+                    commandSession, snapshot, targetProduct, platformName, navigationStrategy, agentType);
             if (payload.confidence() != null && payload.confidence() < MIN_AI_CONFIDENCE) {
                 log.info("[AgentStepPlannerService] AI planner confidence 부족으로 rule-based fallback - runId={}, stepIndex={}, confidence={}, reason={}",
                         runId, stepIndex, payload.confidence(), payload.reason());
                 return null;
             }
 
-            return convertAiInstruction(runId, stepIndex, payload, snapshot);
+            log.info("[AgentStepPlannerService] AI payload - action={}, nodeId={}, role={}, labelText={}, selector={}, confidence={}",
+                    payload.action(),
+                    payload.target() != null ? payload.target().nodeId() : "null",
+                    payload.target() != null ? payload.target().role() : "null",
+                    payload.target() != null ? payload.target().labelText() : "null",
+                    payload.target() != null ? payload.target().selector() : "null",
+                    payload.confidence());
+
+            ActionInstructionResponse aiResult = convertAiInstruction(runId, stepIndex, payload, snapshot);
+            log.info("[AgentStepPlannerService] AI planner 결과 - runId={}, stepIndex={}, pageType={}, agentType={}, action={}, confidence={}, reason={}",
+                    runId, stepIndex, pageType, agentType,
+                    aiResult != null ? aiResult.action() : "null",
+                    payload.confidence(), payload.reason());
+
+            // 네이버 등 preferSearchNavigation 플랫폼에서 AI가 NAVIGATE를 반환한 경우:
+            // 상품 URL 직접 접근은 봇 차단 위험 → WAIT으로 대체
+            // 단, CATALOG_NAVIGATOR가 adcr 판매처 URL로 NAVIGATE를 반환한 경우는 허용
+            // (cr.shopping.naver.com/adcr → 판매처 상세페이지로 리다이렉트되는 네이버 추적 URL)
+            if (aiResult != null
+                    && aiResult.action() == BrowserActionType.NAVIGATE
+                    && platformConfig.isPreferSearchNavigation()
+                    && (pageType == PageType.SEARCH_RESULTS || pageType == PageType.CATALOG_PAGE)) {
+                String navigateValue = aiResult.value();
+                // CATALOG_PAGE에서 adcr URL로의 이동은 판매처 상세페이지 진입이므로 허용
+                if (pageType == PageType.CATALOG_PAGE
+                        && navigateValue != null
+                        && navigateValue.contains("cr.shopping.naver.com/adcr")) {
+                    log.info("[AgentStepPlannerService] CATALOG_NAVIGATOR → adcr 판매처 URL NAVIGATE 허용 - runId={}, url={}",
+                            runId, navigateValue.length() > 80 ? navigateValue.substring(0, 80) + "..." : navigateValue);
+                    return aiResult;
+                }
+                log.warn("[AgentStepPlannerService] AI가 검색결과/카탈로그에서 NAVIGATE 반환 → 봇 차단/무한루프 위험, WAIT으로 대체 - runId={}, pageType={}", runId, pageType);
+                return ActionInstructionResponse.waitAction(stepIndex, buildActionId(runId, stepIndex), DEFAULT_WAIT_MS, DEFAULT_NAVIGATION_TIMEOUT_MS);
+            }
+
+            return aiResult;
         } catch (Exception e) {
             log.warn("[AgentStepPlannerService] AI planner 실패로 rule-based fallback - runId={}, stepIndex={}, error={}",
                     runId, stepIndex, e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * 페이지 타입 열거형.
+     * Java 룰 기반으로 분류하여 적절한 전문 AI를 선택하는 데 사용한다.
+     */
+    private enum PageType {
+        /** 검색 결과 목록 페이지 → SearchNavigatorAI */
+        SEARCH_RESULTS,
+        /** 카탈로그 페이지: 여러 판매처를 보여주는 중간 페이지 (네이버 catalog)
+         *  → "최저가 사러가기" 버튼 클릭으로 실제 판매 페이지로 이동 */
+        CATALOG_PAGE,
+        /** 상품 상세 페이지 → PurchaseExecutorAI */
+        PRODUCT_DETAIL,
+        /** 플랫폼 메인 페이지 → preferSearchNavigation=true: 검색창 INPUT, false: 검색 URL 직접 이동 */
+        MAIN_PAGE,
+        /** 봇 차단/CAPTCHA/에러 페이지 → 사용자 개입 요청 (AWAIT_APPROVAL) */
+        BLOCKED,
+        /** 로그인 페이지 판단 */
+        LOGIN_PAGE
+    }
+
+    /**
+     * URL 패턴 + 페이지 텍스트로 현재 페이지 타입을 판단한다.
+     * AI 호출 없이 룰 기반으로 처리하여 비용과 지연을 최소화한다.
+     */
+    private PageType detectPageType(PageSnapshotRequest snapshot) {
+        if (snapshot == null) {
+            return PageType.MAIN_PAGE;
+        }
+
+        String url = snapshot.currentUrl() != null ? snapshot.currentUrl().toLowerCase() : "";
+        String title = snapshot.title() != null ? snapshot.title().toLowerCase() : "";
+        String visibleText = snapshot.visibleTextSummary() != null ? snapshot.visibleTextSummary().toLowerCase() : "";
+
+        // 1. 알려진 플랫폼 메인 페이지 URL이면 BLOCKED 체크 없이 바로 MAIN_PAGE 반환
+        // 캡챠 해결 후 메인으로 돌아올 때 스냅샷 텍스트에 캡챠 잔여 문구가 남아
+        // BLOCKED로 오판하는 것을 방지한다.
+        // 단, 캡챠 페이지는 제외: 네이버 캡챠 오버레이가 뜰 경우 <head title="captcha">로 표시됨
+        if (!title.contains("captcha")
+                && (url.contains("search.shopping.naver.com/home")
+                    || url.equals("https://www.aliexpress.com/")
+                    || url.equals("https://www.aliexpress.com"))) {
+            return PageType.MAIN_PAGE;
+        }
+
+        // 2. 봇 차단/CAPTCHA/에러 페이지 우선 체크
+        if (isBlockedOrErrorPage(url, title, visibleText)) {
+            return PageType.BLOCKED;
+        }
+
+        // 로그인 페이지 (nid.naver.com)
+        if (url.contains("nid.naver.com")) {
+            return PageType.LOGIN_PAGE;
+        }
+
+        // 2. 카탈로그 페이지: 여러 판매처 목록 (네이버 search.shopping.naver.com/catalog/)
+        if (isCatalogPage(url)) {
+            return PageType.CATALOG_PAGE;
+        }
+
+        // 3. 상품 상세 페이지
+        if (isProductDetailPage(url)) {
+            return PageType.PRODUCT_DETAIL;
+        }
+
+        // 4. 검색 결과 페이지
+        if (isSearchResultsPage(url, title)) {
+            return PageType.SEARCH_RESULTS;
+        }
+
+        // 4. 그 외 → 플랫폼 메인 페이지로 간주
+        return PageType.MAIN_PAGE;
+    }
+
+    /**
+     * 봇 차단, CAPTCHA, 에러 페이지 여부를 판단한다.
+     */
+    private boolean isBlockedOrErrorPage(String url, String title, String visibleText) {
+        // 네이버 캡챠 페이지 URL 직접 감지 (ncpt.naver.com)
+        if (url.contains("ncpt.naver.com") || url.contains("/captcha")) {
+            return true;
+        }
+        // 네이버/일반 봇 차단 패턴
+        if (visibleText.contains("비정상적인 접근")
+                || visibleText.contains("로봇이 아님을 확인")
+                || visibleText.contains("보안 확인을 완료해 주세요")
+                || visibleText.contains("captcha")
+                || visibleText.contains("robot")
+                || title.contains("captcha")
+                || title.contains("접근 제한")
+                || title.contains("access denied")
+                || title.contains("403")
+                || title.contains("차단")) {
+            return true;
+        }
+        // 일반 에러 페이지
+        if (title.contains("404") || title.contains("not found") || title.contains("오류") || title.contains("error")) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 카탈로그 페이지 URL 패턴을 확인한다.
+     * 네이버: search.shopping.naver.com/catalog/{id} → 여러 판매처를 보여주는 중간 페이지
+     * "최저가 사러가기" 버튼을 클릭해야 실제 판매 페이지로 이동한다.
+     */
+    private boolean isCatalogPage(String url) {
+        return url.contains("search.shopping.naver.com/catalog/")
+                || url.contains("shopping.naver.com/catalog/");
+    }
+
+    /**
+     * 상품 상세 페이지 URL 패턴을 확인한다.
+     */
+    private boolean isProductDetailPage(String url) {
+        return url.contains("/item/")
+                || url.contains("/product/")
+                || url.contains("/goods/")
+                || url.contains("/detail/")
+                || url.contains("/p/")
+                || url.contains("itemid=")
+                || url.matches(".*smartstore\\.naver\\.com/[^/]+/products/.*");
+    }
+
+    /**
+     * 검색 결과 페이지 URL 패턴을 확인한다.
+     * 주의: search.shopping.naver.com/home 은 URL에 "search"가 포함되지만 메인 페이지이므로 제외
+     */
+    private boolean isSearchResultsPage(String url, String title) {
+        // 네이버 쇼핑 메인 페이지는 검색결과 아님
+        if (url.contains("search.shopping.naver.com/home")
+                || url.endsWith("shopping.naver.com/ns/home")) {
+            return false;
+        }
+        return url.contains("/search/")
+                || url.contains("query=")
+                || url.contains("searchtext")
+                || url.contains("wholesale")
+                || url.contains("q=")
+                || url.contains("keyword=")
+                || title.contains("검색결과")
+                || title.contains("search result");
+    }
+
+    /**
+     * 페이지 타입과 플랫폼 설정으로 AI 에이전트 타입을 결정한다.
+     */
+    private String resolveAgentType(PageType pageType, PlatformConfig platformConfig) {
+        return switch (pageType) {
+            case SEARCH_RESULTS -> "SEARCH_NAVIGATOR";
+            case PRODUCT_DETAIL -> "PURCHASE_EXECUTOR";
+            case CATALOG_PAGE -> "CATALOG_NAVIGATOR"; // 카탈로그: AI가 판매처 링크 선택
+            case MAIN_PAGE, BLOCKED, LOGIN_PAGE -> null; // AI 호출 안 함 → Java 룰로 처리
+        };
+    }
+
+    /**
+     * targetProduct URL에서 productId를 추출해 interactiveElements의 href와 매칭한다.
+     *
+     * 예) targetProduct.productUrl = "https://smartstore.naver.com/main/products/12487456679?..."
+     *     → productId = "12487456679"
+     *     → href에 "12487456679" 포함된 <a> 요소 반환
+     *
+     * AI 없이 deterministic하게 상품 카드를 찾을 수 있어 신뢰도가 높다.
+     */
+    private Optional<InteractiveElementRequest> findProductByUrlId(PageSnapshotRequest snapshot, String productUrl) {
+        if (snapshot == null || productUrl == null || productUrl.isBlank()) {
+            return Optional.empty();
+        }
+
+        // URL 경로의 마지막 세그먼트를 productId로 추출 (쿼리스트링 제외)
+        // 예: ".../products/12487456679?nl-query=..." → "12487456679"
+        String path = productUrl.split("\\?")[0]; // 쿼리스트링 제거
+        String[] segments = path.split("/");
+        if (segments.length == 0) {
+            return Optional.empty();
+        }
+        String productId = segments[segments.length - 1];
+        if (productId.isBlank() || productId.length() < 4) {
+            return Optional.empty();
+        }
+
+        log.info("[AgentStepPlannerService] productId 추출 - productUrl={}, productId={}", productUrl, productId);
+
+        // 수집된 href 목록 출력 (매칭 실패 원인 파악용)
+        List<String> collectedHrefs = snapshot.interactiveElements().stream()
+                .map(InteractiveElementRequest::href)
+                .filter(h -> h != null && !h.isBlank())
+                .limit(10)
+                .toList();
+        log.info("[AgentStepPlannerService] 수집된 href 샘플 (최대 10개): {}", collectedHrefs);
+
+        // productId를 href에 포함한 <a> 요소를 찾고, selector를 CSS로 덮어쓴다.
+        // nodeId는 DOM 변화에 취약(좌석 번호가 밀림)하므로 CSS selector를 우선 탐색 경로로 설정한다.
+        // content script의 locateByFallback이 selector → document.querySelector()로 정확히 찾는다.
+        return snapshot.interactiveElements().stream()
+                .filter(el -> el.href() != null && el.href().contains(productId))
+                .findFirst()
+                .map(el -> new InteractiveElementRequest(
+                        el.nodeId(),
+                        el.role(),
+                        el.labelText(),
+                        "a[href*=\"" + productId + "\"]",
+                        el.href(),
+                        el.isVisible(),
+                        el.disabled()
+                ));
+    }
+
+    /**
+     * 페이지 스냅샷에서 검색창 input 요소를 찾는다.
+     * 우선순위: searchbox role → "검색" 레이블 input → 기타 활성화된 input/textbox
+     */
+    private Optional<InteractiveElementRequest> findSearchInput(PageSnapshotRequest snapshot) {
+        if (snapshot == null || snapshot.interactiveElements().isEmpty()) {
+            return Optional.empty();
+        }
+
+        // 1. role이 searchbox인 요소 (네이버 쇼핑 검색창)
+        Optional<InteractiveElementRequest> searchBox = snapshot.interactiveElements().stream()
+                .filter(InteractiveElementRequest::isEnabled)
+                .filter(InteractiveElementRequest::isVisible)
+                .filter(el -> "searchbox".equalsIgnoreCase(el.role()) || "search".equalsIgnoreCase(el.role()))
+                .findFirst();
+        if (searchBox.isPresent()) {
+            return searchBox;
+        }
+
+        // 2. "검색" 관련 레이블을 가진 input/textbox
+        Optional<InteractiveElementRequest> labeledSearch = snapshot.interactiveElements().stream()
+                .filter(InteractiveElementRequest::isEnabled)
+                .filter(InteractiveElementRequest::isVisible)
+                .filter(el -> "input".equalsIgnoreCase(el.role()) || "textbox".equalsIgnoreCase(el.role()))
+                .filter(el -> {
+                    String label = el.labelText() != null ? el.labelText().toLowerCase() : "";
+                    return label.contains("검색") || label.contains("search") || label.contains("query");
+                })
+                .findFirst();
+        if (labeledSearch.isPresent()) {
+            return labeledSearch;
+        }
+
+        // 3. 활성화된 첫 번째 input/textbox (폴백)
+        return snapshot.interactiveElements().stream()
+                .filter(InteractiveElementRequest::isEnabled)
+                .filter(InteractiveElementRequest::isVisible)
+                .filter(el -> "input".equalsIgnoreCase(el.role()) || "textbox".equalsIgnoreCase(el.role()))
+                .findFirst();
+    }
+
+    /**
+     * 검색 키워드를 결정한다.
+     * 우선순위: 상품 title(HTML 태그 제거) > searchKeyword > 원본 명령어
+     * 예: "<b>로지텍 MX MASTER 3S</b> bluetooth edition" → "로지텍 MX MASTER 3S bluetooth edition"
+     */
+    private String buildSearchKeyword(CommandSession commandSession, ProductCandidateResponse targetProduct) {
+        if (targetProduct != null
+                && targetProduct.title() != null
+                && !targetProduct.title().isBlank()) {
+            // <b>, </b> 등 HTML 태그 제거
+            String cleanTitle = targetProduct.title().replaceAll("<[^>]+>", "").trim();
+            if (!cleanTitle.isBlank()) {
+                return cleanTitle;
+            }
+        }
+        if (targetProduct != null
+                && targetProduct.searchKeyword() != null
+                && !targetProduct.searchKeyword().isBlank()) {
+            return targetProduct.searchKeyword();
+        }
+        return commandSession.getOriginalCommand();
     }
 
     private Optional<ActionInstructionResponse> buildOptionSelectionInstruction(
@@ -337,6 +816,25 @@ public class AgentStepPlannerService {
             PageSnapshotRequest snapshot
     ) {
         Optional<InteractiveElementRequest> targetElement = resolveAiTargetElement(payload, snapshot);
+
+        // AI가 CLICK을 반환했지만 nodeId/labelText가 모두 null인 경우:
+        // role=a → 카탈로그 판매처 adcr 링크 중 첫 번째를 fallback으로 사용
+        if (targetElement.isEmpty()
+                && payload.target() != null
+                && "a".equalsIgnoreCase(payload.target().role())
+                && snapshot != null) {
+            targetElement = snapshot.interactiveElements().stream()
+                    .filter(InteractiveElementRequest::isEnabled)
+                    .filter(InteractiveElementRequest::isVisible)
+                    .filter(el -> "a".equalsIgnoreCase(el.role()))
+                    .filter(el -> el.href() != null && el.href().contains("cr.shopping.naver.com/adcr"))
+                    .findFirst();
+            if (targetElement.isPresent()) {
+                log.info("[AgentStepPlannerService] AI nodeId/labelText null → adcr href fallback 매칭 - nodeId={}",
+                        targetElement.get().nodeId());
+            }
+        }
+
         return targetElement.map(element -> ActionInstructionResponse.click(stepIndex, actionId, element)).orElse(null);
     }
 
@@ -378,7 +876,25 @@ public class AgentStepPlannerService {
         }
 
         if (payload.target().labelText() != null && !payload.target().labelText().isBlank()) {
-            return findElement(snapshot, payload.target().role(), payload.target().labelText());
+            // role은 AI가 반환한 값("link")과 실제 DOM role("a")이 다를 수 있으므로
+            // labelText만으로 매칭한다 (role 필터 제거)
+            return findElement(snapshot, null, payload.target().labelText());
+        }
+
+        // rawHtml 기반으로 AI가 CSS selector를 반환한 경우: 합성 요소를 생성해 content script가 찾을 수 있게 한다.
+        // (interactiveElements에 없는 .blind 요소, 구매버튼 등도 selector로 직접 접근 가능)
+        if (payload.target().selector() != null && !payload.target().selector().isBlank()) {
+            log.info("[AgentStepPlannerService] AI selector 반환 → 합성 InteractiveElementRequest 생성 - selector={}",
+                    payload.target().selector());
+            return Optional.of(new InteractiveElementRequest(
+                    null,
+                    payload.target().role(),
+                    payload.target().labelText(),
+                    payload.target().selector(),
+                    null,
+                    true,
+                    false
+            ));
         }
 
         return Optional.empty();
@@ -442,12 +958,70 @@ public class AgentStepPlannerService {
         return value.replaceAll("\\s+", "").toLowerCase();
     }
 
-    private String buildAliExpressSearchUrl(CommandSession commandSession, ProductCandidateResponse targetProduct) {
-        String searchKeyword = targetProduct != null && targetProduct.searchKeyword() != null && !targetProduct.searchKeyword().isBlank()
+    /**
+     * 세션의 platform 필드를 보고 DB에서 PlatformConfig를 조회한다.
+     * platform이 null이거나 설정이 없으면 ALIEXPRESS를 기본값으로 사용한다.
+     */
+    private PlatformConfig resolvePlatformConfig(CommandSession commandSession) {
+        PlatformType platformType = PlatformType.ALIEXPRESS; // 기본값
+        if (commandSession.getCommandIntent() != null) {
+            // parsedCommand의 platform은 CommandSession에 직접 저장되지 않으므로
+            // validationResult의 triggered 상품 플랫폼으로 추론한다
+        }
+        // commandSession에 platform 필드가 있으면 우선 사용
+        try {
+            String parsedPlatform = extractPlatformFromSession(commandSession);
+            if (parsedPlatform != null) {
+                platformType = PlatformType.valueOf(parsedPlatform);
+            }
+        } catch (IllegalArgumentException ignored) {
+            // 알 수 없는 platform 값이면 기본값 사용
+        }
+
+        PlatformType finalPlatformType = platformType;
+        return platformConfigService.findByPlatform(platformType)
+                .orElseGet(() -> {
+                    log.warn("플랫폼 설정을 찾을 수 없습니다. platform={}, ALIEXPRESS로 폴백합니다.", finalPlatformType);
+                    return platformConfigService.findByPlatform(PlatformType.ALIEXPRESS)
+                            .orElseThrow(() -> new IllegalStateException("ALIEXPRESS 플랫폼 설정이 DB에 없습니다."));
+                });
+    }
+
+    /**
+     * CommandSession의 validationResult에서 플랫폼 정보를 추출한다.
+     * triggered 상품의 platform 필드를 우선 사용한다.
+     */
+    private String extractPlatformFromSession(CommandSession commandSession) {
+        if (commandSession.getPlatform() != null && !commandSession.getPlatform().isBlank()) {
+            return commandSession.getPlatform();
+        }
+
+        SelectionValidationResultResponse validationResult = parseValidationResult(commandSession.getValidationResultJson());
+        if (validationResult == null) {
+            return null;
+        }
+        // triggered 상품이 있으면 그 플랫폼 사용
+        if (validationResult.triggeredProducts() != null && !validationResult.triggeredProducts().isEmpty()) {
+            return validationResult.triggeredProducts().get(0).platform();
+        }
+        // monitoring 상품 플랫폼 사용
+        if (validationResult.monitoringProducts() != null && !validationResult.monitoringProducts().isEmpty()) {
+            return validationResult.monitoringProducts().get(0).platform();
+        }
+        return null;
+    }
+
+    /**
+     * DB에서 가져온 플랫폼 설정으로 검색 URL을 생성한다.
+     * 하드코딩된 aliexpress URL을 대체한다.
+     */
+    private String buildSearchUrl(PlatformConfig platformConfig, CommandSession commandSession, ProductCandidateResponse targetProduct) {
+        String searchKeyword = targetProduct != null
+                && targetProduct.searchKeyword() != null
+                && !targetProduct.searchKeyword().isBlank()
                 ? targetProduct.searchKeyword()
                 : commandSession.getOriginalCommand();
-        String keyword = searchKeyword == null ? "" : searchKeyword.trim().replace(" ", "+");
-        return "https://www.aliexpress.com/wholesale?SearchText=" + keyword;
+        return platformConfig.buildSearchUrl(searchKeyword);
     }
 
     private ProductCandidateResponse resolveTargetProduct(CommandSession commandSession) {

@@ -444,7 +444,7 @@ rawHtml에서 버튼을 찾는 방법:
 2. 해당 요소의 CSS selector를 반드시 target.selector에 넣어야 한다. (절대 null 금지)
    - id가 있으면: "#buyNow", "#purchaseBtn"
    - class가 있으면: "button.buyBtn", "a.buy-now-btn"
-   - data 속성이 있으면: "button[data-nclick*='buy']", "a[data-log-click*='purchase']"
+   - data 속성이 있으면: "button[data-nclick*='buy']", "a[data-log-click*='purchase']", "button[data-spm*='buy']"
    - 형제 순서: "ul.seller-list li:first-child button"
    구매 버튼이 rawHtml에 존재하는 한 반드시 selector를 추출할 수 있다.
 3. target.node_id와 target.label_text는 null로 설정해도 된다.
@@ -452,6 +452,17 @@ rawHtml에서 버튼을 찾는 방법:
 
 ⚠️ 중요: 구매 버튼을 확인했다면 target.selector는 반드시 비어있지 않은 문자열이어야 한다.
    selector=null로 반환하면 시스템이 버튼을 클릭할 수 없어 무한 루프에 빠진다.
+
+⚠️ CSS selector 규칙 (반드시 준수):
+   - 브라우저 표준 CSS selector만 사용한다. (document.querySelector()로 실행됨)
+   - 절대 금지: :has-text(), :visible, :contains(), >> 등 Playwright/jQuery 전용 문법
+   - 여러 후보를 쉼표로 나열할 경우 모든 항목이 표준 CSS여야 한다.
+   - 절대 금지: "button", "a", "span", "div" 등 단독 태그명만 있는 범용 selector
+     → 이런 selector는 시스템이 자동으로 거부하므로 아무 효과가 없다.
+   - 특정 selector를 찾기 어려울 때는 selector=null로 설정하고,
+     대신 target.label_text에 버튼 텍스트를 넣어라.
+     예) selector=null, label_text="바로 구매"
+     예) selector=null, label_text="Buy Now"
 
 [행동 순서]
 1. 옵션 확인: optionGroups 또는 interactiveElements에서 미선택된 필수 옵션을 확인한다.

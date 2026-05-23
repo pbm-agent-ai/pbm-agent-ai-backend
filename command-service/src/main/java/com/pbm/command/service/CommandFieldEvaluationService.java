@@ -150,7 +150,7 @@ public class CommandFieldEvaluationService {
             case MODEL -> isBlank(parsedCommand.model());
             case COLOR -> isBlank(parsedCommand.color());
             case SIZE -> isBlank(parsedCommand.size());
-            case PLATFORM -> parsedCommand.platform() == null;
+            case PLATFORM -> parsedCommand.platforms() == null || parsedCommand.platforms().isEmpty();
             case MAX_PRICE -> parsedCommand.maxPrice() == null || parsedCommand.maxPrice() <= 0;
             case MIN_PRICE -> parsedCommand.minPrice() == null || parsedCommand.minPrice() <= 0;
             case CURRENCY -> isBlank(parsedCommand.currency());

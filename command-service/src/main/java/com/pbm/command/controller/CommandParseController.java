@@ -5,6 +5,7 @@ import com.pbm.command.dto.request.CommandParseRequest;
 import com.pbm.command.dto.response.CommandParseResponse;
 import com.pbm.command.service.CommandExecutionService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -50,6 +51,7 @@ public class CommandParseController {
     })
     @PostMapping("/parse")
     public ResponseEntity<ApiResponse<CommandParseResponse>> parseCommand(
+            @Parameter(hidden = true, description = "Gateway가 JWT에서 추출해 주입하는 사용자 ID")
             @RequestHeader("X-User-Id") Long userId,
             @RequestBody CommandParseRequest request
     ) {

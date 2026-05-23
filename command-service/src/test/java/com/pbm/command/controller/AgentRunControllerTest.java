@@ -75,7 +75,7 @@ class AgentRunControllerTest {
     @Test
     @DisplayName("디바이스가 pending run을 조회한다")
     void getPendingRun_returnsSuccess() throws Exception {
-        AssignedRunResponse response = new AssignedRunResponse("run-1", "agent-token", "cmd-1");
+        AssignedRunResponse response = new AssignedRunResponse("run-1", "agent-token", "cmd-1", "ALIEXPRESS");
         given(agentRunService.getPendingRunForDevice("device-1")).willReturn(response);
 
         mockMvc.perform(get("/api/v1/runs/pending")
@@ -141,7 +141,7 @@ class AgentRunControllerTest {
         AgentRunStepRequest request = new AgentRunStepRequest(
                 0,
                 null,
-                new PageSnapshotRequest("https://www.aliexpress.com", "AliExpress", "", java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), LocalDateTime.of(2026, 5, 16, 16, 0))
+                new PageSnapshotRequest("https://www.aliexpress.com", "AliExpress", "", java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), "", LocalDateTime.of(2026, 5, 16, 16, 0))
         );
         AgentRunStepResponse response = new AgentRunStepResponse(
                 "run-1",

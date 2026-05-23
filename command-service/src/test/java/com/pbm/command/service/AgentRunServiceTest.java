@@ -74,7 +74,7 @@ class AgentRunServiceTest {
     void createRun_createsQueuedRun() {
         CommandSession session = CommandSession.createSearching(1L, "테스트 명령");
         given(commandSessionRepository.findByCommandId("cmd-1")).willReturn(Optional.of(session));
-        given(agentRunRepository.existsByUserIdAndStatusIn(any(), any())).willReturn(false);
+        given(agentRunRepository.findAllByUserIdAndStatusIn(any(), any())).willReturn(List.of());
         given(browserDeviceRepository.findFirstByUserIdAndLastSeenAtAfterOrderByLastSeenAtDesc(any(), any()))
                 .willReturn(Optional.empty());
         given(agentRunRepository.save(any(AgentRun.class))).willAnswer(invocation -> invocation.getArgument(0));
@@ -87,15 +87,24 @@ class AgentRunServiceTest {
     }
 
     @Test
-    @DisplayName("활성 run이 이미 있으면 새 AgentRun 생성을 거부한다")
-    void createRun_withActiveRun_throwsConflictException() {
+    @DisplayName("활성 run이 이미 있으면 기존 run을 ABORTED 처리하고 새로 생성한다")
+    void createRun_withActiveRun_abortsOldAndCreatesNew() {
         CommandSession session = CommandSession.createSearching(1L, "테스트 명령");
+        AgentRun existingRun = AgentRun.createQueued(1L, "cmd-0");
         given(commandSessionRepository.findByCommandId("cmd-1")).willReturn(Optional.of(session));
-        given(agentRunRepository.existsByUserIdAndStatusIn(any(), any())).willReturn(true);
+        given(agentRunRepository.findAllByUserIdAndStatusIn(any(), any()))
+                .willReturn(List.of())              // 첫 번째 호출: INTERRUPTED run 없음
+                .willReturn(List.of(existingRun));  // 두 번째 호출: 활성 run 존재
+        given(browserDeviceRepository.findFirstByUserIdAndLastSeenAtAfterOrderByLastSeenAtDesc(any(), any()))
+                .willReturn(Optional.empty());
+        given(agentRunRepository.save(any(AgentRun.class))).willAnswer(invocation -> invocation.getArgument(0));
 
-        assertThatThrownBy(() -> agentRunService.createRun(1L, "cmd-1"))
-                .isInstanceOf(AgentRunConflictException.class)
-                .hasMessageContaining("진행 중인 AgentRun");
+        AgentRunCreatedResponse response = agentRunService.createRun(1L, "cmd-1");
+
+        assertThat(response).isNotNull();
+        assertThat(response.runId()).isNotBlank();
+        assertThat(response.status()).isEqualTo("QUEUED");
+        assertThat(existingRun.getStatus()).isEqualTo(AgentRunStatus.ABORTED);
     }
 
     @Test
@@ -120,7 +129,7 @@ class AgentRunServiceTest {
                 LocalDateTime.now()
         );
         given(commandSessionRepository.findByCommandId("cmd-1")).willReturn(Optional.of(session));
-        given(agentRunRepository.existsByUserIdAndStatusIn(any(), any())).willReturn(false);
+        given(agentRunRepository.findAllByUserIdAndStatusIn(any(), any())).willReturn(List.of());
         given(browserDeviceRepository.findFirstByUserIdAndLastSeenAtAfterOrderByLastSeenAtDesc(any(), any()))
                 .willReturn(Optional.of(browserDevice));
         given(stringRedisTemplate.opsForValue()).willReturn(valueOperations);
@@ -135,10 +144,12 @@ class AgentRunServiceTest {
     @Test
     @DisplayName("디바이스에 ASSIGNED 된 pending run 1건이 있으면 agentToken과 함께 반환한다")
     void getPendingRunForDevice_returnsAssignedRun() {
+        CommandSession session = CommandSession.createSearching(1L, "테스트 명령");
         AgentRun run = AgentRun.createQueued(1L, "cmd-1");
         run.assignTo("device-1", LocalDateTime.now());
         given(agentRunRepository.findFirstByAssignedDeviceIdAndStatusOrderByAssignedAtAsc("device-1", AgentRunStatus.ASSIGNED))
                 .willReturn(Optional.of(run));
+        given(commandSessionRepository.findByCommandId("cmd-1")).willReturn(Optional.of(session));
         given(stringRedisTemplate.opsForValue()).willReturn(valueOperations);
         given(valueOperations.get("agent-run:assigned-token:" + run.getRunId())).willReturn("cached-agent-token");
 
@@ -153,6 +164,7 @@ class AgentRunServiceTest {
     @Test
     @DisplayName("ASSIGNED run이 없으면 같은 사용자의 QUEUED run을 현재 디바이스에 할당한다")
     void getPendingRunForDevice_assignsQueuedRunWhenNeeded() {
+        CommandSession session = CommandSession.createSearching(1L, "테스트 명령");
         BrowserDevice browserDevice = BrowserDevice.create(
                 1L,
                 "device-1",
@@ -168,6 +180,7 @@ class AgentRunServiceTest {
         given(browserDeviceRepository.findByDeviceId("device-1")).willReturn(Optional.of(browserDevice));
         given(agentRunRepository.findFirstByUserIdAndStatusOrderByCreatedAtAsc(1L, AgentRunStatus.QUEUED))
                 .willReturn(Optional.of(queuedRun));
+        given(commandSessionRepository.findByCommandId("cmd-1")).willReturn(Optional.of(session));
         given(stringRedisTemplate.opsForValue()).willReturn(valueOperations);
         given(valueOperations.get("agent-run:assigned-token:" + queuedRun.getRunId())).willReturn(null);
         given(browserAgentTokenUtil.generateAgentToken(1L, queuedRun.getRunId(), "device-1"))
@@ -264,7 +277,7 @@ class AgentRunServiceTest {
         AgentRunStepRequest request = new AgentRunStepRequest(
                 0,
                 null,
-                new PageSnapshotRequest("https://www.aliexpress.com", "AliExpress", "", List.of(), List.of(), List.of(), List.of(), LocalDateTime.now())
+                new PageSnapshotRequest("https://www.aliexpress.com", "AliExpress", "", List.of(), List.of(), List.of(), List.of(), "", LocalDateTime.now())
         );
         ActionInstructionResponse instruction = ActionInstructionResponse.waitAction(0, "act-0", 1000, 15000);
 
@@ -301,7 +314,7 @@ class AgentRunServiceTest {
                         null,
                         LocalDateTime.now()
                 ),
-                new PageSnapshotRequest("https://www.aliexpress.com/item/1.html", "상품", "", List.of(), List.of(), List.of(), List.of(), LocalDateTime.now())
+                new PageSnapshotRequest("https://www.aliexpress.com/item/1.html", "상품", "", List.of(), List.of(), List.of(), List.of(), "", LocalDateTime.now())
         );
         ActionInstructionResponse instruction = ActionInstructionResponse.complete(1, "act-1");
 
@@ -325,7 +338,7 @@ class AgentRunServiceTest {
         AgentRunStepRequest request = new AgentRunStepRequest(
                 3,
                 null,
-                new PageSnapshotRequest("https://www.aliexpress.com", "AliExpress", "", List.of(), List.of(), List.of(), List.of(), LocalDateTime.now())
+                new PageSnapshotRequest("https://www.aliexpress.com", "AliExpress", "", List.of(), List.of(), List.of(), List.of(), "", LocalDateTime.now())
         );
 
         given(agentRunRepository.findByRunId(run.getRunId())).willReturn(Optional.of(run));
@@ -355,7 +368,7 @@ class AgentRunServiceTest {
                         null,
                         LocalDateTime.now()
                 ),
-                new PageSnapshotRequest("https://www.aliexpress.com/item/1.html", "상품", "", List.of(), List.of(), List.of(), List.of(), LocalDateTime.now())
+                new PageSnapshotRequest("https://www.aliexpress.com/item/1.html", "상품", "", List.of(), List.of(), List.of(), List.of(), "", LocalDateTime.now())
         );
         given(agentRunRepository.findByRunId(run.getRunId())).willReturn(Optional.of(run));
 

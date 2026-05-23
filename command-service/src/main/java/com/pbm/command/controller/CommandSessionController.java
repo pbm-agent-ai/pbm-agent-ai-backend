@@ -10,7 +10,9 @@ import com.pbm.command.service.CommandExecutionService;
 import com.pbm.command.service.CommandSessionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,6 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
  *   - `POST /api/v1/commands/{commandId}/product-links` : 상품 URL 직접 입력
  * 연관: CommandSessionService, CommandExecutionService, CommandClarificationRequest.
  */
+@Tag(name = "Command", description = "자연어 명령 파싱, 세션 상태 조회, 상품 선택/보완 API")
 @RestController
 @RequestMapping("/api/v1/commands")
 public class CommandSessionController {
@@ -56,6 +59,10 @@ public class CommandSessionController {
      */
     @SecurityRequirement(name = "bearerAuth")
     @Operation(summary = "명령 세션 조회", description = "commandId 기준 현재 명령 처리 상태, 후보 상품, 검증 결과를 조회합니다.")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "조회 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "commandId에 해당하는 세션 없음")
+    })
     @GetMapping("/{commandId}")
     public ResponseEntity<ApiResponse<CommandSessionResponse>> getCommandSession(
             @Parameter(description = "명령 세션 식별자", example = "97314885-3dfb-4bca-be21-742d2155b098")
@@ -81,6 +88,10 @@ public class CommandSessionController {
      */
     @SecurityRequirement(name = "bearerAuth")
     @Operation(summary = "보완 입력 제출", description = "누락되거나 애매한 필드에 대한 추가 답변을 제출하고 명령을 재파싱합니다.")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "재파싱 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "commandId에 해당하는 세션 없음")
+    })
     @PostMapping("/{commandId}/clarifications")
     public ResponseEntity<ApiResponse<CommandParseResponse>> submitClarification(
             @PathVariable String commandId,
@@ -101,6 +112,10 @@ public class CommandSessionController {
      */
     @SecurityRequirement(name = "bearerAuth")
     @Operation(summary = "후보 상품 선택", description = "사용자가 선택한 상품 productId 목록을 제출하고 실시간 가격 검증 또는 즉시 구매 판단을 시작합니다.")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "선택 제출 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "commandId에 해당하는 세션 없음")
+    })
     @PostMapping("/{commandId}/selection")
     public ResponseEntity<ApiResponse<CommandSessionResponse>> submitSelection(
             @PathVariable String commandId,
@@ -119,6 +134,10 @@ public class CommandSessionController {
      */
     @SecurityRequirement(name = "bearerAuth")
     @Operation(summary = "상품 URL 직접 제출", description = "검색 결과 대신 사용자가 직접 찾은 상품 URL 목록으로 후속 확인을 진행합니다.")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "URL 제출 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "commandId에 해당하는 세션 없음")
+    })
     @PostMapping("/{commandId}/product-links")
     public ResponseEntity<ApiResponse<CommandSessionResponse>> submitProductUrls(
             @PathVariable String commandId,

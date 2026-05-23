@@ -1,7 +1,10 @@
 package com.pbm.command.dto.response;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.pbm.command.domain.PlatformType;
 import com.pbm.command.domain.ProductCategory;
+
+import java.util.List;
 
 /**
  * 자연어 명령에서 추출한 구조화 결과 DTO.
@@ -10,7 +13,11 @@ import com.pbm.command.domain.ProductCategory;
  * 동작: 값이 확실하지 않은 필드는 null로 유지하고,
  *       이후 백엔드 규칙이 missingRequiredFields / ambiguousFields를 계산할 때 입력값으로 사용한다.
  * 연관: CommandParseResponse, ProductCategory, PlatformType.
+ *
+ * platforms: 비어있거나 null이면 "모든 플랫폼 대상" 으로 해석된다.
+ *            PRICE_CHECK intent에서 비어있으면 NAVER + ALIEXPRESS 모두 검색한다.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public record ParsedCommand(
         ProductCategory productCategory,
         String productName,
@@ -19,7 +26,7 @@ public record ParsedCommand(
         String model,
         String color,
         String size,
-        PlatformType platform,
+        List<PlatformType> platforms,
         Integer maxPrice,
         Integer minPrice,
         String currency,
@@ -27,10 +34,7 @@ public record ParsedCommand(
 ) {
 
     /**
-     * 기존 11개 필드를 사용하는 호출부와의 호환성을 위한 보조 생성자.
-     *
-     * searchCategoryHint가 아직 없는 기존 테스트/호출 코드는
-     * 기본값 null로 그대로 동작할 수 있게 유지한다.
+     * searchCategoryHint가 없는 호출부와의 호환성을 위한 보조 생성자.
      */
     public ParsedCommand(
             ProductCategory productCategory,
@@ -40,11 +44,11 @@ public record ParsedCommand(
             String model,
             String color,
             String size,
-            PlatformType platform,
+            List<PlatformType> platforms,
             Integer maxPrice,
             Integer minPrice,
             String currency
     ) {
-        this(productCategory, productName, brand, line, model, color, size, platform, maxPrice, minPrice, currency, null);
+        this(productCategory, productName, brand, line, model, color, size, platforms, maxPrice, minPrice, currency, null);
     }
 }

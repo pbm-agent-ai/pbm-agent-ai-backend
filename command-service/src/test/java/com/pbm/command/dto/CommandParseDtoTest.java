@@ -78,7 +78,7 @@ class CommandParseDtoTest {
                 null,
                 null,
                 "270",
-                PlatformType.NAVER,
+                List.of(PlatformType.NAVER),
                 200000,
                 null,
                 "KRW",
@@ -99,7 +99,8 @@ class CommandParseDtoTest {
 
         assertThat(json.get("intent").asText()).isEqualTo("AUTO_PURCHASE");
         assertThat(json.get("parsedCommand").get("productCategory").asText()).isEqualTo("SHOES");
-        assertThat(json.get("parsedCommand").get("platform").asText()).isEqualTo("NAVER");
+        // platforms는 배열로 직렬화됨 → 첫 번째 원소로 검증
+        assertThat(json.get("parsedCommand").get("platforms").get(0).asText()).isEqualTo("NAVER");
         assertThat(json.get("parsedCommand").get("productName").asText()).isEqualTo("나이키 조던");
         assertThat(json.get("parsedCommand").get("searchCategoryHint").asText()).isEqualTo("SNEAKERS");
         assertThat(json.get("needsClarification").asBoolean()).isTrue();

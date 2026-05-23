@@ -22,7 +22,7 @@ class CommandFieldEvaluationServiceTest {
             new CommandFieldEvaluationService(new CommandFieldPolicyService());
 
     @Test
-    @DisplayName("신발 자동 결제 명령은 size, platform 누락을 필수 누락으로, model/color 누락을 모호 필드로 계산한다")
+    @DisplayName("신발 자동 결제 명령은 size 누락을 필수 누락으로, platform/color/model 누락을 모호 필드로 계산한다")
     void evaluate_autoPurchaseShoes_returnsMissingAndAmbiguousFields() {
         ParsedCommand parsedCommand = new ParsedCommand(
                 ProductCategory.SHOES,
@@ -32,7 +32,7 @@ class CommandFieldEvaluationServiceTest {
                 null,
                 null,
                 null,
-                null,
+                null,   // platforms=null: PRICE_CHECK는 허용이지만 AUTO_PURCHASE에서는 모호 필드로 감지
                 200000,
                 null,
                 "KRW"
@@ -40,8 +40,11 @@ class CommandFieldEvaluationServiceTest {
 
         FieldEvaluationResult result = commandFieldEvaluationService.evaluate(CommandIntent.AUTO_PURCHASE, parsedCommand);
 
-        assertThat(result.missingRequiredFields()).containsExactly("size", "platform");
-        assertThat(result.ambiguousFields()).containsExactly("color", "model");
+        // PLATFORM은 requiredFields에서 제거되어 필수 누락에는 포함되지 않는다.
+        assertThat(result.missingRequiredFields()).containsExactly("size");
+        // AUTO_PURCHASE 시: platform, color 가 autoPurchaseClarificationFields에 있고,
+        // "나이키 조던" (2토큰)은 상품명이 모호하여 broadProduct → model도 추가
+        assertThat(result.ambiguousFields()).containsExactly("platform", "color", "model");
         assertThat(result.needsClarification()).isTrue();
     }
 
@@ -56,7 +59,7 @@ class CommandFieldEvaluationServiceTest {
                 "15 프로 256GB",
                 null,
                 null,
-                PlatformType.NAVER,
+                java.util.List.of(PlatformType.NAVER),
                 1400000,
                 null,
                 "KRW"
@@ -94,8 +97,8 @@ class CommandFieldEvaluationServiceTest {
     }
 
     @Test
-    @DisplayName("platform이 null이면 필수 필드 누락으로 감지된다 (신발 카테고리)")
-    void evaluate_shoesMissingPlatform_returnsPlatformInMissingRequiredFields() {
+    @DisplayName("platforms가 비어있어도 PRICE_CHECK에서는 필수 누락으로 처리하지 않는다 (전체 플랫폼 대상 검색 허용)")
+    void evaluate_shoesMissingPlatform_allowedForPriceCheck() {
         ParsedCommand parsedCommand = new ParsedCommand(
                 ProductCategory.SHOES,
                 "나이키 에어맥스",
@@ -104,7 +107,7 @@ class CommandFieldEvaluationServiceTest {
                 null,
                 null,
                 "270",
-                null,  // platform 누락
+                null,  // platforms=null: PRICE_CHECK에서는 전체 플랫폼 검색으로 허용
                 150000,
                 null,
                 "KRW"
@@ -112,7 +115,10 @@ class CommandFieldEvaluationServiceTest {
 
         FieldEvaluationResult result = commandFieldEvaluationService.evaluate(CommandIntent.PRICE_CHECK, parsedCommand);
 
-        assertThat(result.missingRequiredFields()).contains("platform");
-        assertThat(result.needsClarification()).isTrue();
+        // PLATFORM은 requiredFields에서 제거되었으므로 누락으로 처리하지 않는다.
+        assertThat(result.missingRequiredFields()).doesNotContain("platform");
+        // "나이키 에어맥스" (2토큰)은 상품명이 모호하여 broadProduct → model이 모호 필드로 추가될 수 있음
+        // PRICE_CHECK이므로 autoPurchaseClarificationFields는 확인하지 않음 → platform은 모호 필드에도 없음
+        assertThat(result.ambiguousFields()).doesNotContain("platform");
     }
 }

@@ -51,7 +51,7 @@ class AiDomPlannerClientTest {
 
         DomPlannerInstructionPayload response = fixture.client.plan(
                 CommandSession.createSearching(1L, "무선 이어폰 구매"),
-                new PageSnapshotRequest("https://www.aliexpress.com/item/1.html", "상품 상세", "", List.of(), List.of(), List.of(), List.of(), LocalDateTime.now()),
+                new PageSnapshotRequest("https://www.aliexpress.com/item/1.html", "상품 상세", "", List.of(), List.of(), List.of(), List.of(), "", LocalDateTime.now()),
                 null
         );
 

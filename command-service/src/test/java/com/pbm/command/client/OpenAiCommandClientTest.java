@@ -112,7 +112,7 @@ class OpenAiCommandClientTest {
     private String successResponseJson() {
         return buildProxyResponseJson(
                 """
-                        {"intent":"AUTO_PURCHASE","parsedCommand":{"productCategory":"SHOES","productName":"나이키 조던","brand":"나이키","line":"조던","model":null,"color":null,"size":null,"platform":null,"maxPrice":200000,"minPrice":null,"currency":"KRW"},"confidence":0.91}
+                        {"intent":"AUTO_PURCHASE","parsedCommand":{"productCategory":"SHOES","productName":"나이키 조던","brand":"나이키","line":"조던","model":null,"color":null,"size":null,"platforms":[],"maxPrice":200000,"minPrice":null,"currency":"KRW"},"confidence":0.91}
                         """.trim(),
                 null,
                 "stop"

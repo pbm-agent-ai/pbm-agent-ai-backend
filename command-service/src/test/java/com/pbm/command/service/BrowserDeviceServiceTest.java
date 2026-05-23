@@ -147,7 +147,7 @@ class BrowserDeviceServiceTest {
                 "macOS Chrome",
                 LocalDateTime.now().minusMinutes(1)
         );
-        AssignedRunResponse assignedRunResponse = new AssignedRunResponse("run-1", "agent-token", "cmd-1");
+        AssignedRunResponse assignedRunResponse = new AssignedRunResponse("run-1", "agent-token", "cmd-1", "ALIEXPRESS");
 
         given(browserDeviceRepository.findByDeviceId("device-123"))
                 .willReturn(Optional.of(browserDevice));

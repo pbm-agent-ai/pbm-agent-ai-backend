@@ -8,6 +8,9 @@ import com.pbm.command.dto.response.MyDevicesResponse;
 import com.pbm.command.exception.BrowserDeviceNotFoundException;
 import com.pbm.command.service.BrowserDeviceService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -45,8 +48,10 @@ public class BrowserDeviceController {
      * @return 내 디바이스 목록 응답 DTO
      */
     @Operation(summary = "내 디바이스 목록 조회", description = "로그인한 사용자의 페어링된 디바이스 목록과 실시간 online 상태를 반환합니다.")
+    @SecurityRequirement(name = "bearerAuth")
     @GetMapping("/my")
     public ResponseEntity<ApiResponse<MyDevicesResponse>> getMyDevices(
+            @Parameter(hidden = true, description = "Gateway가 JWT에서 추출해 주입하는 사용자 ID")
             @RequestHeader("X-User-Id") Long userId
     ) {
         MyDevicesResponse response = browserDeviceService.getMyDevices(userId);
@@ -60,6 +65,10 @@ public class BrowserDeviceController {
      * @return 등록 결과 응답 DTO
      */
     @Operation(summary = "브라우저 디바이스 등록", description = "pairing token으로 현재 extension 인스턴스를 브라우저 디바이스로 등록합니다.")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "디바이스 등록 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "pairing token 또는 device metadata 오류")
+    })
     @PostMapping("/register")
     public ResponseEntity<ApiResponse<BrowserDeviceRegisterResponse>> register(
             @RequestBody BrowserDeviceRegisterRequest request
@@ -76,8 +85,13 @@ public class BrowserDeviceController {
      * @return heartbeat 처리 결과 DTO
      */
     @Operation(summary = "브라우저 heartbeat", description = "디바이스 online 상태를 갱신하고 현재 할당된 pending run 정보를 함께 반환합니다.")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "heartbeat 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "deviceId 불일치 또는 디바이스 없음")
+    })
     @PostMapping("/{deviceId}/heartbeat")
     public ResponseEntity<ApiResponse<BrowserHeartbeatResponse>> heartbeat(
+            @Parameter(hidden = true, description = "Gateway가 device token에서 추출해 주입하는 인증 디바이스 ID")
             @RequestHeader("X-Device-Id") String authenticatedDeviceId,
             @PathVariable String deviceId
     ) {

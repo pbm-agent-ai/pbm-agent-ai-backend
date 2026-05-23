@@ -13,6 +13,7 @@ import com.pbm.command.service.AgentRunService;
 import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
@@ -44,8 +45,13 @@ public class AgentRunController {
 
     @SecurityRequirement(name = "bearerAuth")
     @Operation(summary = "Run 생성", description = "commandId 기준으로 새 브라우저 run을 생성하고 paired device에 할당합니다.")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "run 생성 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "commandId에 해당하는 세션 없음")
+    })
     @PostMapping("/commands/{commandId}/runs")
     public ResponseEntity<ApiResponse<AgentRunCreatedResponse>> createRun(
+            @Parameter(hidden = true, description = "Gateway가 JWT에서 추출해 주입하는 사용자 ID")
             @RequestHeader("X-User-Id") Long userId,
             @PathVariable String commandId
     ) {
@@ -56,6 +62,7 @@ public class AgentRunController {
     @Operation(summary = "디바이스 활성 Run 목록 조회", description = "사이드패널에서 현재 디바이스에 할당된 모든 활성 run을 조회합니다.")
     @GetMapping("/devices/runs")
     public ResponseEntity<ApiResponse<List<AgentRunResponse>>> getActiveRunsForDevice(
+            @Parameter(hidden = true, description = "Gateway가 device token에서 추출해 주입하는 디바이스 ID")
             @RequestHeader("X-Device-Id") String deviceId
     ) {
         List<AgentRunResponse> runs = agentRunService.getActiveRunsForDevice(deviceId);
@@ -65,6 +72,7 @@ public class AgentRunController {
     @Operation(summary = "Pending run 조회", description = "extension이 현재 디바이스에 할당된 대기 중 run이 있는지 확인합니다.")
     @GetMapping("/runs/pending")
     public ResponseEntity<ApiResponse<AssignedRunResponse>> getPendingRun(
+            @Parameter(hidden = true, description = "Gateway가 device token에서 추출해 주입하는 디바이스 ID")
             @RequestHeader("X-Device-Id") String deviceId
     ) {
         AssignedRunResponse response = agentRunService.getPendingRunForDevice(deviceId);
@@ -85,7 +93,9 @@ public class AgentRunController {
     @Operation(summary = "Run 시작", description = "extension이 자신에게 할당된 run의 실행을 시작합니다.")
     @PostMapping("/runs/{runId}/start")
     public ResponseEntity<ApiResponse<AgentRunResponse>> startRun(
+            @Parameter(hidden = true, description = "Gateway가 agent token에서 추출해 주입하는 run ID")
             @RequestHeader("X-Run-Id") String authenticatedRunId,
+            @Parameter(hidden = true, description = "Gateway가 agent token에서 추출해 주입하는 디바이스 ID")
             @RequestHeader("X-Device-Id") String deviceId,
             @PathVariable String runId
     ) {
@@ -100,6 +110,7 @@ public class AgentRunController {
     @Operation(summary = "Run 복구", description = "중단/새로고침 이후 extension이 기존 run 실행을 복구하기 위한 agent token을 재발급받습니다.")
     @PostMapping("/runs/{runId}/recover")
     public ResponseEntity<ApiResponse<String>> recover(
+            @Parameter(hidden = true, description = "Gateway가 device token에서 추출해 주입하는 디바이스 ID")
             @RequestHeader("X-Device-Id") String deviceId,
             @PathVariable String runId
     ) {
@@ -110,7 +121,9 @@ public class AgentRunController {
     @Operation(summary = "Step 처리", description = "extension이 현재 페이지 snapshot과 이전 action 결과를 보내고, backend가 다음 브라우저 액션을 결정합니다.")
     @PostMapping("/runs/{runId}/steps")
     public ResponseEntity<ApiResponse<AgentRunStepResponse>> processStep(
+            @Parameter(hidden = true, description = "Gateway가 agent token에서 추출해 주입하는 run ID")
             @RequestHeader("X-Run-Id") String authenticatedRunId,
+            @Parameter(hidden = true, description = "Gateway가 agent token에서 추출해 주입하는 디바이스 ID")
             @RequestHeader("X-Device-Id") String deviceId,
             @PathVariable String runId,
             @RequestBody AgentRunStepRequest request
@@ -127,6 +140,7 @@ public class AgentRunController {
     @Operation(summary = "Run 승인/거부", description = "사용자가 approval 대기 중인 run을 승인하거나 거부합니다.")
     @PostMapping("/runs/{runId}/approve")
     public ResponseEntity<ApiResponse<AgentRunResponse>> approve(
+            @Parameter(hidden = true, description = "Gateway가 JWT에서 추출해 주입하는 사용자 ID")
             @RequestHeader("X-User-Id") Long userId,
             @PathVariable String runId,
             @RequestBody AgentRunApproveRequest request
@@ -139,7 +153,9 @@ public class AgentRunController {
     @Operation(summary = "Run 중단", description = "사용자 또는 extension이 현재 run을 중단합니다.")
     @PostMapping("/runs/{runId}/abort")
     public ResponseEntity<ApiResponse<AgentRunResponse>> abortByUser(
+            @Parameter(hidden = true, description = "Gateway가 JWT에서 추출해 주입하는 사용자 ID")
             @RequestHeader(value = "X-User-Id", required = false) Long userId,
+            @Parameter(hidden = true, description = "Gateway가 device token에서 추출해 주입하는 디바이스 ID")
             @RequestHeader(value = "X-Device-Id", required = false) String deviceId,
             @PathVariable String runId,
             @RequestBody AgentRunAbortRequest request

@@ -42,7 +42,7 @@ class CommandParsePromptBuilderTest {
         assertThat(systemPrompt).contains("ALIEXPRESS");
         assertThat(systemPrompt).contains("COUPANG");
         assertThat(systemPrompt).contains("추측하지 말고 null");
-        assertThat(systemPrompt).contains("20만원 -> 200000");
+        assertThat(systemPrompt).contains("20만원=200000");
         assertThat(systemPrompt).contains("mx master 3s");
         assertThat(systemPrompt).contains("로지텍");
         assertThat(systemPrompt).contains("블랙");

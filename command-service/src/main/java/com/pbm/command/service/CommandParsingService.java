@@ -51,11 +51,11 @@ public class CommandParsingService {
 
         // 파싱 결과 로그 - 가격 파싱 오류 디버깅용
         if (aiPayload.parsedCommand() != null) {
-            log.info("GPT 파싱 결과 - intent: {}, maxPrice: {}, minPrice: {}, platform: {}, productName: {}",
+            log.info("GPT 파싱 결과 - intent: {}, maxPrice: {}, minPrice: {}, platforms: {}, productName: {}",
                     aiPayload.intent(),
                     aiPayload.parsedCommand().maxPrice(),
                     aiPayload.parsedCommand().minPrice(),
-                    aiPayload.parsedCommand().platform(),
+                    aiPayload.parsedCommand().platforms(),
                     aiPayload.parsedCommand().productName()
             );
         }

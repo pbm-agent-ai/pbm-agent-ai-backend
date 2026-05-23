@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pbm.command.domain.CommandSession;
 import com.pbm.command.domain.CommandSessionStatus;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -20,21 +21,37 @@ import java.util.List;
  *       함께 노출하여 post-search clarification 시 프론트가 후보 선택 UI를 구성할 수 있도록 한다.
  * 연관: CommandSession, CommandSessionService, ProductCandidateResponse.
  */
+@Schema(description = "명령 세션 상태 응답 DTO")
 public record CommandSessionResponse(
+        @Schema(description = "명령 세션 식별자", example = "97314885-3dfb-4bca-be21-742d2155b098")
         String commandId,
+        @Schema(description = "명령을 생성한 사용자 ID", example = "6")
         Long userId,
+        @Schema(description = "사용자가 입력한 원본 자연어 명령")
         String originalCommand,
+        @Schema(description = "현재 명령 세션 상태", example = "PRODUCT_SELECTION_REQUIRED")
         CommandSessionStatus status,
+        @Schema(description = "누락 또는 추가 확인이 필요한 필드 목록")
         List<String> missingFields,
+        @Schema(description = "클라이언트에 보여줄 보완 안내 메시지")
         String clarificationMessage,
+        @Schema(description = "추후 카테고리 경로 확장용 필드")
         String categoryPath,
+        @Schema(description = "현재 페이지(page,size)에 해당하는 후보 상품 목록")
         List<ProductCandidateResponse> candidates,
+        @Schema(description = "사용자가 선택한 상품 productId 목록")
         List<String> selectedProductIds,
+        @Schema(description = "실시간 검증/구매 판단 결과")
         SelectionValidationResultResponse validationResult,
+        @Schema(description = "명령 목표 가격", example = "100000")
         Integer targetPrice,
+        @Schema(description = "명령 의도", example = "AUTO_PURCHASE")
         String commandIntent,
+        @Schema(description = "세션에 저장된 목표 플랫폼", example = "NAVER")
         String platform,
+        @Schema(description = "세션 생성 시각")
         LocalDateTime createdAt,
+        @Schema(description = "세션 마지막 갱신 시각")
         LocalDateTime updatedAt
 ) {
     // Jackson ObjectMapper — JSON 파싱용 (spring-boot-starter-web 의존성으로 사용 가능)

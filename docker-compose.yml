@@ -89,6 +89,7 @@ services:
       - eureka-server
     environment:
       - EUREKA_SERVER_URL=http://eureka-server:8761/eureka/
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - AUTH_DB_URL=jdbc:postgresql://postgres:5432/auth_db
       - AUTH_DB_USERNAME=${AUTH_DB_USERNAME:-postgres}
       - AUTH_DB_PASSWORD=${AUTH_DB_PASSWORD:-password}
@@ -195,6 +196,8 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.4-mini}
       # OpenAI 모킹 모드: 기본값은 false(실제 API 호출). 필요 시 true로 설정하여 고정 데이터 반환
       - OPENAI_MOCK_ENABLED=${OPENAI_MOCK_ENABLED:-false}
+      # Gemini API 환경변수 (Vision Planner용)
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
 
 volumes:
   postgres_data:

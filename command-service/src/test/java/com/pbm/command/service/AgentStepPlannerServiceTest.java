@@ -11,6 +11,8 @@ import com.pbm.command.domain.CommandSession;
 import com.pbm.command.domain.CommandSessionStatus;
 import com.pbm.command.domain.ActionErrorCode;
 import com.pbm.command.domain.ActionExecutionStatus;
+import com.pbm.command.domain.PlatformConfig;
+import com.pbm.command.domain.PlatformType;
 import com.pbm.command.dto.request.AgentRunActionResultRequest;
 import com.pbm.command.dto.request.ScreenshotArtifactRequest;
 import com.pbm.command.dto.request.ToolResultRequest;
@@ -27,10 +29,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.lenient;
 
 /**
  * AgentStepPlannerService 단위 테스트.
@@ -46,18 +50,28 @@ class AgentStepPlannerServiceTest {
     @Mock
     private AiVisionPlannerClient aiVisionPlannerClient;
 
+    @Mock
+    private PlatformConfigService platformConfigService;
+
     private AgentStepPlannerService agentStepPlannerService;
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
-        agentStepPlannerService = new AgentStepPlannerService(aiDomPlannerClient, aiVisionPlannerClient);
+        PlatformConfig aliExpressConfig = new PlatformConfig(
+                PlatformType.ALIEXPRESS, "알리익스프레스", "aliexpress.com",
+                "https://www.aliexpress.com/wholesale?SearchText={keyword}",
+                true, false, "https://www.aliexpress.com/"
+        );
+        lenient().when(platformConfigService.findByPlatform(PlatformType.ALIEXPRESS)).thenReturn(Optional.of(aliExpressConfig));
+
+        agentStepPlannerService = new AgentStepPlannerService(aiDomPlannerClient, aiVisionPlannerClient, platformConfigService);
     }
 
     @Test
     @DisplayName("AliExpress 도메인이 아니면 NAVIGATE 액션을 반환한다")
     void planNextAction_returnsNavigateWhenOutsideAliExpress() {
         CommandSession commandSession = CommandSession.createSearching(1L, "무선 이어폰 검색");
-        given(aiDomPlannerClient.plan(any(), any(), any())).willThrow(new RuntimeException("fallback"));
+        lenient().when(aiDomPlannerClient.plan(any(), any(), any(), any(), any(), any())).thenThrow(new RuntimeException("fallback"));
         PageSnapshotRequest snapshot = new PageSnapshotRequest(
                 "https://www.google.com",
                 "Google",
@@ -66,6 +80,7 @@ class AgentStepPlannerServiceTest {
                 List.of(),
                 List.of(),
                 List.of(),
+                "",
                 LocalDateTime.now()
         );
 
@@ -79,15 +94,16 @@ class AgentStepPlannerServiceTest {
     @DisplayName("구매 버튼이 보이면 CLICK 액션을 반환한다")
     void planNextAction_returnsClickWhenPurchaseButtonExists() {
         CommandSession commandSession = CommandSession.createSearching(1L, "무선 이어폰 검색");
-        given(aiDomPlannerClient.plan(any(), any(), any())).willThrow(new RuntimeException("fallback"));
+        given(aiDomPlannerClient.plan(any(), any(), any(), any(), any(), any())).willThrow(new RuntimeException("fallback"));
         PageSnapshotRequest snapshot = new PageSnapshotRequest(
-                "https://www.aliexpress.com/item/1.html",
-                "상품 상세",
+                "https://www.aliexpress.com/wholesale?SearchText=test",
+                "검색결과",
                 "지금 구매 버튼 있음",
-                List.of(new InteractiveElementRequest("node-1", "button", "지금 구매", null, true, false)),
+                List.of(new InteractiveElementRequest("node-1", "button", "지금 구매", null, null, true, false)),
                 List.of(),
                 List.of(),
                 List.of(),
+                "",
                 LocalDateTime.now()
         );
 
@@ -233,7 +249,7 @@ class AgentStepPlannerServiceTest {
     @DisplayName("optionGroups에 명령문과 일치하는 옵션이 있으면 SELECT 액션을 반환한다")
     void planNextAction_returnsSelectForMatchingOptionGroup() {
         CommandSession commandSession = CommandSession.createSearching(1L, "검정색 270 사이즈 운동화 구매");
-        given(aiDomPlannerClient.plan(any(), any(), any())).willThrow(new RuntimeException("fallback"));
+        given(aiDomPlannerClient.plan(any(), any(), any(), any(), any(), any())).willThrow(new RuntimeException("fallback"));
         PageSnapshotRequest snapshot = new PageSnapshotRequest(
                 "https://www.aliexpress.com/item/1.html",
                 "상품 상세",
@@ -245,6 +261,7 @@ class AgentStepPlannerServiceTest {
                 ),
                 List.of(),
                 List.of(),
+                "",
                 LocalDateTime.now()
         );
 
@@ -263,13 +280,14 @@ class AgentStepPlannerServiceTest {
                 "https://www.aliexpress.com/item/1.html",
                 "상품 상세",
                 "구매 버튼 있음",
-                List.of(new InteractiveElementRequest("node-1", "button", "지금 구매", null, true, false)),
+                List.of(new InteractiveElementRequest("node-1", "button", "지금 구매", null, null, true, false)),
                 List.of(),
                 List.of(),
                 List.of(),
+                "",
                 LocalDateTime.now()
         );
-        given(aiDomPlannerClient.plan(any(), any(), any())).willReturn(
+        given(aiDomPlannerClient.plan(any(), any(), any(), any(), any(), any())).willReturn(
                 new DomPlannerInstructionPayload(
                         "CLICK",
                         new DomPlannerInstructionPayload.PlannerTargetPayload("node-1", "button", "지금 구매", null),
@@ -290,16 +308,17 @@ class AgentStepPlannerServiceTest {
     void planNextAction_fallsBackWhenAiConfidenceTooLow() {
         CommandSession commandSession = CommandSession.createSearching(1L, "무선 이어폰 검색");
         PageSnapshotRequest snapshot = new PageSnapshotRequest(
-                "https://www.aliexpress.com/item/1.html",
-                "상품 상세",
+                "https://www.aliexpress.com/wholesale?SearchText=test",
+                "검색결과",
                 "구매 버튼 있음",
-                List.of(new InteractiveElementRequest("node-1", "button", "지금 구매", null, true, false)),
+                List.of(new InteractiveElementRequest("node-1", "button", "지금 구매", null, null, true, false)),
                 List.of(),
                 List.of(),
                 List.of(),
+                "",
                 LocalDateTime.now()
         );
-        given(aiDomPlannerClient.plan(any(), any(), any())).willReturn(
+        given(aiDomPlannerClient.plan(any(), any(), any(), any(), any(), any())).willReturn(
                 new DomPlannerInstructionPayload(
                         "WAIT",
                         null,
@@ -327,9 +346,10 @@ class AgentStepPlannerServiceTest {
                 List.of(),
                 List.of(),
                 List.of(),
+                "",
                 LocalDateTime.now()
         );
-        given(aiDomPlannerClient.plan(any(), any(), any())).willReturn(
+        given(aiDomPlannerClient.plan(any(), any(), any(), any(), any(), any())).willReturn(
                 new DomPlannerInstructionPayload(
                         "SCROLL",
                         null,
@@ -357,6 +377,7 @@ class AgentStepPlannerServiceTest {
                 List.of(),
                 List.of(),
                 List.of(),
+                "",
                 LocalDateTime.now()
         );
         AgentRunActionResultRequest previousActionResult = new AgentRunActionResultRequest(

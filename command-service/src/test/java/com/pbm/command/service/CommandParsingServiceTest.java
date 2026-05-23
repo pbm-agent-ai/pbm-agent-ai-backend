@@ -61,8 +61,10 @@ class CommandParsingServiceTest {
         assertThat(response.parsedCommand().productCategory()).isEqualTo(ProductCategory.SHOES);
         assertThat(response.parsedCommand().productName()).isEqualTo("나이키 조던");
         assertThat(response.parsedCommand().maxPrice()).isEqualTo(200000);
-        assertThat(response.missingRequiredFields()).containsExactly("size", "platform");
-        assertThat(response.ambiguousFields()).containsExactly("color", "model");
+        // PLATFORM은 requiredFields에서 제거됨 → size만 필수 누락
+        assertThat(response.missingRequiredFields()).containsExactly("size");
+        // AUTO_PURCHASE 시 platform, color가 모호 필드; "나이키 조던" (2토큰) → model도 추가
+        assertThat(response.ambiguousFields()).containsExactly("platform", "color", "model");
         assertThat(response.needsClarification()).isTrue();
     }
 
@@ -80,7 +82,7 @@ class CommandParsingServiceTest {
                                 "15 프로 256GB",
                                 null,
                                 null,
-                                PlatformType.NAVER,
+                                java.util.List.of(PlatformType.NAVER),
                                 1400000,
                                 null,
                                 "KRW"
@@ -115,7 +117,7 @@ class CommandParsingServiceTest {
                                 null,
                                 null,
                                 "210ml 30개",
-                                PlatformType.NAVER,
+                                java.util.List.of(PlatformType.NAVER),
                                 50000,
                                 null,
                                 "KRW"

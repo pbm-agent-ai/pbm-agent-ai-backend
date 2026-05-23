@@ -24,22 +24,24 @@ public class CommandFieldPolicyService {
             List.of()
     );
 
-    // 카테고리별 정책: PLATFORM은 이제 필수 필드로 승격되었다.
+    // 카테고리별 정책:
+    // PLATFORM은 필수 필드에서 제외한다. 빈 platforms = 전체 플랫폼 대상 검색으로 허용한다.
+    // AUTO_PURCHASE 시에는 특정 플랫폼을 명시해야 하므로 autoPurchaseClarificationFields에 유지한다.
     // COLOR는 자동 결제 시 여전히 추가 확인이 필요한 모호 필드로 남는다.
     private static final Map<ProductCategory, CategoryFieldPolicy> CATEGORY_POLICIES = Map.of(
             ProductCategory.SHOES, new CategoryFieldPolicy(
-                    List.of(CommandFieldType.PRODUCT_NAME, CommandFieldType.MAX_PRICE, CommandFieldType.SIZE, CommandFieldType.PLATFORM),
-                    List.of(CommandFieldType.COLOR),
+                    List.of(CommandFieldType.PRODUCT_NAME, CommandFieldType.MAX_PRICE, CommandFieldType.SIZE),
+                    List.of(CommandFieldType.PLATFORM, CommandFieldType.COLOR),
                     List.of(CommandFieldType.MODEL)
             ),
             ProductCategory.ELECTRONICS, new CategoryFieldPolicy(
-                    List.of(CommandFieldType.PRODUCT_NAME, CommandFieldType.MAX_PRICE, CommandFieldType.PLATFORM, CommandFieldType.COLOR),
-                    List.of(),
+                    List.of(CommandFieldType.PRODUCT_NAME, CommandFieldType.MAX_PRICE, CommandFieldType.COLOR),
+                    List.of(CommandFieldType.PLATFORM),
                     List.of()
             ),
             ProductCategory.APPAREL, new CategoryFieldPolicy(
-                    List.of(CommandFieldType.PRODUCT_NAME, CommandFieldType.MAX_PRICE, CommandFieldType.SIZE, CommandFieldType.PLATFORM),
-                    List.of(CommandFieldType.COLOR),
+                    List.of(CommandFieldType.PRODUCT_NAME, CommandFieldType.MAX_PRICE, CommandFieldType.SIZE),
+                    List.of(CommandFieldType.PLATFORM, CommandFieldType.COLOR),
                     List.of()
             )
     );

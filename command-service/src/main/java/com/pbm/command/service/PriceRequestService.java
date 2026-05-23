@@ -1,5 +1,6 @@
 package com.pbm.command.service;
 
+import com.pbm.command.domain.PlatformType;
 import com.pbm.command.dto.event.ParsedCommandSnapshot;
 import com.pbm.command.dto.event.PriceRequestEvent;
 import com.pbm.command.dto.event.PriceRequestEventPayload;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -85,16 +87,20 @@ public class PriceRequestService {
     }
 
     /**
-     * 자연어 파싱 결과를 바탕으로 가격 확인 요청을 Kafka로 발행한다.
+     * 자연어 파싱 결과를 바탕으로 플랫폼별 가격 확인 요청을 Kafka로 발행한다.
      * <p>
-     * 외부에서 전달받은 commandId를 그대로 사용하여 이벤트 페이로드에 포함시킨다.
-     * keyword는 기존과 동일하게 buildKeyword로 조합한다.
+     * platforms가 비어있거나 null이면 지원하는 모든 플랫폼을 대상으로 각각 발행한다.
+     * 사용자가 여러 플랫폼을 지정하면 지정된 플랫폼 수만큼 이벤트를 발행하여 병렬 가격 비교를 지원한다.
+     * <p>
+     * 예: platforms=[NAVER, ALIEXPRESS] → price-topic에 2개 이벤트 발행
+     *     platforms=[]                  → 전체 플랫폼(NAVER, ALIEXPRESS) 대상 2개 이벤트 발행
+     *     platforms=[NAVER]             → 1개 이벤트 발행
      *
      * @param userId        요청 사용자 ID
      * @param intent        사용자 의도 (CommandIntent name 문자열)
      * @param parsedCommand GPT가 추출한 구조화 결과
      * @param commandId     명령 고유 식별자 (UUID, 세션에서 생성된 값 재사용)
-     * @return 발행 결과 응답 DTO
+     * @return 첫 번째 발행 이벤트의 결과 응답 DTO
      */
     public PriceCheckResponse publishParsedCommandRequest(Long userId, String intent, ParsedCommand parsedCommand, String commandId) {
 
@@ -102,52 +108,63 @@ public class PriceRequestService {
         // ex) productName="나이키 조던" + color="블랙" + size="270"  → "나이키 조던 블랙 270"
         String keyword = buildKeyword(parsedCommand);
 
-        // ParsedCommandSnapshot 구성 (enum은 name 문자열로 평탄화)
-        ParsedCommandSnapshot snapshot = new ParsedCommandSnapshot(
-                parsedCommand.productCategory() != null ? parsedCommand.productCategory().name() : null,
-                parsedCommand.productName(),
-                parsedCommand.brand(),
-                parsedCommand.line(),
-                parsedCommand.model(),
-                parsedCommand.color(),
-                parsedCommand.size(),
-                parsedCommand.platform() != null ? parsedCommand.platform().name() : null,
-                parsedCommand.maxPrice(),
-                parsedCommand.minPrice(),
-                parsedCommand.currency(),
-                null, // productUrl — Phase 1 준비, 후순위
-                null, // searchKeyword — Phase 1 준비, 후순위
-                parsedCommand.searchCategoryHint()
-        );
+        // platforms가 null 또는 비어있으면 전체 플랫폼 대상으로 확장
+        List<PlatformType> targetPlatforms = (parsedCommand.platforms() == null || parsedCommand.platforms().isEmpty())
+                ? Arrays.asList(PlatformType.values())
+                : parsedCommand.platforms();
 
-        String eventId = UUID.randomUUID().toString();
+        String firstEventId = null;
 
-        PriceRequestEvent event = new PriceRequestEvent(
-                eventId,
-                "PRICE_CHECK_REQUEST",
-                Instant.now(),
-                "command-service",
-                new PriceRequestEventPayload(
-                        userId,
-                        keyword,
-                        parsedCommand.maxPrice(),
-                        parsedCommand.platform() != null ? parsedCommand.platform().name() : null,
-                        parsedCommand.currency(),
-                        commandId,
-                        intent,
-                        snapshot,
-                        null, // productUrl — Phase 1 준비, 후순위
-                        null, // searchKeyword — Phase 1 준비, 후순위
-                        null  // productUrls — Phase 2 준비, 후순위
-                )
-        );
+        // 플랫폼별로 각각 Kafka 이벤트 발행 → price-service에서 병렬 처리
+        for (PlatformType platform : targetPlatforms) {
+            // 플랫폼별 스냅샷 구성 (platform 필드는 각 이벤트별로 단건 설정)
+            ParsedCommandSnapshot snapshot = new ParsedCommandSnapshot(
+                    parsedCommand.productCategory() != null ? parsedCommand.productCategory().name() : null,
+                    parsedCommand.productName(),
+                    parsedCommand.brand(),
+                    parsedCommand.line(),
+                    parsedCommand.model(),
+                    parsedCommand.color(),
+                    parsedCommand.size(),
+                    platform.name(),
+                    parsedCommand.maxPrice(),
+                    parsedCommand.minPrice(),
+                    parsedCommand.currency(),
+                    null, // productUrl — Phase 1 준비, 후순위
+                    null, // searchKeyword — Phase 1 준비, 후순위
+                    parsedCommand.searchCategoryHint()
+            );
 
-        kafkaTemplate.send(priceTopic, String.valueOf(userId), event);
+            String eventId = UUID.randomUUID().toString();
+            if (firstEventId == null) firstEventId = eventId;
+
+            PriceRequestEvent event = new PriceRequestEvent(
+                    eventId,
+                    "PRICE_CHECK_REQUEST",
+                    Instant.now(),
+                    "command-service",
+                    new PriceRequestEventPayload(
+                            userId,
+                            keyword,
+                            parsedCommand.maxPrice(),
+                            platform.name(),
+                            parsedCommand.currency(),
+                            commandId,
+                            intent,
+                            snapshot,
+                            null, // productUrl — Phase 1 준비, 후순위
+                            null, // searchKeyword — Phase 1 준비, 후순위
+                            null  // productUrls — Phase 2 준비, 후순위
+                    )
+            );
+
+            kafkaTemplate.send(priceTopic, String.valueOf(userId), event);
+        }
 
         return new PriceCheckResponse(
-                eventId,
+                firstEventId != null ? firstEventId : UUID.randomUUID().toString(),
                 priceTopic,
-                "price-topic 발행 성공"
+                "price-topic 발행 성공 (플랫폼 수: " + targetPlatforms.size() + ")"
         );
     }
 

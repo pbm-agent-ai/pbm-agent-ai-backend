@@ -203,7 +203,7 @@ class CommandSessionControllerTest {
                         null,
                         null,
                         "270",
-                        PlatformType.NAVER,
+                        java.util.List.of(PlatformType.NAVER),
                         null,
                         null,
                         "KRW"
@@ -226,7 +226,7 @@ class CommandSessionControllerTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.intent").value("PRICE_CHECK"))
                 .andExpect(jsonPath("$.data.parsedCommand.size").value("270"))
-                .andExpect(jsonPath("$.data.parsedCommand.platform").value("NAVER"))
+                .andExpect(jsonPath("$.data.parsedCommand.platforms[0]").value("NAVER"))
                 .andExpect(jsonPath("$.data.needsClarification").value(false))
                 .andExpect(jsonPath("$.message").value("성공"));
     }

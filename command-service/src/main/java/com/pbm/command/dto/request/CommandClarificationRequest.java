@@ -1,5 +1,7 @@
 package com.pbm.command.dto.request;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import java.util.Collections;
 import java.util.Map;
 import java.util.TreeMap;
@@ -18,8 +20,11 @@ import java.util.stream.Collectors;
  *       현재 MVP 재파싱 플로우에 사용한다.
  * 연관: CommandSessionController, CommandExecutionService.
  */
+@Schema(description = "명령 보완 입력 요청 DTO")
 public record CommandClarificationRequest(
+        @Schema(description = "사용자 자유 텍스트 보완 입력", example = "productCategory는 탄산음료야")
         String clarificationInput,          // 사용자 자유 텍스트 추가 입력 (nullable, e.g. "검은색 270mm")
+        @Schema(description = "필드별 구조화 답변 맵", example = "{\"productCategory\":\"BEVERAGE\",\"color\":\"black\"}")
         Map<String, String> answers         // 구조화된 필드별 답변 맵 (nullable, e.g. {"size":"270","platform":"NAVER"})
 ) {
     public CommandClarificationRequest {

@@ -14,6 +14,7 @@ import com.pbm.command.dto.request.ProductUrlSubmitRequest;
 import com.pbm.command.dto.request.ProductSelectionRequest;
 import com.pbm.command.dto.response.CommandParseResponse;
 import com.pbm.command.dto.response.CommandSessionResponse;
+import com.pbm.command.dto.response.ParsedCommand;
 import com.pbm.command.exception.InvalidProductSelectionException;
 import com.pbm.command.publisher.ProductSelectionEventPublisher;
 import org.slf4j.Logger;
@@ -80,12 +81,11 @@ public class CommandExecutionService {
             log.info("파싱 결과 추가 확인 불필요 - userId: {} 즉시 가격 요청 발행", userId);
 
             // SEARCHING 세션 생성 및 commandId 확보
+            // 멀티 플랫폼 지원: 세션에는 첫 번째 플랫폼만 저장 (다중 선택 시 대표값)
             CommandSessionResponse sessionResponse = commandSessionService.createSearchingSession(
                     userId,
                     request.commandText(),
-                    response.parsedCommand() == null || response.parsedCommand().platform() == null
-                            ? null
-                            : response.parsedCommand().platform().name());
+                    resolvePrimaryPlatform(response.parsedCommand()));
             String commandId = sessionResponse.commandId();
 
             // 확보한 commandId를 Kafka 이벤트에 포함시켜 발행
@@ -115,9 +115,7 @@ public class CommandExecutionService {
                     request.commandText(),
                     response.missingRequiredFields(),
                     buildClarificationMessage(response),
-                    response.parsedCommand() == null || response.parsedCommand().platform() == null
-                            ? null
-                            : response.parsedCommand().platform().name()
+                    resolvePrimaryPlatform(response.parsedCommand())
             );
             String commandId = sessionResponse.commandId();
 
@@ -184,9 +182,7 @@ public class CommandExecutionService {
                     commandId,
                     response.missingRequiredFields(),
                     buildClarificationMessage(response),
-                    response.parsedCommand() == null || response.parsedCommand().platform() == null
-                            ? null
-                            : response.parsedCommand().platform().name()
+                    resolvePrimaryPlatform(response.parsedCommand())
             );
 
             return new CommandParseResponse(
@@ -208,9 +204,7 @@ public class CommandExecutionService {
             // 상태를 SEARCHING으로 전환하면서 parse 결과 플랫폼도 세션에 저장한다.
             commandSessionService.updateToSearching(
                     commandId,
-                    response.parsedCommand() == null || response.parsedCommand().platform() == null
-                            ? null
-                            : response.parsedCommand().platform().name()
+                    resolvePrimaryPlatform(response.parsedCommand())
             );
 
             // 기존 발행 플로우 재사용 (세션의 commandId를 그대로 재사용)
@@ -339,6 +333,24 @@ public class CommandExecutionService {
         );
 
         return commandSessionService.getByCommandId(commandId);
+    }
+
+    /**
+     * 멀티 플랫폼 목록에서 대표 플랫폼(첫 번째)을 String으로 추출한다.
+     *
+     * 세션에는 단일 플랫폼 문자열을 저장하므로, 여러 플랫폼이 있으면 첫 번째 플랫폼을 대표값으로 사용한다.
+     * platforms가 null이거나 비어있으면 null을 반환한다 (세션 platform = null = 전체 플랫폼 대상).
+     *
+     * @param parsedCommand GPT가 추출한 구조화 결과 (null 허용)
+     * @return 대표 플랫폼 이름 문자열 또는 null
+     */
+    private String resolvePrimaryPlatform(ParsedCommand parsedCommand) {
+        if (parsedCommand == null
+                || parsedCommand.platforms() == null
+                || parsedCommand.platforms().isEmpty()) {
+            return null;
+        }
+        return parsedCommand.platforms().get(0).name();
     }
 
     private String resolvePlatform(List<ProductCandidateDto> candidates) {

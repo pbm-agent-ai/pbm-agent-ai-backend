@@ -16,6 +16,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -76,7 +77,7 @@ class PriceRequestServiceTest {
         assertThat(event.payload().productUrls()).isNull();
 
         assertThat(response.topic()).isEqualTo("price-topic");
-        assertThat(response.message()).isEqualTo("price-topic 발행 성공");
+        assertThat(response.message()).startsWith("price-topic 발행 성공");
         assertThat(response.eventId()).isNotBlank();
     }
 
@@ -112,7 +113,7 @@ class PriceRequestServiceTest {
                 "https://ko.aliexpress.com/item/1005006782975346.html",
                 "https://ko.aliexpress.com/item/1005010633549414.html"
         );
-        assertThat(response.message()).isEqualTo("price-topic 발행 성공");
+        assertThat(response.message()).startsWith("price-topic 발행 성공");
     }
 
     @Test
@@ -128,7 +129,7 @@ class PriceRequestServiceTest {
                 null,
                 "블랙",
                 "270",
-                PlatformType.NAVER,
+                List.of(PlatformType.NAVER),
                 200000,
                 null,
                 "KRW"
@@ -140,7 +141,7 @@ class PriceRequestServiceTest {
         PriceCheckResponse response = priceRequestService.publishParsedCommandRequest(
                 1L, "PRICE_CHECK", parsedCommand, commandId);
 
-        // then
+        // then — platforms=[NAVER] 이므로 1번 발행
         ArgumentCaptor<PriceRequestEvent> eventCaptor = ArgumentCaptor.forClass(PriceRequestEvent.class);
         verify(kafkaTemplate).send(eq("price-topic"), eq("1"), eventCaptor.capture());
 
@@ -173,7 +174,7 @@ class PriceRequestServiceTest {
         assertThat(snapshot.searchCategoryHint()).isNull();
 
         assertThat(response.topic()).isEqualTo("price-topic");
-        assertThat(response.message()).isEqualTo("price-topic 발행 성공");
+        assertThat(response.message()).startsWith("price-topic 발행 성공");
     }
 
     @Test
@@ -189,7 +190,7 @@ class PriceRequestServiceTest {
                 "256GB",
                 null,
                 null,
-                PlatformType.NAVER,
+                List.of(PlatformType.NAVER),
                 1400000,
                 null,
                 "KRW"
@@ -222,7 +223,7 @@ class PriceRequestServiceTest {
                 null,
                 "black",
                 null,
-                PlatformType.ALIEXPRESS,
+                List.of(PlatformType.ALIEXPRESS),
                 100000,
                 null,
                 "KRW",
@@ -257,7 +258,7 @@ class PriceRequestServiceTest {
                 "T13 PRO",
                 "블랙",
                 null,
-                PlatformType.ALIEXPRESS,
+                List.of(PlatformType.ALIEXPRESS),
                 50000,
                 null,
                 "KRW"
@@ -293,7 +294,7 @@ class PriceRequestServiceTest {
                 "3S",
                 "black",
                 null,
-                PlatformType.ALIEXPRESS,
+                List.of(PlatformType.ALIEXPRESS),
                 100000,
                 null,
                 "KRW"

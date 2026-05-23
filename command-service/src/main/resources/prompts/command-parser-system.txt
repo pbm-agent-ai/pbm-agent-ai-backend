@@ -9,9 +9,12 @@
 {{intents}}
 5. productCategory는 반드시 아래 중 하나만 반환하라:
 {{categories}}
-6. platform은 반드시 아래 중 하나만 반환하라:
+6. platforms는 배열로 반환하라. 각 값은 반드시 아래 중 하나만 사용하라:
 {{platforms}}
-7. 지원하지 않는 플랫폼(예: COUPANG)은 절대 임의로 매핑하지 말고 null을 반환하라.
+   - 사용자가 여러 플랫폼을 언급하면 모두 포함하라. 예: ["NAVER", "ALIEXPRESS"]
+   - 플랫폼이 명시되지 않았으면 빈 배열 []을 반환하라. (빈 배열 = 전체 플랫폼 대상)
+   - null 대신 빈 배열을 사용하라.
+7. 지원하지 않는 플랫폼(예: COUPANG)은 절대 임의로 매핑하지 말고 배열에서 제외하라.
 8. currency는 금액이 원화 문맥이면 KRW, 불명확하면 null을 반환하라.
 9. maxPrice와 minPrice는 숫자(Integer)로 반환하라.
    한국어 숫자 단위를 반드시 정확하게 변환하라:
@@ -48,7 +51,7 @@
     "model": null,
     "color": null,
     "size": null,
-    "platform": null,
+    "platforms": [],
     "maxPrice": 200000,
     "minPrice": null,
     "currency": "KRW",

@@ -35,6 +35,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -192,7 +193,7 @@ class CommandExecutionServiceTest {
                 null,
                 null,
                 "210ml 30개",
-                PlatformType.NAVER,
+                java.util.List.of(PlatformType.NAVER),
                 50000,
                 null,
                 "KRW"
@@ -263,11 +264,12 @@ class CommandExecutionServiceTest {
         // then
         assertThat(actual.commandId()).isEqualTo(commandId);
         assertThat(actual.needsClarification()).isTrue();
-        // updateToPreSearchClarification이 호출되었는지 확인
+        // updateToPreSearchClarification이 호출되었는지 확인 (4-param overload, platform=null)
         verify(commandSessionService).updateToPreSearchClarification(
                 eq(commandId),
                 eq(List.of("size", "platform")),
-                anyString()
+                anyString(),
+                isNull()
         );
         // 발행은 일어나지 않아야 함
         verify(priceRequestService, never()).publishParsedCommandRequest(anyLong(), anyString(), any(), anyString());
@@ -325,8 +327,8 @@ class CommandExecutionServiceTest {
         assertThat(actual.needsClarification()).isFalse();
         // 세션 originalCommand가 병합되었는지 확인
         assertThat(session.getOriginalCommand()).isEqualTo("나이키 에어맥스 검은색 270");
-        // 세션 상태가 SEARCHING으로 변경되었는지 확인
-        assertThat(session.getStatus()).isEqualTo(CommandSessionStatus.SEARCHING);
+        // updateToSearching이 platform=null로 호출되었는지 확인 (parsedCommand.platform이 null이므로)
+        verify(commandSessionService).updateToSearching(eq(commandId), isNull());
         // 가격 요청이 세션의 commandId로 발행되었는지 확인
         verify(priceRequestService).publishParsedCommandRequest(1L, "PRICE_CHECK", parsedCommand, commandId);
         // updateToPreSearchClarification은 호출되지 않아야 함
@@ -358,13 +360,13 @@ class CommandExecutionServiceTest {
         );
 
         given(commandSessionService.getSessionEntityByCommandId(commandId)).willReturn(session);
-        given(commandSessionService.updateToSearching(commandId)).willReturn(searchingResponse);
+        given(commandSessionService.updateToSearching(eq(commandId), isNull())).willReturn(searchingResponse);
         given(commandSessionService.getByCommandId(commandId)).willReturn(searchingResponse);
 
         CommandSessionResponse response = commandExecutionService.handleProductUrlSubmission(commandId, request);
 
         assertThat(response.status()).isEqualTo(CommandSessionStatus.SEARCHING);
-        verify(commandSessionService).updateToSearching(commandId);
+        verify(commandSessionService).updateToSearching(eq(commandId), isNull());
         verify(priceRequestService).publishProductUrlRequest(
                 eq(1L),
                 eq("AUTO_PURCHASE"),
@@ -403,7 +405,7 @@ class CommandExecutionServiceTest {
                 null,
                 null,
                 "270",
-                PlatformType.NAVER,
+                java.util.List.of(PlatformType.NAVER),
                 null,
                 null,
                 "KRW"
@@ -429,7 +431,8 @@ class CommandExecutionServiceTest {
         assertThat(actual.needsClarification()).isFalse();
         // mergedText = "나이키 에어맥스 platform: NAVER, size: 270" (TreeMap으로 key 정렬되어 platform이 size보다 먼저)
         assertThat(session.getOriginalCommand()).isEqualTo("나이키 에어맥스 platform: NAVER, size: 270");
-        assertThat(session.getStatus()).isEqualTo(CommandSessionStatus.SEARCHING);
+        // updateToSearching이 platform=NAVER로 호출되었는지 확인 (parsedCommand.platform이 NAVER이므로)
+        verify(commandSessionService).updateToSearching(eq(commandId), eq("NAVER"));
         verify(priceRequestService).publishParsedCommandRequest(1L, "PRICE_CHECK", parsedCommand, commandId);
         verify(commandSessionService, never()).updateToPreSearchClarification(anyString(), anyList(), anyString());
     }

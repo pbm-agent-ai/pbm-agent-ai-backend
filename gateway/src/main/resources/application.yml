@@ -74,42 +74,112 @@ spring:
             - Path=/api/v1/notification/**
 
         # ─── Swagger UI 라우팅 (개발용) ──────────────────────
-        - id: auth-service-swagger
+        - id: auth-service-swagger-ui
           uri: lb://auth-service
           predicates:
-            - Path=/auth-service/swagger-ui.html, /auth-service/swagger-ui/**, /auth-service/v3/api-docs/**
+            - Path=/auth-service/swagger-ui/**
+          filters:
+            - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /auth-service
+        - id: auth-service-swagger-html
+          uri: lb://auth-service
+          predicates:
+            - Path=/auth-service/swagger-ui.html
+          filters:
+            - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /auth-service
+        - id: auth-service-api-docs
+          uri: lb://auth-service
+          predicates:
+            - Path=/auth-service/v3/api-docs/**
           filters:
             - StripPrefix=1
             - AddRequestHeader=X-Forwarded-Prefix, /auth-service
 
-        - id: command-service-swagger
+        - id: command-service-swagger-ui
           uri: lb://command-service
           predicates:
-            - Path=/command-service/swagger-ui.html, /command-service/swagger-ui/**, /command-service/v3/api-docs/**
+            - Path=/command-service/swagger-ui/**
+          filters:
+            - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /command-service
+        - id: command-service-swagger-html
+          uri: lb://command-service
+          predicates:
+            - Path=/command-service/swagger-ui.html
+          filters:
+            - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /command-service
+        - id: command-service-api-docs
+          uri: lb://command-service
+          predicates:
+            - Path=/command-service/v3/api-docs/**
           filters:
             - StripPrefix=1
             - AddRequestHeader=X-Forwarded-Prefix, /command-service
 
-        - id: price-service-swagger
+        - id: price-service-swagger-ui
           uri: lb://price-service
           predicates:
-            - Path=/price-service/swagger-ui.html, /price-service/swagger-ui/**, /price-service/v3/api-docs/**
+            - Path=/price-service/swagger-ui/**
+          filters:
+            - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /price-service
+        - id: price-service-swagger-html
+          uri: lb://price-service
+          predicates:
+            - Path=/price-service/swagger-ui.html
+          filters:
+            - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /price-service
+        - id: price-service-api-docs
+          uri: lb://price-service
+          predicates:
+            - Path=/price-service/v3/api-docs/**
           filters:
             - StripPrefix=1
             - AddRequestHeader=X-Forwarded-Prefix, /price-service
 
-        - id: payment-service-swagger
+        - id: payment-service-swagger-ui
           uri: lb://payment-service
           predicates:
-            - Path=/payment-service/swagger-ui.html, /payment-service/swagger-ui/**, /payment-service/v3/api-docs/**
+            - Path=/payment-service/swagger-ui/**
+          filters:
+            - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /payment-service
+        - id: payment-service-swagger-html
+          uri: lb://payment-service
+          predicates:
+            - Path=/payment-service/swagger-ui.html
+          filters:
+            - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /payment-service
+        - id: payment-service-api-docs
+          uri: lb://payment-service
+          predicates:
+            - Path=/payment-service/v3/api-docs/**
           filters:
             - StripPrefix=1
             - AddRequestHeader=X-Forwarded-Prefix, /payment-service
 
-        - id: notification-service-swagger
+        - id: notification-service-swagger-ui
           uri: lb://notification-service
           predicates:
-            - Path=/notification-service/swagger-ui.html, /notification-service/swagger-ui/**, /notification-service/v3/api-docs/**
+            - Path=/notification-service/swagger-ui/**
+          filters:
+            - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /notification-service
+        - id: notification-service-swagger-html
+          uri: lb://notification-service
+          predicates:
+            - Path=/notification-service/swagger-ui.html
+          filters:
+            - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /notification-service
+        - id: notification-service-api-docs
+          uri: lb://notification-service
+          predicates:
+            - Path=/notification-service/v3/api-docs/**
           filters:
             - StripPrefix=1
             - AddRequestHeader=X-Forwarded-Prefix, /notification-service

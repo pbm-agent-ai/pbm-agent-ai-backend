@@ -73,6 +73,42 @@ spring:
           predicates:
             - Path=/api/v1/notification/**
 
+        # ─── Swagger UI 라우팅 (개발용) ──────────────────────
+        - id: auth-service-swagger
+          uri: lb://auth-service
+          predicates:
+            - Path=/auth-service/swagger-ui.html, /auth-service/swagger-ui/**, /auth-service/v3/api-docs/**
+          filters:
+            - StripPrefix=1
+
+        - id: command-service-swagger
+          uri: lb://command-service
+          predicates:
+            - Path=/command-service/swagger-ui.html, /command-service/swagger-ui/**, /command-service/v3/api-docs/**
+          filters:
+            - StripPrefix=1
+
+        - id: price-service-swagger
+          uri: lb://price-service
+          predicates:
+            - Path=/price-service/swagger-ui.html, /price-service/swagger-ui/**, /price-service/v3/api-docs/**
+          filters:
+            - StripPrefix=1
+
+        - id: payment-service-swagger
+          uri: lb://payment-service
+          predicates:
+            - Path=/payment-service/swagger-ui.html, /payment-service/swagger-ui/**, /payment-service/v3/api-docs/**
+          filters:
+            - StripPrefix=1
+
+        - id: notification-service-swagger
+          uri: lb://notification-service
+          predicates:
+            - Path=/notification-service/swagger-ui.html, /notification-service/swagger-ui/**, /notification-service/v3/api-docs/**
+          filters:
+            - StripPrefix=1
+
 eureka:
   client:
     service-url:

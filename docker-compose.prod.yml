@@ -134,6 +134,12 @@ services:
       - PAYMENT_DB_URL=jdbc:postgresql://postgres:5432/payment_db
       - PAYMENT_DB_USERNAME=${PAYMENT_DB_USERNAME:-postgres}
       - PAYMENT_DB_PASSWORD=${PAYMENT_DB_PASSWORD}
+      # 블록체인 연동
+      - SEPOLIA_RPC_URL=${SEPOLIA_RPC_URL}
+      - BLOCKCHAIN_PRIVATE_KEY=${BLOCKCHAIN_PRIVATE_KEY}
+      - CONTRACT_ACCOUNT_FACTORY=${CONTRACT_ACCOUNT_FACTORY}
+      - CONTRACT_PBM_TOKEN=${CONTRACT_PBM_TOKEN}
+      - CONTRACT_PAYMASTER=${CONTRACT_PAYMASTER}
     restart: unless-stopped
 
   # ─── 알림 서비스 ──────────────────────────────────────────

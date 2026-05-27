@@ -5,6 +5,9 @@ dependencies {
     // Eureka Server에 자신의 존재를 등록하고, 다른 MSA 주소를 찾기 위한 클라이언트 모듈
     implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
 
+    // Web3j: Java ↔ 블록체인(Ethereum/Sepolia) 통신 라이브러리
+    implementation 'org.web3j:core:4.9.8'
+
     // JPA 테스트 시 메모리 DB(H2)를 사용하여 실제 DB 없이도 저장 로직 검증 가능
     testRuntimeOnly 'com.h2database:h2'
 }

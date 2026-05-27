@@ -49,3 +49,15 @@ eureka:
     fetch-registry: true
   instance:
     prefer-ip-address: true
+
+# 블록체인(Sepolia 테스트넷) 연동 설정
+blockchain:
+  # Alchemy Sepolia RPC URL
+  rpc-url: ${SEPOLIA_RPC_URL:https://eth-sepolia.g.alchemy.com/v2/your-api-key}
+  # AI 에이전트 개인키 (트랜잭션 서명용, 절대 하드코딩 금지)
+  private-key: ${BLOCKCHAIN_PRIVATE_KEY}
+  # 컨트랙트 주소
+  contract:
+    account-factory: ${CONTRACT_ACCOUNT_FACTORY:0x6477a82Ba2C7a02c3D59f4253347A0b9d82FC290}
+    pbm-token: ${CONTRACT_PBM_TOKEN:0x810C61F02649b910250DB083a2cDc470cDa977c0}
+    paymaster: ${CONTRACT_PAYMASTER:0xc6e25230E03378ecc5398E3De4EC444B98bBB032}

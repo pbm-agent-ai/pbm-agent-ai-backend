@@ -159,7 +159,7 @@ jobs:
       - name: external-api-service 이미지 빌드 & Push
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./external-api-service
           file: external-api-service/Dockerfile
           push: true
           tags: ${{ env.DOCKERHUB_USERNAME }}/pbm-external-api-service:latest

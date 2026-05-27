@@ -111,7 +111,7 @@ class MonitoringSubscriptionRepositoryTest {
                 "https://example.com/product/1", "테스트 상품",
                 BigDecimal.valueOf(50000), "키워드", BigDecimal.valueOf(45000),
                 CurrencyType.KRW, "PRICE_TRACK", MonitoringSubscriptionStatus.ACTIVE,
-                0, 10
+                0, 10, null
         );
         MonitoringSubscription saved = repository.save(subscription);
 
@@ -141,7 +141,7 @@ class MonitoringSubscriptionRepositoryTest {
                 1L, UUID.randomUUID().toString(), Platform.NAVER, "prod-due",
                 null, null, null, null, null,
                 CurrencyType.KRW, null, MonitoringSubscriptionStatus.ACTIVE,
-                0, 10
+                0, 10, null
         );
         dueSub.markChecked(Instant.now().minusSeconds(3600)); // 1시간 전 수집 -> nextCheckAt 과거
         repository.save(dueSub);
@@ -151,7 +151,7 @@ class MonitoringSubscriptionRepositoryTest {
                 2L, UUID.randomUUID().toString(), Platform.ALIEXPRESS, "prod-future",
                 null, null, null, null, null,
                 CurrencyType.USD, null, MonitoringSubscriptionStatus.ACTIVE,
-                0, 10
+                0, 10, null
         );
         futureSub.markChecked(Instant.now()); // 방금 수집 -> nextCheckAt 미래
         repository.save(futureSub);
@@ -161,7 +161,7 @@ class MonitoringSubscriptionRepositoryTest {
                 3L, UUID.randomUUID().toString(), Platform.NAVER, "prod-paused",
                 null, null, null, null, null,
                 CurrencyType.KRW, null, MonitoringSubscriptionStatus.PAUSED,
-                0, 10
+                0, 10, null
         );
         pausedSub.markChecked(Instant.now().minusSeconds(3600)); // nextCheckAt 과거지만 PAUSED
         repository.save(pausedSub);
@@ -256,7 +256,8 @@ class MonitoringSubscriptionRepositoryTest {
                 "PRICE_TRACK",
                 MonitoringSubscriptionStatus.ACTIVE,
                 0,
-                10
+                10,
+                null
         );
     }
 

@@ -5,12 +5,18 @@ import com.pbm.price.domain.MonitoringSubscription;
 import com.pbm.price.domain.MonitoringSubscriptionStatus;
 import com.pbm.price.domain.Platform;
 import com.pbm.price.dto.event.ProductCandidateDto;
+import com.pbm.price.dto.request.MonitoringSubscriptionUpdateRequest;
+import com.pbm.price.exception.SubscriptionAccessDeniedException;
+import com.pbm.price.exception.SubscriptionNotFoundException;
 import com.pbm.price.repository.MonitoringSubscriptionRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 /**
@@ -30,7 +36,11 @@ import java.util.List;
 @Transactional
 public class MonitoringSubscriptionService {
 
+    private static final Logger log = LoggerFactory.getLogger(MonitoringSubscriptionService.class);
+
     private static final int DEFAULT_CHECK_INTERVAL_MINUTES = 10;
+    /** 모니터링 기본 유지 기간 (7일) */
+    private static final int DEFAULT_MONITORING_DURATION_DAYS = 7;
 
     /**
      * payload 파싱 결과를 한 번에 묶어 서비스 내부에서만 전달하기 위한 보조 타입.
@@ -85,6 +95,113 @@ public class MonitoringSubscriptionService {
                 .orElseGet(() -> createNewSubscription(userId, commandId, intent, selectedProduct, context));
     }
 
+    /** 허용되는 intent 값 목록 */
+    private static final java.util.Set<String> ALLOWED_INTENTS =
+            java.util.Set.of("AUTO_PURCHASE", "PRICE_TRACK");
+
+    /**
+     * 모니터링 구독의 조건을 부분 수정한다.
+     * <p>
+     * 동작:
+     * 1. subscriptionId로 구독을 조회한다. 없으면 SubscriptionNotFoundException.
+     * 2. 요청 userId와 구독 소유자가 다르면 SubscriptionAccessDeniedException.
+     * 3. 요청의 세 필드가 모두 null이면 수정할 내용이 없으므로 IllegalArgumentException.
+     * 4. null이 아닌 필드만 적용하여 저장한다.
+     *
+     * @param userId         요청 사용자 ID (JWT에서 추출)
+     * @param subscriptionId 수정할 구독 ID
+     * @param request        수정 요청 DTO (null 필드는 변경하지 않음)
+     * @return 수정된 MonitoringSubscription 엔티티
+     */
+    @Transactional
+    public MonitoringSubscription updateSubscription(
+            Long userId,
+            Long subscriptionId,
+            MonitoringSubscriptionUpdateRequest request
+    ) {
+        // 1. 구독 존재 여부 확인
+        MonitoringSubscription subscription = monitoringSubscriptionRepository
+                .findById(subscriptionId)
+                .orElseThrow(() -> new SubscriptionNotFoundException(subscriptionId));
+
+        // 2. 소유자 검증
+        if (!subscription.getUserId().equals(userId)) {
+            throw new SubscriptionAccessDeniedException(subscriptionId, userId);
+        }
+
+        // 3. 수정할 필드가 하나도 없으면 거부
+        if (request.intent() == null && request.targetPrice() == null && request.scheduledEndAt() == null) {
+            throw new IllegalArgumentException("수정할 항목이 없습니다. intent, targetPrice, scheduledEndAt 중 하나 이상을 입력해주세요.");
+        }
+
+        // 4. null이 아닌 필드만 선택적 적용
+        if (request.intent() != null) {
+            if (!ALLOWED_INTENTS.contains(request.intent())) {
+                throw new IllegalArgumentException(
+                        "허용되지 않는 intent 값입니다. 허용값: " + ALLOWED_INTENTS + ", 입력값: " + request.intent());
+            }
+            subscription.updateIntent(request.intent());
+        }
+
+        if (request.targetPrice() != null) {
+            if (request.targetPrice().compareTo(java.math.BigDecimal.ZERO) <= 0) {
+                throw new IllegalArgumentException("목표 가격은 0보다 커야 합니다.");
+            }
+            subscription.updateTargetPrice(request.targetPrice());
+        }
+
+        if (request.scheduledEndAt() != null) {
+            if (request.scheduledEndAt().isBefore(java.time.Instant.now())) {
+                throw new IllegalArgumentException("모니터링 종료 예정 시각은 현재 시각 이후여야 합니다.");
+            }
+            subscription.updateScheduledEndAt(request.scheduledEndAt());
+        }
+
+        return monitoringSubscriptionRepository.save(subscription);
+    }
+
+    /**
+     * 사용자가 직접 모니터링 구독을 취소한다.
+     * <p>
+     * 동작:
+     * 1. subscriptionId로 구독을 조회한다. 없으면 SubscriptionNotFoundException.
+     * 2. 요청 userId와 구독 소유자가 다르면 SubscriptionAccessDeniedException.
+     * 3. 구독 상태를 CANCELLED로 변경하고 저장한다.
+     *
+     * @param userId         요청 사용자 ID (JWT에서 추출)
+     * @param subscriptionId 취소할 구독 ID
+     */
+    @Transactional
+    public void cancelSubscription(Long userId, Long subscriptionId) {
+        MonitoringSubscription subscription = monitoringSubscriptionRepository
+                .findById(subscriptionId)
+                .orElseThrow(() -> new SubscriptionNotFoundException(subscriptionId));
+
+        if (!subscription.getUserId().equals(userId)) {
+            throw new SubscriptionAccessDeniedException(subscriptionId, userId);
+        }
+
+        subscription.changeStatus(MonitoringSubscriptionStatus.CANCELLED);
+        monitoringSubscriptionRepository.save(subscription);
+
+        log.info("모니터링 구독 취소 완료 - subscriptionId: {}, userId: {}", subscriptionId, userId);
+    }
+
+    /**
+     * 특정 사용자의 ACTIVE 상태 모니터링 구독 목록을 반환한다.
+     * <p>
+     * 동작: userId로 전체 구독을 조회한 뒤 ACTIVE 상태인 건만 필터링하여 반환한다.
+     *
+     * @param userId 사용자 식별자
+     * @return ACTIVE 상태의 MonitoringSubscription 목록
+     */
+    @Transactional(readOnly = true)
+    public List<MonitoringSubscription> findActiveByUserId(Long userId) {
+        return monitoringSubscriptionRepository.findByUserId(userId).stream()
+                .filter(sub -> sub.getStatus() == MonitoringSubscriptionStatus.ACTIVE)
+                .toList();
+    }
+
     /**
      * 선택된 후보 상품들 중 기존 구독이 이미 존재하는 상품 목록을 조회한다.
      * <p>
@@ -137,6 +254,8 @@ public class MonitoringSubscriptionService {
         );
         existing.changeStatus(MonitoringSubscriptionStatus.ACTIVE);
         existing.resetMissCount();
+        // 재등록 시 종료 예정 시각을 현재 기준 7일 후로 리셋한다.
+        existing.updateScheduledEndAt(context.now().plus(DEFAULT_MONITORING_DURATION_DAYS, ChronoUnit.DAYS));
         existing.markChecked(context.now());
 
         return monitoringSubscriptionRepository.save(existing);
@@ -156,6 +275,9 @@ public class MonitoringSubscriptionService {
             ProductCandidateDto selectedProduct,
             ParsedSelectionContext context
     ) {
+        // 신규 구독의 종료 예정 시각: 현재 기준 7일 후
+        Instant scheduledEndAt = context.now().plus(DEFAULT_MONITORING_DURATION_DAYS, ChronoUnit.DAYS);
+
         MonitoringSubscription subscription = MonitoringSubscription.create(
                 userId,
                 commandId,
@@ -170,7 +292,8 @@ public class MonitoringSubscriptionService {
                 intent,
                 MonitoringSubscriptionStatus.ACTIVE,
                 0,
-                DEFAULT_CHECK_INTERVAL_MINUTES
+                DEFAULT_CHECK_INTERVAL_MINUTES,
+                scheduledEndAt
         );
 
         subscription.markChecked(context.now());

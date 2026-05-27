@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from dotenv import load_dotenv
 
-from app.routers import aliexpress, naver, openai, planner, vision_planner
+from app.routers import aliexpress, naver, openai, planner, vision_planner, youtube
 from app.services.aliexpress_service import _is_mock_enabled as _is_aliexpress_mock_enabled
 from app.services.naver_service import _is_mock_enabled as _is_naver_mock_enabled
 from app.services.openai_service import _is_mock_enabled as _is_openai_mock_enabled
@@ -52,6 +52,7 @@ app.include_router(aliexpress.router)
 app.include_router(openai.router)
 app.include_router(planner.router)
 app.include_router(vision_planner.router)
+app.include_router(youtube.router)
 
 
 @app.get("/health")

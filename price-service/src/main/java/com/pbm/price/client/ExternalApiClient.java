@@ -8,6 +8,8 @@ import com.pbm.price.dto.response.AliExpressShoppingItem;
 import com.pbm.price.dto.response.NaverSearchResponse;
 import com.pbm.price.dto.response.NaverShoppingItem;
 import com.pbm.price.dto.response.SearchResponse;
+import com.pbm.price.dto.response.YoutubeReviewAnalysisExternalResponse;
+import com.pbm.price.dto.request.YoutubeReviewAnalysisRequest;
 import com.pbm.price.exception.ExternalApiException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
@@ -484,5 +486,59 @@ public class ExternalApiClient {
         throw new ExternalApiException(
                 "external-api-service AliExpress 단건 조회 불가 (Circuit Breaker OPEN 또는 오류)", t
         );
+    }
+
+    /**
+     * external-api-service를 통해 YouTube 리뷰 영상 자막을 수집하고 AI 분석을 수행한다.
+     * <p>
+     * 내부 동작:
+     * 1. external-api-service가 youtube-transcript-api로 자막 수집
+     * 2. GPT로 상품 순위·장단점·총평 추출
+     * 3. 분석 결과를 구조화된 JSON으로 반환
+     * <p>
+     * AI 분석 시간이 길 수 있으므로 timeout은 WebClientConfig의 responseTimeout을 따른다.
+     *
+     * @param request 영상 URL, 유튜버 이름, 언어 설정 등
+     * @return AI 분석 결과 (상품 순위·장단점·총평)
+     */
+    @Retry(name = "externalApiService")
+    @CircuitBreaker(name = "externalApiService", fallbackMethod = "youtubeAnalyzeFallback")
+    public YoutubeReviewAnalysisExternalResponse analyzeYoutubeReview(YoutubeReviewAnalysisRequest request) {
+        log.info("external-api-service YouTube 리뷰 분석 요청 - videoUrl: {}, youtuber: {}",
+                request.videoUrl(), request.youtuberName());
+
+        // external-api-service의 YouTube 분석 엔드포인트 호출
+        // 경로: POST /api/v1/youtube/analyze-review
+        YoutubeReviewAnalysisExternalResponse response = externalApiWebClient.post()
+                .uri("/api/v1/youtube/analyze-review")
+                .bodyValue(java.util.Map.of(
+                        "video_id", request.videoUrl(),
+                        "youtuber_name", request.youtuberName(),
+                        "languages", request.languages() != null
+                                ? request.languages()
+                                : java.util.List.of("ko", "ko-KR", "en"),
+                        "conclusion_ratio", request.conclusionRatio() != null
+                                ? request.conclusionRatio()
+                                : 0.3
+                ))
+                .retrieve()
+                .bodyToMono(YoutubeReviewAnalysisExternalResponse.class)
+                .block();
+
+        if (response == null) {
+            log.warn("external-api-service YouTube 분석 응답이 null - videoUrl: {}", request.videoUrl());
+            throw new ExternalApiException("YouTube 분석 응답이 null입니다.", null);
+        }
+
+        log.info("external-api-service YouTube 분석 완료 - videoId: {}, category: {}, products: {}건",
+                response.videoId(), response.category(), response.products().size());
+        return response;
+    }
+
+    YoutubeReviewAnalysisExternalResponse youtubeAnalyzeFallback(YoutubeReviewAnalysisRequest request, Throwable t) {
+        log.error("YouTube 리뷰 분석 실패 (Circuit Breaker fallback) - videoUrl: {}, 원인: {}",
+                request.videoUrl(), t.getMessage());
+        throw new ExternalApiException(
+                "external-api-service YouTube 분석 불가 (Circuit Breaker OPEN 또는 오류)", t);
     }
 }

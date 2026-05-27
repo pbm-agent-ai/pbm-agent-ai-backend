@@ -55,6 +55,13 @@ app:
     default-display: 10
     aliexpress-default-page-size: 10
 
+# 한국수출입은행 환율 API 설정
+# API 키: https://www.koreaexim.go.kr 에서 발급
+# 주말/공휴일에는 데이터 없음 → ExchangeRateService에서 최대 5일 소급 조회
+korea-eximbank:
+  base-url: https://oapi.koreaexim.go.kr/site/program/financial/exchangeJSON
+  api-key: ${EXCHANGE_RATE_API_KEY}
+
 # external-api-service 직접 호출 설정
 # 네이버 API 등 외부 API 호출은 external-api-service를 통해 프록시 (직접 Naver 호출 잔존 흔적 제거 완료)
 # 컨테이너 환경: http://external-api-service:8090, 로컬 환경: http://localhost:8090

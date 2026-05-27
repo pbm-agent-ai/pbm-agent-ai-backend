@@ -23,6 +23,39 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class GlobalExceptionHandler {
 
     /**
+     * 모니터링 구독 미존재 예외 처리 → 404 Not Found
+     */
+    @ExceptionHandler(SubscriptionNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleSubscriptionNotFoundException(SubscriptionNotFoundException e) {
+        log.warn("모니터링 구독 미존재: {}", e.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error(e.getMessage()));
+    }
+
+    /**
+     * 타인의 모니터링 구독 접근 예외 처리 → 403 Forbidden
+     */
+    @ExceptionHandler(SubscriptionAccessDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleSubscriptionAccessDeniedException(SubscriptionAccessDeniedException e) {
+        log.warn("모니터링 구독 접근 거부: {}", e.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error(e.getMessage()));
+    }
+
+    /**
+     * 잘못된 수정 요청 예외 처리 → 400 Bad Request
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiResponse<Void>> handleIllegalArgumentException(IllegalArgumentException e) {
+        log.warn("잘못된 요청 파라미터: {}", e.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(e.getMessage()));
+    }
+
+    /**
      * 외부 API 호출 실패 예외 처리
      * Circuit Breaker OPEN 또는 재시도 모두 실패한 경우 발생하는
      * {@link ExternalApiException}을 HTTP 503 Service Unavailable 응답으로 변환한다.

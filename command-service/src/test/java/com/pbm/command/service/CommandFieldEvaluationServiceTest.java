@@ -49,15 +49,15 @@ class CommandFieldEvaluationServiceTest {
     }
 
     @Test
-    @DisplayName("전자기기 가격 확인 명령은 color가 없으면 color를 필수 누락으로 계산한다")
-    void evaluate_priceCheckElectronicsWithoutColor_returnsColorAsMissingField() {
+    @DisplayName("전자기기 가격 확인 명령은 productName과 maxPrice가 있으면 추가 확인 없이 바로 진행한다 (color는 필수 아님)")
+    void evaluate_priceCheckElectronicsWithoutColor_proceedsWithoutClarification() {
         ParsedCommand parsedCommand = new ParsedCommand(
                 ProductCategory.ELECTRONICS,
                 "아이폰 15 프로 256GB",
                 "애플",
                 "아이폰",
                 "15 프로 256GB",
-                null,
+                null,   // color 없어도 OK - ELECTRONICS에서 필수 아님
                 null,
                 java.util.List.of(PlatformType.NAVER),
                 1400000,
@@ -67,9 +67,10 @@ class CommandFieldEvaluationServiceTest {
 
         FieldEvaluationResult result = commandFieldEvaluationService.evaluate(CommandIntent.PRICE_CHECK, parsedCommand);
 
-        assertThat(result.missingRequiredFields()).containsExactly("color");
+        // ELECTRONICS 필수 필드: PRODUCT_NAME, MAX_PRICE (COLOR 제거됨)
+        assertThat(result.missingRequiredFields()).isEmpty();
         assertThat(result.ambiguousFields()).isEmpty();
-        assertThat(result.needsClarification()).isTrue();
+        assertThat(result.needsClarification()).isFalse();
     }
 
     @Test

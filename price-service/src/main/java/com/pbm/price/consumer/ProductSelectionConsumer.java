@@ -40,15 +40,18 @@ public class ProductSelectionConsumer {
     private final MonitoringSubscriptionService monitoringSubscriptionService;
     private final SubscriptionMonitoringService subscriptionMonitoringService;
     private final PriceValidationResultEventPublisher priceValidationResultEventPublisher;
+    private final PriceCurrencyConverter priceCurrencyConverter;
 
     public ProductSelectionConsumer(
             MonitoringSubscriptionService monitoringSubscriptionService,
             SubscriptionMonitoringService subscriptionMonitoringService,
-            PriceValidationResultEventPublisher priceValidationResultEventPublisher
+            PriceValidationResultEventPublisher priceValidationResultEventPublisher,
+            PriceCurrencyConverter priceCurrencyConverter
     ) {
         this.monitoringSubscriptionService = monitoringSubscriptionService;
         this.subscriptionMonitoringService = subscriptionMonitoringService;
         this.priceValidationResultEventPublisher = priceValidationResultEventPublisher;
+        this.priceCurrencyConverter = priceCurrencyConverter;
     }
 
     /**
@@ -99,8 +102,8 @@ public class ProductSelectionConsumer {
                     subscriptionMonitoringService.refreshSelectedProduct(selectedProduct);
 
             // 선택 직후 검증에서도 USD 상품을 바로 탈락시키지 않고,
-            // 고정 환율 1500원을 적용해 KRW 기준으로 비교한다.
-            BigDecimal currentPriceInKrw = PriceCurrencyConverter.toKrw(snapshot.currentPrice(), snapshot.currency());
+            // 수출입은행 실시간 환율을 적용해 KRW 기준으로 비교한다.
+            BigDecimal currentPriceInKrw = priceCurrencyConverter.toKrw(snapshot.currentPrice(), snapshot.currency());
 
             if (!snapshot.found() || currentPriceInKrw == null) {
                 monitoringProducts.add(selectedProduct);

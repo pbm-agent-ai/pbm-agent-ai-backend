@@ -42,13 +42,12 @@ class CommandFieldPolicyServiceTest {
     }
 
     @Test
-    @DisplayName("전자기기 카테고리는 productName, maxPrice, color를 필수 필드로 가진다 (PLATFORM은 제외)")
-    void electronicsPolicy_requiresProductNameMaxPriceAndColor() {
+    @DisplayName("전자기기 카테고리는 productName, maxPrice를 필수 필드로 가진다 (color·PLATFORM은 제외)")
+    void electronicsPolicy_requiresProductNameAndMaxPriceOnly() {
         assertThat(commandFieldPolicyService.getRequiredFields(ProductCategory.ELECTRONICS))
                 .containsExactly(
                         CommandFieldType.PRODUCT_NAME,
-                        CommandFieldType.MAX_PRICE,
-                        CommandFieldType.COLOR
+                        CommandFieldType.MAX_PRICE
                 );
     }
 

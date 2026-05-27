@@ -146,6 +146,26 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: eureka-server 이미지 빌드 & Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: eureka-server/Dockerfile
+          push: true
+          tags: ${{ env.DOCKERHUB_USERNAME }}/pbm-eureka-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: external-api-service 이미지 빌드 & Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: external-api-service/Dockerfile
+          push: true
+          tags: ${{ env.DOCKERHUB_USERNAME }}/pbm-external-api-service:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   # ─────────────────────────────────────────────
   # Job 3: KT Cloud 서버 배포
   # ─────────────────────────────────────────────

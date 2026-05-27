@@ -31,3 +31,6 @@ Test/.venv/
 # 로그
 *.log
 logs/
+
+# Python venv
+**/.venv/

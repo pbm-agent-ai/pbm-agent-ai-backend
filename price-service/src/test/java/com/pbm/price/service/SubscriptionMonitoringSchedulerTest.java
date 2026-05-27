@@ -73,7 +73,8 @@ class SubscriptionMonitoringSchedulerTest {
                 "PRICE_TRACK",                     // intent
                 MonitoringSubscriptionStatus.ACTIVE, // status
                 0,                                 // consecutiveMissCount
-                5                                  // checkIntervalMinutes
+                5,                                 // checkIntervalMinutes
+                null                               // scheduledEndAt
         );
         ReflectionTestUtils.setField(sub, "id", id);
         sub.markChecked(baseTime.minusSeconds(600)); // 10분 전에 체크 완료

@@ -6,3 +6,5 @@ python-dotenv==1.0.1
 pytest==8.3.4
 pytest-asyncio==0.24.0
 google-genai==1.18.0
+youtube-transcript-api==1.2.4
+anthropic==0.40.0

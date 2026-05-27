@@ -120,6 +120,14 @@ public class MonitoringSubscription {
     @Column(name = "next_check_at")
     private Instant nextCheckAt;
 
+    /**
+     * 모니터링 종료 예정 시각.
+     * null이면 무기한 모니터링을 의미한다.
+     * 스케줄러가 이 시각을 지난 ACTIVE 구독을 자동으로 COMPLETED 처리한다.
+     */
+    @Column(name = "scheduled_end_at")
+    private Instant scheduledEndAt;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -139,7 +147,8 @@ public class MonitoringSubscription {
                                    String intent,
                                    MonitoringSubscriptionStatus status,
                                    Integer consecutiveMissCount,
-                                   Integer checkIntervalMinutes) {
+                                   Integer checkIntervalMinutes,
+                                   Instant scheduledEndAt) {
         this.userId = userId;
         this.commandId = commandId;
         this.platform = platform;
@@ -154,6 +163,7 @@ public class MonitoringSubscription {
         this.status = status;
         this.consecutiveMissCount = consecutiveMissCount;
         this.checkIntervalMinutes = checkIntervalMinutes;
+        this.scheduledEndAt = scheduledEndAt;
     }
 
     /**
@@ -188,11 +198,13 @@ public class MonitoringSubscription {
                                                 String intent,
                                                 MonitoringSubscriptionStatus status,
                                                 Integer consecutiveMissCount,
-                                                Integer checkIntervalMinutes) {
+                                                Integer checkIntervalMinutes,
+                                                Instant scheduledEndAt) {
         return new MonitoringSubscription(
                 userId, commandId, platform, productId, productUrl,
                 snapshotTitle, snapshotPrice, searchKeyword, targetPrice,
-                currency, intent, status, consecutiveMissCount, checkIntervalMinutes
+                currency, intent, status, consecutiveMissCount, checkIntervalMinutes,
+                scheduledEndAt
         );
     }
 
@@ -277,12 +289,40 @@ public class MonitoringSubscription {
     }
 
     /**
+     * 알림/자동 결제 옵션(intent)을 변경한다.
+     *
+     * @param newIntent "AUTO_PURCHASE" 또는 "PRICE_TRACK"
+     */
+    public void updateIntent(String newIntent) {
+        this.intent = newIntent;
+    }
+
+    /**
      * 목표 가격을 갱신한다.
      *
      * @param newTargetPrice 새로운 목표 가격
      */
     public void updateTargetPrice(BigDecimal newTargetPrice) {
         this.targetPrice = newTargetPrice;
+    }
+
+    /**
+     * 모니터링 종료 예정 시각을 갱신한다.
+     *
+     * @param newScheduledEndAt 새로운 종료 예정 시각 (null이면 무기한)
+     */
+    public void updateScheduledEndAt(Instant newScheduledEndAt) {
+        this.scheduledEndAt = newScheduledEndAt;
+    }
+
+    /**
+     * 모니터링 종료 예정 시각이 지났는지 확인한다.
+     *
+     * @param now 현재 시각
+     * @return 종료 예정 시각이 설정되어 있고 현재 시각보다 이전이면 true
+     */
+    public boolean isExpired(Instant now) {
+        return scheduledEndAt != null && scheduledEndAt.isBefore(now);
     }
 
     @PrePersist

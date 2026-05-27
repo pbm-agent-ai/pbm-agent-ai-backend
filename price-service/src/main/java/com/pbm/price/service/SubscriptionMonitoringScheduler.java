@@ -6,6 +6,7 @@ import com.pbm.price.repository.MonitoringSubscriptionRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -76,5 +77,38 @@ public class SubscriptionMonitoringScheduler {
         }
 
         log.info("모니터링 구독 배치 종료 - count: {}", dueSubscriptions.size());
+    }
+
+    /**
+     * 종료 예정 시각(scheduledEndAt)이 지난 ACTIVE 구독을 자동으로 COMPLETED 처리한다.
+     * <p>
+     * 매시간 실행되며, 만료된 구독을 조회하여 상태를 COMPLETED로 변경하고 저장한다.
+     */
+    @Transactional
+    @Scheduled(fixedDelayString = "${app.monitoring.expiry-check-interval-ms:3600000}")
+    public void expireScheduledSubscriptions() {
+        Instant now = Instant.now();
+
+        List<MonitoringSubscription> expired =
+                monitoringSubscriptionRepository.findByStatusAndScheduledEndAtBefore(
+                        MonitoringSubscriptionStatus.ACTIVE,
+                        now
+                );
+
+        if (expired.isEmpty()) {
+            log.debug("만료 처리할 모니터링 구독 없음 - now: {}", now);
+            return;
+        }
+
+        log.info("모니터링 구독 만료 처리 시작 - count: {}, now: {}", expired.size(), now);
+
+        for (MonitoringSubscription subscription : expired) {
+            subscription.changeStatus(MonitoringSubscriptionStatus.COMPLETED);
+            monitoringSubscriptionRepository.save(subscription);
+            log.info("모니터링 구독 만료 완료 처리 - subscriptionId: {}, scheduledEndAt: {}",
+                    subscription.getId(), subscription.getScheduledEndAt());
+        }
+
+        log.info("모니터링 구독 만료 처리 종료 - count: {}", expired.size());
     }
 }

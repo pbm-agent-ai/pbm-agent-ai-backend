@@ -65,6 +65,9 @@ class CommandExecutionServiceTest {
     @Mock
     private ProductSelectionEventPublisher productSelectionEventPublisher;
 
+    @Mock
+    private CommandFieldEvaluationService commandFieldEvaluationService;
+
     @InjectMocks
     private CommandExecutionService commandExecutionService;
 
@@ -244,11 +247,12 @@ class CommandExecutionServiceTest {
         given(commandSessionService.getSessionEntityByCommandId(commandId)).willReturn(session);
 
         // 재파싱 결과: 여전히 보완 필요
+        ParsedCommand reparsedCommand = new ParsedCommand(
+                ProductCategory.SHOES, "나이키 에어맥스", "나이키", null, null, "검은색", null, null, null, null, null
+        );
         CommandParseResponse reparseResponse = new CommandParseResponse(
                 CommandIntent.PRICE_CHECK,
-                new ParsedCommand(
-                        ProductCategory.SHOES, "나이키 에어맥스", "나이키", null, null, "검은색", null, null, null, null, null
-                ),
+                reparsedCommand,
                 List.of("size", "platform"),   // 여전히 누락
                 List.of("color"),               // 여전히 모호
                 true,
@@ -257,6 +261,9 @@ class CommandExecutionServiceTest {
         );
 
         when(commandParsingService.parse(any(CommandParseRequest.class))).thenReturn(reparseResponse);
+        // applyStructuredAnswers(answers=null) → no-op → 동일한 parsedCommand로 재평가
+        when(commandFieldEvaluationService.evaluate(eq(CommandIntent.PRICE_CHECK), any(ParsedCommand.class)))
+                .thenReturn(new FieldEvaluationResult(List.of("size", "platform"), List.of("color"), true));
 
         // when
         CommandParseResponse actual = commandExecutionService.handleClarification(commandId, request);
@@ -318,6 +325,9 @@ class CommandExecutionServiceTest {
         );
 
         when(commandParsingService.parse(any(CommandParseRequest.class))).thenReturn(reparseResponse);
+        // applyStructuredAnswers(answers=null) → no-op → 동일한 parsedCommand로 재평가
+        when(commandFieldEvaluationService.evaluate(eq(CommandIntent.PRICE_CHECK), any(ParsedCommand.class)))
+                .thenReturn(new FieldEvaluationResult(List.of(), List.of(), false));
 
         // when
         CommandParseResponse actual = commandExecutionService.handleClarification(commandId, request);
@@ -422,6 +432,9 @@ class CommandExecutionServiceTest {
         );
 
         when(commandParsingService.parse(any(CommandParseRequest.class))).thenReturn(reparseResponse);
+        // answers에 platform=NAVER 있어도 parsedCommand 이미 NAVER → 재평가 후 누락 없음
+        when(commandFieldEvaluationService.evaluate(eq(CommandIntent.PRICE_CHECK), any(ParsedCommand.class)))
+                .thenReturn(new FieldEvaluationResult(List.of(), List.of(), false));
 
         // when
         CommandParseResponse actual = commandExecutionService.handleClarification(commandId, request);

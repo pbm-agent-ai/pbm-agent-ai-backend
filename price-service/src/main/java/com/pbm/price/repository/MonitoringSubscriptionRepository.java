@@ -60,4 +60,14 @@ public interface MonitoringSubscriptionRepository extends JpaRepository<Monitori
      * @return 수집해야 할 MonitoringSubscription 목록
      */
     List<MonitoringSubscription> findByStatusAndNextCheckAtBefore(MonitoringSubscriptionStatus status, Instant threshold);
+
+    /**
+     * 종료 예정 시각이 지난 ACTIVE 구독 목록을 조회한다.
+     * 스케줄러가 주기적으로 이 메서드를 호출하여 기간 만료된 구독을 자동 완료 처리한다.
+     *
+     * @param status    조회할 구독 상태 (보통 ACTIVE)
+     * @param threshold 기준 시각 (보통 now)
+     * @return 종료 예정 시각이 지난 MonitoringSubscription 목록
+     */
+    List<MonitoringSubscription> findByStatusAndScheduledEndAtBefore(MonitoringSubscriptionStatus status, Instant threshold);
 }

@@ -39,6 +39,7 @@ import java.util.UUID;
  *      3. 플랫폼별 재조회 로직으로 최신 상품 정보를 가져옴
  *      4. 상품을 찾지 못하면 miss 처리하고, 연속 실패 임계치 이상이면 FAILED 처리
  *      5. 상품을 찾으면 현재가를 KRW 기준으로 정규화한 뒤 목표 가격과 비교
+ *         (USD → KRW 변환: 한국수출입은행 실시간 환율 사용)
  *      6. 목표 가격 충족 시 TRIGGERED 상태로 전환하고 price-alert/payment 이벤트를 발행
  *      7. 미충족 시 ACTIVE 상태를 유지하고 nextCheckAt을 갱신
  * 연관: MonitoringSubscriptionRepository, PriceAlertEventPublisher,
@@ -76,17 +77,20 @@ public class SubscriptionMonitoringService {
     private final PriceAlertEventPublisher priceAlertEventPublisher;
     private final PaymentRequestEventPublisher paymentRequestEventPublisher;
     private final ExternalApiClient externalApiClient;
+    private final PriceCurrencyConverter priceCurrencyConverter;
 
     public SubscriptionMonitoringService(
             MonitoringSubscriptionRepository monitoringSubscriptionRepository,
             PriceAlertEventPublisher priceAlertEventPublisher,
             PaymentRequestEventPublisher paymentRequestEventPublisher,
-            ExternalApiClient externalApiClient
+            ExternalApiClient externalApiClient,
+            PriceCurrencyConverter priceCurrencyConverter
     ) {
         this.monitoringSubscriptionRepository = monitoringSubscriptionRepository;
         this.priceAlertEventPublisher = priceAlertEventPublisher;
         this.paymentRequestEventPublisher = paymentRequestEventPublisher;
         this.externalApiClient = externalApiClient;
+        this.priceCurrencyConverter = priceCurrencyConverter;
     }
 
     /**
@@ -95,7 +99,7 @@ public class SubscriptionMonitoringService {
      * 상태 전이 다이어그램:
      * <pre>
      * ACTIVE + found=false → markMiss → (missCount >= 2 ? FAILED : ACTIVE)
-     * ACTIVE + found=true + currency=USD → currentPrice * 1500 으로 KRW 환산 후 비교
+     * ACTIVE + found=true + currency=USD → 한국수출입은행 실시간 환율로 KRW 환산 후 비교
      * ACTIVE + found=true + normalizedPrice <= targetPrice → TRIGGERED + 이벤트 발행
      * ACTIVE + found=true + normalizedPrice > targetPrice → ACTIVE (유지, nextCheckAt 갱신)
      * </pre>
@@ -140,7 +144,7 @@ public class SubscriptionMonitoringService {
         // ──────────────────────────────────────────────
         // 2) 재조회 가격을 KRW 기준 금액으로 정규화
         // ──────────────────────────────────────────────
-        BigDecimal currentPriceInKrw = PriceCurrencyConverter.toKrw(snapshot.currentPrice(), snapshot.currency());
+        BigDecimal currentPriceInKrw = priceCurrencyConverter.toKrw(snapshot.currentPrice(), snapshot.currency());
         if (currentPriceInKrw == null) {
             subscription.changeStatus(MonitoringSubscriptionStatus.FAILED);
             log.warn("가격 또는 통화 정보가 없어 FAILED 처리 - subscriptionId: {}, currency: {}, currentPrice: {}",
@@ -218,7 +222,8 @@ public class SubscriptionMonitoringService {
                 "PRICE_CHECK",
                 MonitoringSubscriptionStatus.ACTIVE,
                 0,
-                5
+                5,
+                null  // 임시 단건 조회용이므로 종료 예정 시각 없음
         );
         return refreshSubscription(temporarySubscription);
     }

@@ -69,8 +69,8 @@ class CommandParsingServiceTest {
     }
 
     @Test
-    @DisplayName("아이폰 가격 확인 명령을 전자기기 가격 확인으로 파싱한다 (color 누락은 필수 누락으로 계산)")
-    void parse_priceCheckElectronicsCommandWithPlatform_returnsColorMissing() {
+    @DisplayName("아이폰 가격 확인 명령을 전자기기 가격 확인으로 파싱한다 (productName·maxPrice 있으면 clarification 불필요)")
+    void parse_priceCheckElectronicsCommandWithPlatform_proceedsWithoutClarification() {
         when(openAiCommandClient.parseCommand(any(CommandParseRequest.class)))
                 .thenReturn(new OpenAiParsedCommandPayload(
                         CommandIntent.PRICE_CHECK,
@@ -80,7 +80,7 @@ class CommandParsingServiceTest {
                                 "애플",
                                 "아이폰",
                                 "15 프로 256GB",
-                                null,
+                                null,   // color 없어도 필수 아님
                                 null,
                                 java.util.List.of(PlatformType.NAVER),
                                 1400000,
@@ -99,8 +99,9 @@ class CommandParsingServiceTest {
         assertThat(response.parsedCommand().maxPrice()).isEqualTo(1400000);
         assertThat(response.parsedCommand().model()).isEqualTo("15 프로 256GB");
         assertThat(response.confidence()).isEqualTo(0.95);
-        assertThat(response.missingRequiredFields()).containsExactly("color");
-        assertThat(response.needsClarification()).isTrue();
+        // ELECTRONICS 필수 필드: PRODUCT_NAME, MAX_PRICE (COLOR 제거됨) → 누락 없음
+        assertThat(response.missingRequiredFields()).isEmpty();
+        assertThat(response.needsClarification()).isFalse();
     }
 
     @Test

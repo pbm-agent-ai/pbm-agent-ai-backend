@@ -13,5 +13,7 @@ public enum MonitoringSubscriptionStatus {
     COMPLETED,
     FAILED,
     /** 목표 가격 충족으로 트리거되어 결제/알림이 발행된 상태 */
-    TRIGGERED
+    TRIGGERED,
+    /** 사용자가 직접 모니터링을 중단한 상태 */
+    CANCELLED
 }

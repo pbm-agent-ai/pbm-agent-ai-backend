@@ -6,83 +6,59 @@ services:
       POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:-password}
       TZ: Asia/Seoul
       PGTZ: Asia/Seoul
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    restart: unless-stopped
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
+    restart: unless-stopped
 
   kafka:
     image: confluentinc/cp-kafka:7.4.0
     depends_on:
       - zookeeper
-    ports:
-      - "9092:9092"
-      - "29092:29092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      # 컨테이너 간 통신(INTERNAL) + 로컬 개발(EXTERNAL) 모두 지원
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_CREATE_TOPICS: "user-event:1:1,price-topic:1:1,price-alert:1:1,payment-topic:1:1,payment-result:1:1"
-
-  # ─── 모니터링 ──────────────────────────────────────────────
-  prometheus:
-    image: prom/prometheus:latest
-    ports:
-      - "9091:9090"
-
-  grafana:
-    image: grafana/grafana:latest
-    ports:
-      - "3001:3000"
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
+    restart: unless-stopped
 
   # ─── 서비스 디스커버리 ────────────────────────────────────
   eureka-server:
-    build:
-      context: .
-      dockerfile: eureka-server/Dockerfile
+    image: ${DOCKERHUB_USERNAME}/pbm-eureka-server:latest
     ports:
       - "8761:8761"
     environment:
       - SPRING_PROFILES_ACTIVE=default
+    restart: unless-stopped
 
   # ─── API 게이트웨이 ───────────────────────────────────────
   gateway:
-    build:
-      context: .
-      dockerfile: gateway/Dockerfile
+    image: ${DOCKERHUB_USERNAME}/pbm-gateway:latest
     ports:
       - "8080:8080"
     depends_on:
       - eureka-server
     environment:
       - EUREKA_URL=http://eureka-server:8761/eureka/
-      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - JWT_SECRET=${JWT_SECRET}
+    restart: unless-stopped
 
   # ─── 인증 서비스 ──────────────────────────────────────────
   auth-service:
-    build:
-      context: .
-      dockerfile: auth-service/Dockerfile
-    ports:
-      - "8081:8081"
+    image: ${DOCKERHUB_USERNAME}/pbm-auth-service:latest
     depends_on:
       - postgres
       - redis
@@ -92,20 +68,17 @@ services:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - AUTH_DB_URL=jdbc:postgresql://postgres:5432/auth_db
       - AUTH_DB_USERNAME=${AUTH_DB_USERNAME:-postgres}
-      - AUTH_DB_PASSWORD=${AUTH_DB_PASSWORD:-password}
+      - AUTH_DB_PASSWORD=${AUTH_DB_PASSWORD}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRATION=${JWT_EXPIRATION:-1800000}
       - JWT_REFRESH_EXPIRATION=${JWT_REFRESH_EXPIRATION:-604800000}
+    restart: unless-stopped
 
   # ─── 커맨드 서비스 ────────────────────────────────────────
   command-service:
-    build:
-      context: .
-      dockerfile: command-service/Dockerfile
-    ports:
-      - "8082:8082"
+    image: ${DOCKERHUB_USERNAME}/pbm-command-service:latest
     depends_on:
       - kafka
       - eureka-server
@@ -116,20 +89,17 @@ services:
       - EXTERNAL_API_SERVICE_URL=http://external-api-service:8090
       - COMMAND_DB_URL=jdbc:postgresql://postgres:5432/command_db
       - COMMAND_DB_USERNAME=${COMMAND_DB_USERNAME:-postgres}
-      - COMMAND_DB_PASSWORD=${COMMAND_DB_PASSWORD:-password}
+      - COMMAND_DB_PASSWORD=${COMMAND_DB_PASSWORD}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - JWT_SECRET=${JWT_SECRET}
       - JWT_DEVICE_EXPIRATION=${JWT_DEVICE_EXPIRATION:-2592000000}
       - JWT_AGENT_EXPIRATION=${JWT_AGENT_EXPIRATION:-1800000}
+    restart: unless-stopped
 
   # ─── 가격 서비스 ──────────────────────────────────────────
   price-service:
-    build:
-      context: .
-      dockerfile: price-service/Dockerfile
-    ports:
-      - "8083:8083"
+    image: ${DOCKERHUB_USERNAME}/pbm-price-service:latest
     depends_on:
       - kafka
       - eureka-server
@@ -140,16 +110,13 @@ services:
       - EXTERNAL_API_SERVICE_URL=http://external-api-service:8090
       - PRICE_DB_URL=jdbc:postgresql://postgres:5432/price_db
       - PRICE_DB_USERNAME=${PRICE_DB_USERNAME:-postgres}
-      - PRICE_DB_PASSWORD=${PRICE_DB_PASSWORD:-password}
+      - PRICE_DB_PASSWORD=${PRICE_DB_PASSWORD}
       - EXCHANGE_RATE_API_KEY=${EXCHANGE_RATE_API_KEY}
+    restart: unless-stopped
 
   # ─── 결제 서비스 ──────────────────────────────────────────
   payment-service:
-    build:
-      context: .
-      dockerfile: payment-service/Dockerfile
-    ports:
-      - "8084:8084"
+    image: ${DOCKERHUB_USERNAME}/pbm-payment-service:latest
     depends_on:
       - kafka
       - eureka-server
@@ -158,47 +125,39 @@ services:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - PAYMENT_DB_URL=jdbc:postgresql://postgres:5432/payment_db
       - PAYMENT_DB_USERNAME=${PAYMENT_DB_USERNAME:-postgres}
-      - PAYMENT_DB_PASSWORD=${PAYMENT_DB_PASSWORD:-password}
+      - PAYMENT_DB_PASSWORD=${PAYMENT_DB_PASSWORD}
+    restart: unless-stopped
 
   # ─── 알림 서비스 ──────────────────────────────────────────
   notification-service:
-    build:
-      context: .
-      dockerfile: notification-service/Dockerfile
-    expose:
-      - "8085"
+    image: ${DOCKERHUB_USERNAME}/pbm-notification-service:latest
     depends_on:
       - kafka
       - eureka-server
     environment:
       - EUREKA_SERVER_URL=http://eureka-server:8761/eureka/
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+    restart: unless-stopped
 
-  # ─── 외부 API 래핑 서비스 (네이버 쇼핑 등) ────────────────
+  # ─── 외부 API 래핑 서비스 ────────────────────────────────
   external-api-service:
-    build:
-      context: ./external-api-service
-    ports:
-      - "8090:8090"
+    image: ${DOCKERHUB_USERNAME}/pbm-external-api-service:latest
+    depends_on:
+      - eureka-server
     environment:
-      - NAVER_CLIENT_ID=${NAVER_CLIENT_ID:-}
-      - NAVER_CLIENT_SECRET=${NAVER_CLIENT_SECRET:-}
-      # 모킹 모드: 기본값은 false(실제 API 호출). 필요 시 true로 설정하여 고정 데이터 반환
+      - NAVER_CLIENT_ID=${NAVER_CLIENT_ID}
+      - NAVER_CLIENT_SECRET=${NAVER_CLIENT_SECRET}
       - NAVER_MOCK_ENABLED=${NAVER_MOCK_ENABLED:-false}
-      # AliExpress Affiliate API 환경변수
-      - ALIEXPRESS_APP_KEY=${ALIEXPRESS_APP_KEY:-}
-      - ALIEXPRESS_APP_SECRET=${ALIEXPRESS_APP_SECRET:-}
+      - ALIEXPRESS_APP_KEY=${ALIEXPRESS_APP_KEY}
+      - ALIEXPRESS_APP_SECRET=${ALIEXPRESS_APP_SECRET}
       - ALIEXPRESS_BASE_URL=${ALIEXPRESS_BASE_URL:-https://api-sg.aliexpress.com/sync}
-      # AliExpress 모킹 모드: 기본값은 false(실제 API 호출). 필요 시 true로 설정하여 고정 데이터 반환
       - ALIEXPRESS_MOCK_ENABLED=${ALIEXPRESS_MOCK_ENABLED:-false}
-      # OpenAI API 환경변수
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.4-mini}
-      # OpenAI 모킹 모드: 기본값은 false(실제 API 호출). 필요 시 true로 설정하여 고정 데이터 반환
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       - OPENAI_MOCK_ENABLED=${OPENAI_MOCK_ENABLED:-false}
-      # Gemini API 환경변수 (Vision Planner용)
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    restart: unless-stopped
 
 volumes:
   postgres_data:

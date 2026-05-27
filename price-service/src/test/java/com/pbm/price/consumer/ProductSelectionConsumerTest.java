@@ -1,5 +1,6 @@
 package com.pbm.price.consumer;
 
+import com.pbm.price.common.PriceCurrencyConverter;
 import com.pbm.price.domain.CurrencyType;
 import com.pbm.price.domain.MonitoringSubscription;
 import com.pbm.price.domain.MonitoringSubscriptionStatus;
@@ -31,6 +32,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -56,6 +58,9 @@ class ProductSelectionConsumerTest {
     @Mock
     private PriceValidationResultEventPublisher priceValidationResultEventPublisher;
 
+    @Mock
+    private PriceCurrencyConverter priceCurrencyConverter;
+
     @Captor
     private ArgumentCaptor<PriceValidationResultEvent> resultEventCaptor;
 
@@ -67,10 +72,15 @@ class ProductSelectionConsumerTest {
 
     @BeforeEach
     void setUp() {
+        // KRW 통화는 그대로 반환하도록 기본 mock 설정 (lenient: 사용하지 않는 테스트에서 UnnecessaryStubbingException 방지)
+        lenient().when(priceCurrencyConverter.toKrw(any(BigDecimal.class), eq(CurrencyType.KRW)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
         productSelectionConsumer = new ProductSelectionConsumer(
                 monitoringSubscriptionService,
                 subscriptionMonitoringService,
-                priceValidationResultEventPublisher
+                priceValidationResultEventPublisher,
+                priceCurrencyConverter
         );
     }
 
@@ -109,7 +119,7 @@ class ProductSelectionConsumerTest {
                 "테스트 상품", BigDecimal.valueOf(250000),
                 "테스트 키워드", BigDecimal.valueOf(TARGET_PRICE),
                 CurrencyType.KRW, "PRICE_CHECK",
-                MonitoringSubscriptionStatus.ACTIVE, 0, 5
+                MonitoringSubscriptionStatus.ACTIVE, 0, 5, null
         );
         ReflectionTestUtils.setField(subscription, "id", id);
         return subscription;
@@ -248,6 +258,10 @@ class ProductSelectionConsumerTest {
         mockRefreshedWith(prod1, true, BigDecimal.valueOf(200000), CurrencyType.KRW);
         mockRefreshedWith(prod2, true, BigDecimal.valueOf(10), CurrencyType.USD);
         mockRefreshedWith(prod3, true, BigDecimal.valueOf(250), CurrencyType.USD);
+        when(priceCurrencyConverter.toKrw(BigDecimal.valueOf(10), CurrencyType.USD))
+                .thenReturn(BigDecimal.valueOf(15000));   // 10 * 1500 = 15,000 KRW (목표 이하)
+        when(priceCurrencyConverter.toKrw(BigDecimal.valueOf(250), CurrencyType.USD))
+                .thenReturn(BigDecimal.valueOf(375000));  // 250 * 1500 = 375,000 KRW (목표 초과)
 
         // when
         productSelectionConsumer.consume(event);
@@ -345,6 +359,8 @@ class ProductSelectionConsumerTest {
         ProductSelectionEvent event = createEvent("PRICE_TRACK", List.of(prod1));
 
         mockRefreshedWith(prod1, true, BigDecimal.valueOf(10), CurrencyType.USD);
+        when(priceCurrencyConverter.toKrw(BigDecimal.valueOf(10), CurrencyType.USD))
+                .thenReturn(BigDecimal.valueOf(15000));  // 10 * 1500 = 15,000 KRW (목표 이하)
 
         MonitoringSubscription sub1 = createSubscription(100L, "p1");
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
@@ -369,6 +385,8 @@ class ProductSelectionConsumerTest {
         ProductSelectionEvent event = createEvent("PRICE_TRACK", List.of(prod1));
 
         mockRefreshedWith(prod1, true, BigDecimal.valueOf(250), CurrencyType.USD);
+        when(priceCurrencyConverter.toKrw(BigDecimal.valueOf(250), CurrencyType.USD))
+                .thenReturn(BigDecimal.valueOf(375000));  // 250 * 1500 = 375,000 KRW (목표 초과)
 
         MonitoringSubscription sub1 = createSubscription(100L, "p1");
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
@@ -563,7 +581,7 @@ class ProductSelectionConsumerTest {
     }
 
     // =========================================================================
-    // USD → KRW 변환 (고정 환율 1500)
+    // USD → KRW 변환 (한국수출입은행 실시간 환율 mock)
     // =========================================================================
 
     @Test
@@ -577,6 +595,10 @@ class ProductSelectionConsumerTest {
 
         mockRefreshedWith(prod1, true, BigDecimal.valueOf(10), CurrencyType.USD);
         mockRefreshedWith(prod2, true, BigDecimal.valueOf(20), CurrencyType.USD);
+        when(priceCurrencyConverter.toKrw(BigDecimal.valueOf(10), CurrencyType.USD))
+                .thenReturn(BigDecimal.valueOf(15000));  // 10 * 1500 = 15,000 KRW (목표 이하)
+        when(priceCurrencyConverter.toKrw(BigDecimal.valueOf(20), CurrencyType.USD))
+                .thenReturn(BigDecimal.valueOf(30000));  // 20 * 1500 = 30,000 KRW (목표 이하)
 
         MonitoringSubscription subPurchased = createSubscription(100L, "p1");
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
@@ -607,6 +629,10 @@ class ProductSelectionConsumerTest {
 
         mockRefreshedWith(prod1, true, BigDecimal.valueOf(250), CurrencyType.USD);
         mockRefreshedWith(prod2, true, BigDecimal.valueOf(300), CurrencyType.USD);
+        when(priceCurrencyConverter.toKrw(BigDecimal.valueOf(250), CurrencyType.USD))
+                .thenReturn(BigDecimal.valueOf(375000));  // 250 * 1500 = 375,000 KRW (목표 초과)
+        when(priceCurrencyConverter.toKrw(BigDecimal.valueOf(300), CurrencyType.USD))
+                .thenReturn(BigDecimal.valueOf(450000));  // 300 * 1500 = 450,000 KRW (목표 초과)
 
         MonitoringSubscription sub1 = createSubscription(100L, "p1");
         MonitoringSubscription sub2 = createSubscription(200L, "p2");

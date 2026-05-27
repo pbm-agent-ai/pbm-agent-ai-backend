@@ -35,7 +35,7 @@ public class CommandFieldPolicyService {
                     List.of(CommandFieldType.MODEL)
             ),
             ProductCategory.ELECTRONICS, new CategoryFieldPolicy(
-                    List.of(CommandFieldType.PRODUCT_NAME, CommandFieldType.MAX_PRICE, CommandFieldType.COLOR),
+                    List.of(CommandFieldType.PRODUCT_NAME, CommandFieldType.MAX_PRICE),
                     List.of(CommandFieldType.PLATFORM),
                     List.of()
             ),

@@ -1,6 +1,7 @@
 package com.pbm.price.service;
 
 import com.pbm.price.client.ExternalApiClient;
+import com.pbm.price.common.PriceCurrencyConverter;
 import com.pbm.price.domain.CurrencyType;
 import com.pbm.price.domain.MonitoringSubscription;
 import com.pbm.price.domain.MonitoringSubscriptionStatus;
@@ -33,6 +34,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -44,7 +46,7 @@ import static org.mockito.Mockito.when;
  * 검증 내용:
  * - ACTIVE 상태가 아니면 process를 건너뛰는지 확인
  * - 상품 미조회 시 miss 처리 및 연속 실패 임계치 도달 시 FAILED 전환 확인
- * - USD 통화로 조회 시 1500 환율로 KRW 변환 후 비교 확인
+ * - USD 통화로 조회 시 수출입은행 환율(mock)로 KRW 변환 후 비교 확인
  * - 목표 가격 이하 시 TRIGGERED 전환 + 이벤트 발행 확인
  * - 목표 가격 초과 시 ACTIVE 유지 + 이벤트 미발행 확인
  * - 존재하지 않는 subscriptionId 조회 시 예외 발생 확인
@@ -66,6 +68,9 @@ class SubscriptionMonitoringServiceTest {
     @Mock
     private ExternalApiClient externalApiClient;
 
+    @Mock
+    private PriceCurrencyConverter priceCurrencyConverter;
+
     /** 테스트에서 제어할 refreshSubscription 결과 */
     private SubscriptionMonitoringService.NormalizedProductSnapshot controlledSnapshot;
 
@@ -74,12 +79,17 @@ class SubscriptionMonitoringServiceTest {
 
     @BeforeEach
     void setUp() {
+        // KRW 통화는 그대로 반환하도록 기본 mock 설정 (lenient: 사용하지 않는 테스트에서 UnnecessaryStubbingException 방지)
+        lenient().when(priceCurrencyConverter.toKrw(any(BigDecimal.class), eq(CurrencyType.KRW)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
         // 익명 하위 클래스로 refreshSubscription을 오버라이드하여 테스트 가능하게 함
         service = new SubscriptionMonitoringService(
                 monitoringSubscriptionRepository,
                 priceAlertEventPublisher,
                 paymentRequestEventPublisher,
-                externalApiClient
+                externalApiClient,
+                priceCurrencyConverter
         ) {
             @Override
             SubscriptionMonitoringService.NormalizedProductSnapshot refreshSubscription(
@@ -117,7 +127,8 @@ class SubscriptionMonitoringServiceTest {
                 intent,                           // intent
                 status,                           // status
                 consecutiveMissCount,             // consecutiveMissCount
-                5                                 // checkIntervalMinutes
+                5,                                // checkIntervalMinutes
+                null                              // scheduledEndAt
         );
         ReflectionTestUtils.setField(sub, "id", id);
         return sub;
@@ -238,13 +249,13 @@ class SubscriptionMonitoringServiceTest {
     }
 
     // =========================================================================
-    // USD → KRW 변환 (고정 환율 1500)
+    // USD → KRW 변환 (한국수출입은행 실시간 환율 mock)
     // =========================================================================
 
     @Test
-    @DisplayName("USD로 조회된 상품, 환산 가격(25000*1500=37,500,000)이 목표(30,000) 초과 → ACTIVE 유지, 이벤트 미발행")
+    @DisplayName("USD로 조회된 상품, 환산 가격(25 USD * 1,400 = 35,000)이 목표(30,000) 초과 → ACTIVE 유지, 이벤트 미발행")
     void process_foundUsdCurrency_convertedAboveTarget_maintainsActive() {
-        // given: USD 가격 25,000 → 환산 37,500,000 KRW > 목표 30,000 KRW
+        // given: USD 가격 25 → 환율 1,400 적용 시 35,000 KRW > 목표 30,000 KRW
         MonitoringSubscription sub = createSubscription(
                 100L, MonitoringSubscriptionStatus.ACTIVE,
                 Platform.ALIEXPRESS, CurrencyType.USD, 0, BigDecimal.valueOf(30000),
@@ -252,8 +263,10 @@ class SubscriptionMonitoringServiceTest {
         );
         when(monitoringSubscriptionRepository.findById(100L)).thenReturn(Optional.of(sub));
         when(monitoringSubscriptionRepository.save(sub)).thenReturn(sub);
+        when(priceCurrencyConverter.toKrw(BigDecimal.valueOf(25), CurrencyType.USD))
+                .thenReturn(BigDecimal.valueOf(35000));  // 25 * 1400 = 35,000
 
-        controlledSnapshot = createSnapshot(true, BigDecimal.valueOf(25000), CurrencyType.USD);
+        controlledSnapshot = createSnapshot(true, BigDecimal.valueOf(25), CurrencyType.USD);
 
         // when
         service.process(100L);
@@ -268,9 +281,9 @@ class SubscriptionMonitoringServiceTest {
     }
 
     @Test
-    @DisplayName("USD로 조회된 상품, 환산 가격(10*1500=15,000)이 목표(30,000) 이하 → TRIGGERED 전환 및 이벤트 발행")
+    @DisplayName("USD로 조회된 상품, 환산 가격(20 USD * 1,400 = 28,000)이 목표(30,000) 이하 → TRIGGERED 전환 및 이벤트 발행")
     void process_foundUsdCurrency_convertedBelowTarget_triggers() {
-        // given: USD 가격 10 → 환산 15,000 KRW < 목표 30,000 KRW
+        // given: USD 가격 20 → 환율 1,400 적용 시 28,000 KRW < 목표 30,000 KRW
         MonitoringSubscription sub = createSubscription(
                 100L, MonitoringSubscriptionStatus.ACTIVE,
                 Platform.ALIEXPRESS, CurrencyType.USD, 0, BigDecimal.valueOf(30000),
@@ -278,8 +291,10 @@ class SubscriptionMonitoringServiceTest {
         );
         when(monitoringSubscriptionRepository.findById(100L)).thenReturn(Optional.of(sub));
         when(monitoringSubscriptionRepository.save(sub)).thenReturn(sub);
+        when(priceCurrencyConverter.toKrw(BigDecimal.valueOf(20), CurrencyType.USD))
+                .thenReturn(BigDecimal.valueOf(28000));  // 20 * 1400 = 28,000
 
-        controlledSnapshot = createSnapshot(true, BigDecimal.valueOf(10), CurrencyType.USD);
+        controlledSnapshot = createSnapshot(true, BigDecimal.valueOf(20), CurrencyType.USD);
 
         // when
         service.process(100L);
@@ -294,9 +309,9 @@ class SubscriptionMonitoringServiceTest {
     }
 
     @Test
-    @DisplayName("USD로 조회된 상품, 환산 가격(20*1500=30,000)이 목표(30,000)와 동일 → TRIGGERED 전환")
+    @DisplayName("USD로 조회된 상품, 환산 가격(약 21.4 USD * 1,400 = 30,000)이 목표(30,000)와 동일 → TRIGGERED 전환")
     void process_foundUsdCurrency_convertedEqualToTarget_triggers() {
-        // given: USD 가격 20 → 환산 30,000 KRW == 목표 30,000 KRW
+        // given: USD 가격 → 환율 적용 시 정확히 30,000 KRW == 목표 30,000 KRW
         MonitoringSubscription sub = createSubscription(
                 100L, MonitoringSubscriptionStatus.ACTIVE,
                 Platform.ALIEXPRESS, CurrencyType.USD, 0, BigDecimal.valueOf(30000),
@@ -304,8 +319,10 @@ class SubscriptionMonitoringServiceTest {
         );
         when(monitoringSubscriptionRepository.findById(100L)).thenReturn(Optional.of(sub));
         when(monitoringSubscriptionRepository.save(sub)).thenReturn(sub);
+        when(priceCurrencyConverter.toKrw(BigDecimal.valueOf(21), CurrencyType.USD))
+                .thenReturn(BigDecimal.valueOf(30000));  // mock으로 정확히 30,000 반환
 
-        controlledSnapshot = createSnapshot(true, BigDecimal.valueOf(20), CurrencyType.USD);
+        controlledSnapshot = createSnapshot(true, BigDecimal.valueOf(21), CurrencyType.USD);
 
         // when
         service.process(100L);
@@ -453,7 +470,8 @@ class SubscriptionMonitoringServiceTest {
                 monitoringSubscriptionRepository,
                 priceAlertEventPublisher,
                 paymentRequestEventPublisher,
-                externalApiClient
+                externalApiClient,
+                priceCurrencyConverter
         );
     }
 
@@ -504,7 +522,8 @@ class SubscriptionMonitoringServiceTest {
                     "PRICE_TRACK",                   // intent
                     MonitoringSubscriptionStatus.ACTIVE, // status
                     0,                               // consecutiveMissCount
-                    5                                // checkIntervalMinutes
+                    5,                               // checkIntervalMinutes
+                    null                             // scheduledEndAt
             );
             ReflectionTestUtils.setField(subscription, "id", SUBSCRIPTION_ID);
         }
@@ -699,7 +718,8 @@ class SubscriptionMonitoringServiceTest {
                     "PRICE_TRACK",                   // intent
                     MonitoringSubscriptionStatus.ACTIVE, // status
                     0,                               // consecutiveMissCount
-                    5                                // checkIntervalMinutes
+                    5,                               // checkIntervalMinutes
+                    null                             // scheduledEndAt
             );
             ReflectionTestUtils.setField(subscription, "id", SUBSCRIPTION_ID);
         }

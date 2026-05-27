@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pbm.command.domain.CommandSession;
 import com.pbm.command.domain.CommandSessionStatus;
+import com.pbm.command.domain.PlatformType;
 import com.pbm.command.dto.event.ProductCandidateDto;
 import com.pbm.command.dto.event.ProductSelectionEvent;
 import com.pbm.command.dto.event.ProductSelectionEventPayload;
@@ -22,7 +23,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 import java.util.UUID;
 
@@ -52,17 +56,20 @@ public class CommandExecutionService {
     private final PriceRequestService priceRequestService;
     private final CommandSessionService commandSessionService;
     private final ProductSelectionEventPublisher productSelectionEventPublisher;
+    private final CommandFieldEvaluationService commandFieldEvaluationService;
 
     public CommandExecutionService(
             CommandParsingService commandParsingService,
             PriceRequestService priceRequestService,
             CommandSessionService commandSessionService,
-            ProductSelectionEventPublisher productSelectionEventPublisher
+            ProductSelectionEventPublisher productSelectionEventPublisher,
+            CommandFieldEvaluationService commandFieldEvaluationService
     ) {
         this.commandParsingService = commandParsingService;
         this.priceRequestService = priceRequestService;
         this.commandSessionService = commandSessionService;
         this.productSelectionEventPublisher = productSelectionEventPublisher;
+        this.commandFieldEvaluationService = commandFieldEvaluationService;
     }
 
     /**
@@ -170,7 +177,23 @@ public class CommandExecutionService {
 
         // 3b. 병합된 텍스트로 기존 파싱 플로우 재실행
         CommandParseRequest parseRequest = new CommandParseRequest(mergedText);
-        CommandParseResponse response = commandParsingService.parse(parseRequest);
+        CommandParseResponse gptResponse = commandParsingService.parse(parseRequest);
+
+        // 3c. 구조화된 answers를 GPT 파싱 결과에 직접 덮어씌운다.
+        //     GPT가 텍스트에서 platform 등을 인식하지 못하는 경우에도 유저 선택값이 반영된다.
+        ParsedCommand correctedCommand = applyStructuredAnswers(gptResponse.parsedCommand(), request.answers());
+        FieldEvaluationResult correctedEvaluation = commandFieldEvaluationService.evaluate(gptResponse.intent(), correctedCommand);
+
+        // 3d. 오버라이드된 평가 결과로 응답을 재구성한다.
+        CommandParseResponse response = new CommandParseResponse(
+                gptResponse.intent(),
+                correctedCommand,
+                correctedEvaluation.missingRequiredFields(),
+                correctedEvaluation.ambiguousFields(),
+                correctedEvaluation.needsClarification(),
+                gptResponse.confidence(),
+                commandId
+        );
 
         if (response.needsClarification()) {
             // 4b-1. 재파싱 결과가 여전히 보완이 필요한 경우
@@ -388,6 +411,71 @@ public class CommandExecutionService {
             throw new InvalidProductSelectionException(
                     "세션(commandId: " + session.getCommandId() + ")의 후보 상품 목록 파싱 실패", e);
         }
+    }
+
+    /**
+     * 구조화된 answers 맵을 GPT 파싱 결과(ParsedCommand)에 덮어씌운다.
+     *
+     * 역할: GPT가 재파싱 시 platform 등을 텍스트에서 인식하지 못하더라도,
+     *       사용자가 모달에서 명시적으로 선택한 값이 최종 결과에 반드시 반영되도록 보장한다.
+     * 지원 필드: platform (콤마 구분 복수 허용), maxPrice
+     *
+     * @param original GPT 파싱 결과
+     * @param answers  사용자가 제출한 구조화 답변 맵 (nullable)
+     * @return 오버라이드가 적용된 새 ParsedCommand
+     */
+    private ParsedCommand applyStructuredAnswers(ParsedCommand original, Map<String, String> answers) {
+        if (answers == null || answers.isEmpty() || original == null) {
+            return original;
+        }
+
+        // platform 오버라이드: "NAVER" 또는 "NAVER,ALIEXPRESS" 형식
+        List<PlatformType> platforms = original.platforms();
+        String platformAnswer = answers.get("platform");
+        if (platformAnswer != null && !platformAnswer.isBlank()) {
+            List<PlatformType> parsed = Arrays.stream(platformAnswer.split(","))
+                    .map(String::trim)
+                    .map(p -> {
+                        try { return PlatformType.valueOf(p.toUpperCase()); }
+                        catch (IllegalArgumentException e) { return null; }
+                    })
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+            if (!parsed.isEmpty()) {
+                platforms = parsed;
+                log.info("platform 오버라이드 적용 - answers: {} → platforms: {}", platformAnswer, platforms);
+            }
+        }
+
+        // maxPrice 오버라이드
+        Integer maxPrice = original.maxPrice();
+        String maxPriceAnswer = answers.get("maxPrice");
+        if (maxPriceAnswer != null && !maxPriceAnswer.isBlank()) {
+            try {
+                int parsed = Integer.parseInt(maxPriceAnswer);
+                if (parsed > 0) {
+                    maxPrice = parsed;
+                    log.info("maxPrice 오버라이드 적용 - answers: {} → maxPrice: {}", maxPriceAnswer, maxPrice);
+                }
+            } catch (NumberFormatException e) {
+                log.warn("maxPrice 파싱 실패 - answers value: {}", maxPriceAnswer);
+            }
+        }
+
+        return new ParsedCommand(
+                original.productCategory(),
+                original.productName(),
+                original.brand(),
+                original.line(),
+                original.model(),
+                original.color(),
+                original.size(),
+                platforms,
+                maxPrice,
+                original.minPrice(),
+                original.currency(),
+                original.searchCategoryHint()
+        );
     }
 
     /**

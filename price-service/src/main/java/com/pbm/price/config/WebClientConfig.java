@@ -13,7 +13,7 @@ import java.time.Duration;
 
 /**
  * WebClient 설정 클래스
- * external-api-service 호출용 비동기 논블로킹 HTTP 클라이언트 빈 등록
+ * external-api-service 및 한국수출입은행 환율 API 호출용 WebClient 빈 등록
  *
  * 타임아웃 전략:
  * - Resilience4j @TimeLimiter는 비동기(CompletionStage) 메서드에만 적용 가능하므로,
@@ -40,6 +40,10 @@ public class WebClientConfig {
     @Value("${external-api-service.response-timeout-seconds:5}")
     private int responseTimeoutSeconds;
 
+    /** 한국수출입은행 환율 API 기본 URL */
+    @Value("${korea-eximbank.base-url:https://oapi.koreaexim.go.kr/site/program/financial/exchangeJSON}")
+    private String koreaEximbankBaseUrl;
+
     /**
      * external-api-service 전용 WebClient 빈
      * 기본 URL, 공통 헤더, 타임아웃 설정을 적용한다.
@@ -65,6 +69,27 @@ public class WebClientConfig {
 
         return WebClient.builder()
                 .baseUrl(externalApiBaseUrl)
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .build();
+    }
+
+    /**
+     * 한국수출입은행 환율 API 전용 WebClient 빈.
+     *
+     * 환율 API는 응답이 빠르므로 타임아웃을 짧게 설정한다.
+     * - 연결 타임아웃: 3초
+     * - 응답 타임아웃: 5초
+     */
+    @Bean
+    public WebClient exchangeRateWebClient() {
+        log.info("한국수출입은행 환율 API WebClient 생성 - URL: {}", koreaEximbankBaseUrl);
+
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 3000)
+                .responseTimeout(Duration.ofSeconds(5));
+
+        return WebClient.builder()
+                .baseUrl(koreaEximbankBaseUrl)
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .build();
     }

@@ -59,8 +59,6 @@ services:
   # ─── 인증 서비스 ──────────────────────────────────────────
   auth-service:
     image: ${DOCKERHUB_USERNAME}/pbm-auth-service:latest
-    ports:
-      - "8081:8081"
     depends_on:
       - postgres
       - redis
@@ -81,8 +79,6 @@ services:
   # ─── 커맨드 서비스 ────────────────────────────────────────
   command-service:
     image: ${DOCKERHUB_USERNAME}/pbm-command-service:latest
-    ports:
-      - "8082:8082"
     depends_on:
       - kafka
       - eureka-server
@@ -104,8 +100,6 @@ services:
   # ─── 가격 서비스 ──────────────────────────────────────────
   price-service:
     image: ${DOCKERHUB_USERNAME}/pbm-price-service:latest
-    ports:
-      - "8083:8083"
     depends_on:
       - kafka
       - eureka-server
@@ -123,8 +117,6 @@ services:
   # ─── 결제 서비스 ──────────────────────────────────────────
   payment-service:
     image: ${DOCKERHUB_USERNAME}/pbm-payment-service:latest
-    ports:
-      - "8084:8084"
     depends_on:
       - kafka
       - eureka-server
@@ -139,8 +131,6 @@ services:
   # ─── 알림 서비스 ──────────────────────────────────────────
   notification-service:
     image: ${DOCKERHUB_USERNAME}/pbm-notification-service:latest
-    ports:
-      - "8085:8085"
     depends_on:
       - kafka
       - eureka-server

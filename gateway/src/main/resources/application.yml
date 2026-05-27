@@ -80,6 +80,7 @@ spring:
             - Path=/auth-service/swagger-ui.html, /auth-service/swagger-ui/**, /auth-service/v3/api-docs/**
           filters:
             - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /auth-service
 
         - id: command-service-swagger
           uri: lb://command-service
@@ -87,6 +88,7 @@ spring:
             - Path=/command-service/swagger-ui.html, /command-service/swagger-ui/**, /command-service/v3/api-docs/**
           filters:
             - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /command-service
 
         - id: price-service-swagger
           uri: lb://price-service
@@ -94,6 +96,7 @@ spring:
             - Path=/price-service/swagger-ui.html, /price-service/swagger-ui/**, /price-service/v3/api-docs/**
           filters:
             - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /price-service
 
         - id: payment-service-swagger
           uri: lb://payment-service
@@ -101,6 +104,7 @@ spring:
             - Path=/payment-service/swagger-ui.html, /payment-service/swagger-ui/**, /payment-service/v3/api-docs/**
           filters:
             - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /payment-service
 
         - id: notification-service-swagger
           uri: lb://notification-service
@@ -108,6 +112,7 @@ spring:
             - Path=/notification-service/swagger-ui.html, /notification-service/swagger-ui/**, /notification-service/v3/api-docs/**
           filters:
             - StripPrefix=1
+            - AddRequestHeader=X-Forwarded-Prefix, /notification-service
 
 eureka:
   client:

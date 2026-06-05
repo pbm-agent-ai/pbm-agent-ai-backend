@@ -1,0 +1,27 @@
+{
+  "groups": [
+    {
+      "name": "proxy",
+      "type": "com.pbm.command.config.OpenAiProperties",
+      "sourceType": "com.pbm.command.config.OpenAiProperties"
+    }
+  ],
+  "properties": [
+    {
+      "name": "proxy.base-url",
+      "type": "java.lang.String",
+      "sourceType": "com.pbm.command.config.OpenAiProperties"
+    },
+    {
+      "name": "proxy.connect-timeout-ms",
+      "type": "java.lang.Integer",
+      "sourceType": "com.pbm.command.config.OpenAiProperties"
+    },
+    {
+      "name": "proxy.read-timeout-ms",
+      "type": "java.lang.Integer",
+      "sourceType": "com.pbm.command.config.OpenAiProperties"
+    }
+  ],
+  "hints": []
+}

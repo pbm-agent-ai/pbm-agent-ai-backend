@@ -4,6 +4,7 @@ import com.pbm.price.domain.CurrencyType;
 import com.pbm.price.domain.MonitoringSubscription;
 import com.pbm.price.domain.MonitoringSubscriptionStatus;
 import com.pbm.price.domain.Platform;
+import com.pbm.price.publisher.SubscriptionTerminationEventPublisher;
 import com.pbm.price.repository.MonitoringSubscriptionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -44,6 +45,9 @@ class SubscriptionMonitoringSchedulerTest {
     @Mock
     private SubscriptionMonitoringService subscriptionMonitoringService;
 
+    @Mock
+    private SubscriptionTerminationEventPublisher subscriptionTerminationEventPublisher;
+
     @InjectMocks
     private SubscriptionMonitoringScheduler scheduler;
 
@@ -67,6 +71,7 @@ class SubscriptionMonitoringSchedulerTest {
                 "https://example.com/p/" + productId, // productUrl
                 "테스트 상품 " + productId,         // snapshotTitle
                 BigDecimal.valueOf(50000),         // snapshotPrice
+                null,                             // snapshotImageUrl
                 "테스트 키워드",                    // searchKeyword
                 BigDecimal.valueOf(30000),         // targetPrice
                 CurrencyType.KRW,                  // currency

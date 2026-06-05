@@ -1,29 +1,42 @@
 package com.pbm.price.service;
 
+import com.pbm.price.client.PaymentServiceClient;
 import com.pbm.price.domain.CurrencyType;
+import com.pbm.price.domain.MonitorTarget;
 import com.pbm.price.domain.MonitoringSubscription;
 import com.pbm.price.domain.MonitoringSubscriptionStatus;
 import com.pbm.price.domain.Platform;
 import com.pbm.price.dto.event.ProductCandidateDto;
+import com.pbm.price.dto.event.SessionKeyRegistrationEvent;
+import com.pbm.price.dto.event.SessionKeyRegistrationEventPayload;
+import com.pbm.price.dto.event.SubscriptionTerminationEvent;
+import com.pbm.price.dto.event.SubscriptionTerminationEventPayload;
 import com.pbm.price.dto.request.MonitoringSubscriptionUpdateRequest;
 import com.pbm.price.exception.SubscriptionAccessDeniedException;
 import com.pbm.price.exception.SubscriptionNotFoundException;
+import com.pbm.price.publisher.SessionKeyRegistrationEventPublisher;
+import com.pbm.price.publisher.SubscriptionTerminationEventPublisher;
+import com.pbm.price.repository.MonitorTargetRepository;
 import com.pbm.price.repository.MonitoringSubscriptionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.web3j.crypto.ECKeyPair;
+import org.web3j.crypto.Keys;
+import org.web3j.utils.Numeric;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * 모니터링 구독 생성/갱신 서비스.
  *
  * 역할: 사용자가 선택한 후보 상품 정보를 ProductCandidateDto로 받아
- *       monitoring_subscriptions 레코드를 생성하거나 기존 구독을 갱신한다.
+ *       users_monitoring_subscriptions 레코드를 생성하거나 기존 구독을 갱신한다.
  * 동작:
  *   1. payload에서 platform/currency/가격을 파싱한다.
  *   2. 동일 사용자 + 동일 플랫폼 + 동일 productId 구독이 있는지 조회한다.
@@ -50,14 +63,29 @@ public class MonitoringSubscriptionService {
             CurrencyType currency,
             BigDecimal snapshotPrice,
             BigDecimal targetPrice,
-            Instant now
+            Instant now,
+            Instant resolvedEndAt
     ) {
     }
 
     private final MonitoringSubscriptionRepository monitoringSubscriptionRepository;
+    private final MonitorTargetRepository monitorTargetRepository;
+    private final SessionKeyRegistrationEventPublisher sessionKeyRegistrationEventPublisher;
+    private final SubscriptionTerminationEventPublisher subscriptionTerminationEventPublisher;
+    private final PaymentServiceClient paymentServiceClient;
 
-    public MonitoringSubscriptionService(MonitoringSubscriptionRepository monitoringSubscriptionRepository) {
+    public MonitoringSubscriptionService(
+            MonitoringSubscriptionRepository monitoringSubscriptionRepository,
+            MonitorTargetRepository monitorTargetRepository,
+            SessionKeyRegistrationEventPublisher sessionKeyRegistrationEventPublisher,
+            SubscriptionTerminationEventPublisher subscriptionTerminationEventPublisher,
+            PaymentServiceClient paymentServiceClient
+    ) {
         this.monitoringSubscriptionRepository = monitoringSubscriptionRepository;
+        this.monitorTargetRepository = monitorTargetRepository;
+        this.sessionKeyRegistrationEventPublisher = sessionKeyRegistrationEventPublisher;
+        this.subscriptionTerminationEventPublisher = subscriptionTerminationEventPublisher;
+        this.paymentServiceClient = paymentServiceClient;
     }
 
     /**
@@ -84,7 +112,18 @@ public class MonitoringSubscriptionService {
             String intent,
             ProductCandidateDto selectedProduct
     ) {
-        ParsedSelectionContext context = parseSelectionContext(selectedProduct, targetPriceValue);
+        return createOrUpdateFromSelection(userId, commandId, targetPriceValue, intent, selectedProduct, null);
+    }
+
+    public MonitoringSubscription createOrUpdateFromSelection(
+            Long userId,
+            String commandId,
+            Integer targetPriceValue,
+            String intent,
+            ProductCandidateDto selectedProduct,
+            Instant scheduledEndAt
+    ) {
+        ParsedSelectionContext context = parseSelectionContext(selectedProduct, targetPriceValue, scheduledEndAt);
 
         return monitoringSubscriptionRepository.findByUserIdAndPlatformAndProductId(
                         userId,
@@ -185,6 +224,14 @@ public class MonitoringSubscriptionService {
         monitoringSubscriptionRepository.save(subscription);
 
         log.info("모니터링 구독 취소 완료 - subscriptionId: {}, userId: {}", subscriptionId, userId);
+
+        subscriptionTerminationEventPublisher.publish(new SubscriptionTerminationEvent(
+                java.util.UUID.randomUUID().toString(),
+                "SUBSCRIPTION_TERMINATED",
+                java.time.Instant.now(),
+                "price-service",
+                new SubscriptionTerminationEventPayload(subscriptionId, userId, "CANCELLED")
+        ));
     }
 
     /**
@@ -247,6 +294,7 @@ public class MonitoringSubscriptionService {
                 selectedProduct.productUrl(),
                 selectedProduct.title(),
                 context.snapshotPrice(),
+                selectedProduct.imageUrl(),
                 selectedProduct.searchKeyword(),
                 context.targetPrice(),
                 intent,
@@ -254,11 +302,26 @@ public class MonitoringSubscriptionService {
         );
         existing.changeStatus(MonitoringSubscriptionStatus.ACTIVE);
         existing.resetMissCount();
-        // 재등록 시 종료 예정 시각을 현재 기준 7일 후로 리셋한다.
-        existing.updateScheduledEndAt(context.now().plus(DEFAULT_MONITORING_DURATION_DAYS, ChronoUnit.DAYS));
+        // 사용자 지정 마감일 또는 기본 7일 후로 리셋한다.
+        existing.updateScheduledEndAt(context.resolvedEndAt());
         existing.markChecked(context.now());
 
-        return monitoringSubscriptionRepository.save(existing);
+        MonitoringSubscription saved = monitoringSubscriptionRepository.save(existing);
+
+        // 공유 MonitorTarget 활성화/갱신
+        activateMonitorTarget(
+                context.platform(),
+                selectedProduct.productId(),
+                selectedProduct.searchKeyword(),
+                selectedProduct.productUrl()
+        );
+
+        // AUTO_PURCHASE 재등록 시 기존 세션키가 만료/취소 상태일 수 있으므로 새 키페어를 발급한다.
+        if ("AUTO_PURCHASE".equals(intent)) {
+            registerSessionKey(saved, context);
+        }
+
+        return saved;
     }
 
     /**
@@ -275,8 +338,8 @@ public class MonitoringSubscriptionService {
             ProductCandidateDto selectedProduct,
             ParsedSelectionContext context
     ) {
-        // 신규 구독의 종료 예정 시각: 현재 기준 7일 후
-        Instant scheduledEndAt = context.now().plus(DEFAULT_MONITORING_DURATION_DAYS, ChronoUnit.DAYS);
+        // 사용자 지정 마감일 또는 기본 7일 후
+        Instant scheduledEndAt = context.resolvedEndAt();
 
         MonitoringSubscription subscription = MonitoringSubscription.create(
                 userId,
@@ -286,6 +349,7 @@ public class MonitoringSubscriptionService {
                 selectedProduct.productUrl(),
                 selectedProduct.title(),
                 context.snapshotPrice(),
+                selectedProduct.imageUrl(),
                 selectedProduct.searchKeyword(),
                 context.targetPrice(),
                 context.currency(),
@@ -298,7 +362,120 @@ public class MonitoringSubscriptionService {
 
         subscription.markChecked(context.now());
 
-        return monitoringSubscriptionRepository.save(subscription);
+        MonitoringSubscription saved = monitoringSubscriptionRepository.save(subscription);
+
+        // 공유 MonitorTarget 활성화/갱신
+        activateMonitorTarget(
+                context.platform(),
+                selectedProduct.productId(),
+                selectedProduct.searchKeyword(),
+                selectedProduct.productUrl()
+        );
+
+        // AUTO_PURCHASE intent인 경우 AI 에이전트 키페어를 생성하고 세션키 등록 이벤트를 발행한다.
+        if ("AUTO_PURCHASE".equals(intent)) {
+            registerSessionKey(saved, context);
+        }
+
+        return saved;
+    }
+
+    /**
+     * 모니터링 구독 생성/갱신 시 해당 상품의 MonitorTarget을 찾거나 생성하고 공유 폴링을 활성화한다.
+     * <p>
+     * 공유 폴링 대상은 (platform, productId) 기준으로 유일하며, 여러 사용자가 같은 상품을 구독해도
+     * 하나의 MonitorTarget만 유지된다. 검색 결과 저장 시에는 nextFetchAt이 null로 생성되지만,
+     * 이 메서드에서 markFetched를 호출하여 정기 수집이 시작된다.
+     *
+     * @param platform      플랫폼
+     * @param productId     상품 ID
+     * @param searchKeyword 검색 키워드
+     * @param productUrl    상품 URL
+     */
+    private void activateMonitorTarget(Platform platform, String productId, String searchKeyword, String productUrl) {
+        MonitorTarget target = monitorTargetRepository
+                .findByPlatformAndProductId(platform, productId)
+                .orElseGet(() -> MonitorTarget.create(platform, productId, searchKeyword, productUrl, DEFAULT_CHECK_INTERVAL_MINUTES));
+
+        target.updateSearchContext(searchKeyword, productUrl);
+        target.markFetched(Instant.now());
+        monitorTargetRepository.save(target);
+
+        log.debug("MonitorTarget 활성화 완료 - platform: {}, productId: {}", platform, productId);
+    }
+
+    /**
+     * AUTO_PURCHASE 구독에 대한 AI 에이전트 키페어를 생성하고 DB에 저장한 뒤
+     * payment-service로 세션키 등록 이벤트를 발행한다.
+     * <p>
+     * 키페어 생성: Web3j ECKeyPair.create()를 통해 secp256k1 기반 키페어를 생성한다.
+     * 세션키 한도: 목표 가격(targetPrice)을 한도로 사용한다.
+     * 유효 기간: 모니터링 종료 예정 시각(scheduledEndAt) 기준으로 계산한다.
+     *
+     * @param subscription 저장된 신규 모니터링 구독
+     * @param context      파싱된 선택 컨텍스트
+     */
+    private void registerSessionKey(MonitoringSubscription subscription, ParsedSelectionContext context) {
+        try {
+            // 1차 방어선: 세션키 한도(목표가격)가 지갑 전체 한도를 초과하면 등록 거부
+            long limitKrw = subscription.getTargetPrice().longValue();
+            java.math.BigDecimal walletLimit = paymentServiceClient.getWalletLimit(subscription.getUserId());
+            if (walletLimit != null && limitKrw > walletLimit.longValue()) {
+                log.warn("세션키 등록 거부 - 목표가격({} KRW)이 지갑 한도({} KRW)를 초과합니다. " +
+                                "subscriptionId: {}, userId: {}",
+                        limitKrw, walletLimit, subscription.getId(), subscription.getUserId());
+                throw new IllegalArgumentException(
+                        String.format("목표 가격(%d KRW)이 지갑 한도(%s KRW)를 초과합니다. 지갑 한도 이하로 설정해주세요.",
+                                limitKrw, walletLimit.toPlainString()));
+            }
+
+            // 2. ECKeyPair 생성 (secp256k1, 무작위 보안 키)
+            ECKeyPair keyPair = Keys.createEcKeyPair();
+            String privateKeyHex = Numeric.toHexStringNoPrefixZeroPadded(keyPair.getPrivateKey(), 64);
+            // Keys.getAddress()는 40자리 hex → "0x" 접두어 추가
+            String address = "0x" + Keys.getAddress(keyPair);
+
+            // 2. 구독 엔티티에 키 저장
+            subscription.assignSessionKey(address, privateKeyHex);
+            monitoringSubscriptionRepository.save(subscription);
+
+            // 3. 유효 기간(초) 계산: scheduledEndAt이 없으면 DEFAULT_MONITORING_DURATION_DAYS 적용
+            long validSeconds;
+            if (subscription.getScheduledEndAt() != null) {
+                validSeconds = subscription.getScheduledEndAt().getEpochSecond() - context.now().getEpochSecond();
+            } else {
+                validSeconds = (long) DEFAULT_MONITORING_DURATION_DAYS * 24 * 3600;
+            }
+
+            // 4. 세션키 등록 이벤트 발행 (개인키 포함 — payment-service가 DB에 저장하여 결제 서명에 사용)
+            SessionKeyRegistrationEventPayload payload = new SessionKeyRegistrationEventPayload(
+                    subscription.getUserId(),
+                    subscription.getId(),
+                    address,
+                    privateKeyHex,
+                    subscription.getTargetPrice().longValue(),
+                    validSeconds,
+                    subscription.getPlatform().name()
+            );
+            SessionKeyRegistrationEvent event = new SessionKeyRegistrationEvent(
+                    UUID.randomUUID().toString(),
+                    "SESSION_KEY_REGISTRATION",
+                    context.now(),
+                    "price-service",
+                    payload
+            );
+            sessionKeyRegistrationEventPublisher.publish(event);
+
+            log.info("AI 에이전트 키페어 생성 및 세션키 등록 이벤트 발행 완료 - " +
+                            "subscriptionId: {}, aiAgent: {}, limit: {} KRW, validSeconds: {}",
+                    subscription.getId(), address, subscription.getTargetPrice().longValue(), validSeconds);
+
+        } catch (Exception e) {
+            log.error("AI 에이전트 키페어 생성 실패 - subscriptionId: {}, 원인: {}",
+                    subscription.getId(), e.getMessage(), e);
+            // 키페어 생성 실패는 모니터링 구독 자체를 실패시키지 않는다.
+            // 세션키 없이 PRICE_TRACK 모드로 동작 가능하다.
+        }
     }
 
     /**
@@ -309,12 +486,24 @@ public class MonitoringSubscriptionService {
      * @return 파싱된 보조 컨텍스트
      */
     private ParsedSelectionContext parseSelectionContext(ProductCandidateDto selectedProduct, Integer targetPriceValue) {
+        return parseSelectionContext(selectedProduct, targetPriceValue, null);
+    }
+
+    private ParsedSelectionContext parseSelectionContext(ProductCandidateDto selectedProduct,
+                                                         Integer targetPriceValue,
+                                                         Instant customScheduledEndAt) {
         Platform platform = parsePlatform(selectedProduct.platform());
         CurrencyType currency = parseCurrency(selectedProduct.currency());
         BigDecimal snapshotPrice = parseBigDecimal(selectedProduct.lprice(), "lprice");
-        BigDecimal targetPrice = BigDecimal.valueOf(targetPriceValue);
+        BigDecimal targetPrice = targetPriceValue != null
+                ? BigDecimal.valueOf(targetPriceValue)
+                : snapshotPrice;
         Instant now = Instant.now();
-        return new ParsedSelectionContext(platform, currency, snapshotPrice, targetPrice, now);
+        // 사용자가 마감일을 지정했으면 우선 적용, 없으면 기본 7일 후
+        Instant resolvedEndAt = (customScheduledEndAt != null && customScheduledEndAt.isAfter(now))
+                ? customScheduledEndAt
+                : now.plus(DEFAULT_MONITORING_DURATION_DAYS, ChronoUnit.DAYS);
+        return new ParsedSelectionContext(platform, currency, snapshotPrice, targetPrice, now, resolvedEndAt);
     }
 
     /**

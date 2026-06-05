@@ -6,9 +6,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.web3j.crypto.Credentials;
+import okhttp3.OkHttpClient;
 import org.web3j.protocol.Web3j;
 import org.web3j.protocol.http.HttpService;
-import org.web3j.tx.gas.DefaultGasProvider;
+import org.springframework.context.annotation.Primary;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * Web3j 블록체인 연동 설정 클래스.
@@ -43,7 +46,13 @@ public class Web3Config {
     @Bean
     public Web3j web3j() {
         log.info("Web3j 초기화 - RPC URL: {}", rpcUrl);
-        Web3j web3j = Web3j.build(new HttpService(rpcUrl));
+        // OkHttpClient에 타임아웃 설정 — 미설정 시 RPC 응답 지연으로 스레드가 무한 대기함
+        OkHttpClient okHttpClient = new OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)   // TCP 연결 타임아웃
+                .readTimeout(30, TimeUnit.SECONDS)      // 응답 읽기 타임아웃
+                .writeTimeout(30, TimeUnit.SECONDS)     // 요청 전송 타임아웃
+                .build();
+        Web3j web3j = Web3j.build(new HttpService(rpcUrl, okHttpClient));
 
         try {
             String clientVersion = web3j.web3ClientVersion().send().getWeb3ClientVersion();
@@ -56,13 +65,15 @@ public class Web3Config {
     }
 
     /**
-     * AI 에이전트 개인키로 Credentials 빈 등록.
-     * 트랜잭션 서명에 사용되며, 개인키는 반드시 환경변수로 주입받는다.
+     * 마스터 개인키로 Credentials 빈 등록.
+     * AccountFactory.createAccount() 및 addSessionKey() 호출 시 사용한다.
+     * 개인키는 반드시 환경변수로 주입받는다.
      */
-    @Bean
-    public Credentials credentials() {
+    @Bean(name = "masterCredentials")
+    @Primary
+    public Credentials masterCredentials() {
         Credentials credentials = Credentials.create(privateKey);
-        log.info("AI 에이전트 지갑 주소: {}", credentials.getAddress());
+        log.info("마스터 지갑 주소(Owner): {}", credentials.getAddress());
         return credentials;
     }
 }

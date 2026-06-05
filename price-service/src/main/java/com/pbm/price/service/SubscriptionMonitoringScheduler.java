@@ -2,6 +2,9 @@ package com.pbm.price.service;
 
 import com.pbm.price.domain.MonitoringSubscription;
 import com.pbm.price.domain.MonitoringSubscriptionStatus;
+import com.pbm.price.dto.event.SubscriptionTerminationEvent;
+import com.pbm.price.dto.event.SubscriptionTerminationEventPayload;
+import com.pbm.price.publisher.SubscriptionTerminationEventPublisher;
 import com.pbm.price.repository.MonitoringSubscriptionRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -10,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 @Slf4j
 @Component
@@ -17,13 +21,16 @@ public class SubscriptionMonitoringScheduler {
 
     private final MonitoringSubscriptionRepository monitoringSubscriptionRepository;
     private final SubscriptionMonitoringService subscriptionMonitoringService;
+    private final SubscriptionTerminationEventPublisher subscriptionTerminationEventPublisher;
 
     public SubscriptionMonitoringScheduler(
             MonitoringSubscriptionRepository monitoringSubscriptionRepository,
-            SubscriptionMonitoringService subscriptionMonitoringService
+            SubscriptionMonitoringService subscriptionMonitoringService,
+            SubscriptionTerminationEventPublisher subscriptionTerminationEventPublisher
     ) {
         this.monitoringSubscriptionRepository = monitoringSubscriptionRepository;
         this.subscriptionMonitoringService = subscriptionMonitoringService;
+        this.subscriptionTerminationEventPublisher = subscriptionTerminationEventPublisher;
     }
 
     /**
@@ -107,6 +114,15 @@ public class SubscriptionMonitoringScheduler {
             monitoringSubscriptionRepository.save(subscription);
             log.info("모니터링 구독 만료 완료 처리 - subscriptionId: {}, scheduledEndAt: {}",
                     subscription.getId(), subscription.getScheduledEndAt());
+
+            subscriptionTerminationEventPublisher.publish(new SubscriptionTerminationEvent(
+                    UUID.randomUUID().toString(),
+                    "SUBSCRIPTION_TERMINATED",
+                    Instant.now(),
+                    "price-service",
+                    new SubscriptionTerminationEventPayload(
+                            subscription.getId(), subscription.getUserId(), "EXPIRED")
+            ));
         }
 
         log.info("모니터링 구독 만료 처리 종료 - count: {}", expired.size());

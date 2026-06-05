@@ -1,0 +1,17 @@
+# 테스트 환경에서는 JPA를 활성화하여 @DataJpaTest가 정상 동작하게 한다
+# 메인 application.yml의 spring.autoconfigure.exclude 설정을 덮어쓴다
+spring:
+  autoconfigure:
+    exclude: []
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true

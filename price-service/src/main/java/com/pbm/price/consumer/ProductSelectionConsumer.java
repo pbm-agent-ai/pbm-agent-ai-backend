@@ -165,7 +165,8 @@ public class ProductSelectionConsumer {
                     event.payload().commandId(),
                     event.payload().targetPrice(),
                     event.payload().intent(),
-                    triggeredProduct
+                    triggeredProduct,
+                    event.payload().scheduledEndAt()
             );
             subscriptionMonitoringService.process(subscription.getId());
         }
@@ -205,7 +206,8 @@ public class ProductSelectionConsumer {
                     event.payload().commandId(),
                     event.payload().targetPrice(),
                     event.payload().intent(),
-                    cheapest.candidate()
+                    cheapest.candidate(),
+                    event.payload().scheduledEndAt()
             );
             subscriptionMonitoringService.process(subscription.getId());
         }
@@ -258,7 +260,8 @@ public class ProductSelectionConsumer {
                     event.payload().commandId(),
                     event.payload().targetPrice(),
                     event.payload().intent(),
-                    monitoringProduct
+                    monitoringProduct,
+                    event.payload().scheduledEndAt()
             );
             log.info("모니터링 구독 생성/갱신 완료 - subscriptionId: {}, commandId: {}, productId: {}",
                     subscription.getId(), subscription.getCommandId(), monitoringProduct.productId());

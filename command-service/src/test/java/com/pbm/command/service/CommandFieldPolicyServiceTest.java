@@ -8,12 +8,12 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 카테고리별 필드 정책 테스트.
+ * 공통 필드 정책 테스트.
  *
- * 역할: 상품 카테고리마다 어떤 필드가 필수인지, 어떤 필드가 추가 확인 대상인지 검증한다.
- * 동작: 멀티 플랫폼 지원 이후 PLATFORM은 requiredFields에서 제외되어
- *       빈 platforms = 전체 플랫폼 대상 검색이 허용된다.
- *       AUTO_PURCHASE 시에만 PLATFORM이 autoPurchaseClarificationFields에 포함된다.
+ * 역할: 모든 카테고리에 동일하게 적용되는 공통 필수 필드와 확인 필드를 검증한다.
+ * 동작: getRequiredFields는 모든 카테고리에서 PRODUCT_NAME, MAX_PRICE, PLATFORM을 반환한다.
+ *       getAutoPurchaseClarificationFields와 getBroadProductClarificationFields는
+ *       카테고리별 size/color/model 의존 로직이 제거되어 빈 리스트를 반환한다.
  * 연관: CommandFieldPolicyService, CommandFieldType.
  */
 class CommandFieldPolicyServiceTest {
@@ -21,51 +21,58 @@ class CommandFieldPolicyServiceTest {
     private final CommandFieldPolicyService commandFieldPolicyService = new CommandFieldPolicyService();
 
     @Test
-    @DisplayName("신발 카테고리는 productName, maxPrice, size를 필수 필드로 가진다 (PLATFORM은 제외, 멀티플랫폼 지원)")
-    void shoesPolicy_containsExpectedRequiredFields() {
+    @DisplayName("모든 카테고리는 productName, maxPrice, platform을 공통 필수 필드로 가진다")
+    void allCategories_shareCommonRequiredFields() {
+        // 세 가지 카테고리 모두 동일한 필수 필드를 가져야 함
+        var expected = java.util.List.of(
+                CommandFieldType.PRODUCT_NAME,
+                CommandFieldType.MAX_PRICE,
+                CommandFieldType.PLATFORM
+        );
+
         assertThat(commandFieldPolicyService.getRequiredFields(ProductCategory.SHOES))
-                .containsExactly(
-                        CommandFieldType.PRODUCT_NAME,
-                        CommandFieldType.MAX_PRICE,
-                        CommandFieldType.SIZE
-                );
-    }
-
-    @Test
-    @DisplayName("신발 카테고리는 자동 결제 시 platform, color를 추가 확인 대상으로 가진다")
-    void shoesPolicy_containsExpectedAutoPurchaseClarificationFields() {
-        assertThat(commandFieldPolicyService.getAutoPurchaseClarificationFields(ProductCategory.SHOES))
-                .containsExactly(
-                        CommandFieldType.PLATFORM,
-                        CommandFieldType.COLOR
-                );
-    }
-
-    @Test
-    @DisplayName("전자기기 카테고리는 productName, maxPrice를 필수 필드로 가진다 (color·PLATFORM은 제외)")
-    void electronicsPolicy_requiresProductNameAndMaxPriceOnly() {
+                .containsExactlyElementsOf(expected);
         assertThat(commandFieldPolicyService.getRequiredFields(ProductCategory.ELECTRONICS))
-                .containsExactly(
-                        CommandFieldType.PRODUCT_NAME,
-                        CommandFieldType.MAX_PRICE
-                );
+                .containsExactlyElementsOf(expected);
+        assertThat(commandFieldPolicyService.getRequiredFields(ProductCategory.APPAREL))
+                .containsExactlyElementsOf(expected);
     }
 
     @Test
-    @DisplayName("의류 카테고리는 productName, maxPrice, size를 필수 필드로 가진다 (PLATFORM은 제외)")
-    void apparelPolicy_containsExpectedRequiredFields() {
-        assertThat(commandFieldPolicyService.getRequiredFields(ProductCategory.APPAREL))
+    @DisplayName("UNKNOWN 카테고리도 동일한 공통 필수 필드를 가진다")
+    void unknownCategory_usesCommonRequiredFields() {
+        assertThat(commandFieldPolicyService.getRequiredFields(ProductCategory.UNKNOWN))
                 .containsExactly(
                         CommandFieldType.PRODUCT_NAME,
                         CommandFieldType.MAX_PRICE,
-                        CommandFieldType.SIZE
+                        CommandFieldType.PLATFORM
                 );
     }
 
     @Test
-    @DisplayName("전자기기 카테고리는 자동 결제 시 platform을 추가 확인 대상으로 가진다")
-    void electronicsPolicy_autoPurchaseClarificationIncludesPlatform() {
-        assertThat(commandFieldPolicyService.getAutoPurchaseClarificationFields(ProductCategory.ELECTRONICS))
-                .containsExactly(CommandFieldType.PLATFORM);
+    @DisplayName("null 카테고리도 동일한 공통 필수 필드를 가진다")
+    void nullCategory_usesCommonRequiredFields() {
+        assertThat(commandFieldPolicyService.getRequiredFields(null))
+                .containsExactly(
+                        CommandFieldType.PRODUCT_NAME,
+                        CommandFieldType.MAX_PRICE,
+                        CommandFieldType.PLATFORM
+                );
+    }
+
+    @Test
+    @DisplayName("자동 결제 추가 확인 필드는 모든 카테고리에서 빈 리스트를 반환한다 (PLATFORM이 공통 필수이므로)")
+    void autoPurchaseClarificationFields_emptyForAllCategories() {
+        assertThat(commandFieldPolicyService.getAutoPurchaseClarificationFields(ProductCategory.SHOES)).isEmpty();
+        assertThat(commandFieldPolicyService.getAutoPurchaseClarificationFields(ProductCategory.ELECTRONICS)).isEmpty();
+        assertThat(commandFieldPolicyService.getAutoPurchaseClarificationFields(ProductCategory.APPAREL)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("상품명 모호성 확인 필드는 모든 카테고리에서 빈 리스트를 반환한다")
+    void broadProductClarificationFields_emptyForAllCategories() {
+        assertThat(commandFieldPolicyService.getBroadProductClarificationFields(ProductCategory.SHOES)).isEmpty();
+        assertThat(commandFieldPolicyService.getBroadProductClarificationFields(ProductCategory.ELECTRONICS)).isEmpty();
+        assertThat(commandFieldPolicyService.getBroadProductClarificationFields(ProductCategory.APPAREL)).isEmpty();
     }
 }

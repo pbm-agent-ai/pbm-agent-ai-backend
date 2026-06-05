@@ -38,7 +38,7 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_CREATE_TOPICS: "user-event:1:1,price-topic:1:1,price-alert:1:1,payment-topic:1:1,payment-result:1:1"
+      KAFKA_CREATE_TOPICS: "user-event:1:1,price-topic:1:1,price-alert:1:1,payment-topic:1:1,payment-result:1:1,session-key-registration:1:1"
 
   # ─── 모니터링 ──────────────────────────────────────────────
   prometheus:
@@ -159,6 +159,11 @@ services:
       - PAYMENT_DB_URL=jdbc:postgresql://postgres:5432/payment_db
       - PAYMENT_DB_USERNAME=${PAYMENT_DB_USERNAME:-postgres}
       - PAYMENT_DB_PASSWORD=${PAYMENT_DB_PASSWORD:-password}
+      - SEPOLIA_RPC_URL=${SEPOLIA_RPC_URL}
+      - BLOCKCHAIN_PRIVATE_KEY=${BLOCKCHAIN_PRIVATE_KEY}
+      - CONTRACT_ACCOUNT_FACTORY=${CONTRACT_ACCOUNT_FACTORY}
+      - CONTRACT_PBM_TOKEN=${CONTRACT_PBM_TOKEN}
+      - CONTRACT_PAYMASTER=${CONTRACT_PAYMASTER}
 
   # ─── 알림 서비스 ──────────────────────────────────────────
   notification-service:
@@ -199,6 +204,9 @@ services:
       - OPENAI_MOCK_ENABLED=${OPENAI_MOCK_ENABLED:-false}
       # Gemini API 환경변수 (Vision Planner용)
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - VISION_DEBUG_DIR=/app/vision-debug
+    volumes:
+      - ./vision-debug:/app/vision-debug
 
 volumes:
   postgres_data:

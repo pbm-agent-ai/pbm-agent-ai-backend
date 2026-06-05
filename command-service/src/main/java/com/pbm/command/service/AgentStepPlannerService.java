@@ -7,12 +7,7 @@ import com.pbm.command.client.AiDomPlannerClient;
 import com.pbm.command.client.AiVisionPlannerClient;
 import com.pbm.command.client.dto.DomPlannerInstructionPayload;
 import com.pbm.command.client.dto.VisionPlannerInstructionPayload;
-import com.pbm.command.domain.CommandIntent;
-import com.pbm.command.domain.BrowserActionType;
-import com.pbm.command.domain.CommandSession;
-import com.pbm.command.domain.CommandSessionStatus;
-import com.pbm.command.domain.PlatformConfig;
-import com.pbm.command.domain.PlatformType;
+import com.pbm.command.domain.*;
 import com.pbm.command.dto.request.AgentRunActionResultRequest;
 import com.pbm.command.dto.request.InteractiveElementRequest;
 import com.pbm.command.dto.request.OptionGroupRequest;
@@ -159,32 +154,64 @@ public class AgentStepPlannerService {
             return visionInstruction;
         }
 
-        ActionInstructionResponse aiInstruction = buildAiDomInstruction(runId, stepIndex, commandSession, snapshot, targetProduct);
-        if (aiInstruction != null) {
-            return aiInstruction;
-        }
+        // vision이 스크린샷 기반으로 시도됐으나 실패(confidence 부족 or 오류)한 경우:
+        // 같은 스냅샷으로 DOM AI를 재호출해도 결과가 동일하므로 건너뛰고 SCROLL/ABORT로 직행한다.
+        boolean visionAttempted = previousActionResult != null
+                && previousActionResult.toolResult() != null
+                && previousActionResult.toolResult().screenshot() != null;
 
-        Optional<ActionInstructionResponse> optionInstruction = buildOptionSelectionInstruction(
-                stepIndex,
-                actionId,
-                commandSession,
-                snapshot
-        );
-        if (optionInstruction.isPresent()) {
-            return optionInstruction.get();
+        if (!visionAttempted) {
+            ActionInstructionResponse aiInstruction = buildAiDomInstruction(runId, stepIndex, commandSession, snapshot, targetProduct);
+            if (aiInstruction != null) {
+                return aiInstruction;
+            }
+
+            Optional<ActionInstructionResponse> optionInstruction = buildOptionSelectionInstruction(
+                    stepIndex,
+                    actionId,
+                    commandSession,
+                    snapshot
+            );
+            if (optionInstruction.isPresent()) {
+                return optionInstruction.get();
+            }
+        } else {
+            log.info("[AgentStepPlannerService] Vision 시도 후 실패 → DOM AI 재시도 건너뜀, SCROLL/ABORT로 직행 - runId={}, stepIndex={}", runId, stepIndex);
         }
 
         // PRODUCT_DETAIL 페이지: AI가 버튼을 못 찾아도 메인 페이지로 이동하지 않는다.
-        // (카탈로그 → 판매처 상세로 정상 이동한 상태. productUrl이 카탈로그 URL과 달라 보이지만
-        //  메인으로 돌아가면 안 됨 → SCROLL로 버튼이 보일 때까지 재시도)
-        // 단, 무한 SCROLL 루프 방지: stepIndex가 임계치를 넘으면 ABORT
+        // 순서: DOM AI 실패 → Vision AI 1회 시도 → SCROLL → ... → ABORT
         if (currentPageType == PageType.PRODUCT_DETAIL) {
             if (stepIndex >= MAX_DOMAIN_REDIRECT_ATTEMPTS) {
-                log.error("[AgentStepPlannerService] PRODUCT_DETAIL SCROLL {}회 초과 → ABORT - runId={}", MAX_DOMAIN_REDIRECT_ATTEMPTS, runId);
+                log.error("[AgentStepPlannerService] PRODUCT_DETAIL 탐색 {}회 초과 → ABORT - runId={}", MAX_DOMAIN_REDIRECT_ATTEMPTS, runId);
                 return ActionInstructionResponse.abort(stepIndex, actionId,
                         "구매 버튼을 " + MAX_DOMAIN_REDIRECT_ATTEMPTS + "회 이상 탐색 실패 - 판매처 페이지를 확인해주세요.");
             }
-            log.info("[AgentStepPlannerService] PRODUCT_DETAIL AI 미결과 → SCROLL 재시도 - runId={}", runId);
+
+            // 직전 액션이 CLICK이면 Vision AI가 이미 시도된 것이므로 SCROLL로 탐색한다.
+            // (CAPTURE_VISIBLE_TAB → Vision AI → visionClick 사이클 완료 후 진입)
+            BrowserActionType prevAction = previousActionResult != null ? previousActionResult.action() : null;
+            ActionExecutionStatus prevStatus = previousActionResult != null ? previousActionResult.status() : null;
+
+            boolean previousWasSuccessfulClick = prevAction == BrowserActionType.CLICK && prevStatus == ActionExecutionStatus.SUCCESS;
+
+            log.debug("[AgentStepPlannerService] PRODUCT_DETAIL 분기 결정 - runId={}, stepIndex={}, visionAttempted={}, prevAction={}, previousWasClick={}",
+                    runId, stepIndex, visionAttempted, prevAction, previousWasSuccessfulClick);
+
+            if (!visionAttempted && !previousWasSuccessfulClick) {
+                Optional<InteractiveElementRequest> purchaseButton = findPurchaseButton(snapshot);
+                if (isOptionSelectionNotRequired(snapshot) && purchaseButton.isPresent()) {
+                    log.info("[AgentStepPlannerService] PRODUCT_DETAIL rule-based 구매 버튼 클릭 - runId={}, stepIndex={}, nodeId={}, label={}",
+                            runId, stepIndex, purchaseButton.get().nodeId(), purchaseButton.get().labelText());
+                    return ActionInstructionResponse.click(stepIndex, actionId, purchaseButton.get());
+                }
+
+                // DOM AI 실패 → Vision AI fallback: 스크린샷 요청
+                log.info("[AgentStepPlannerService] PRODUCT_DETAIL DOM AI 실패 → Vision AI fallback (CAPTURE_VISIBLE_TAB) - runId={}, stepIndex={}", runId, stepIndex);
+                return ActionInstructionResponse.useTool(stepIndex, actionId, "CAPTURE_VISIBLE_TAB", java.util.Map.of("format", "png"));
+            }
+
+            log.info("[AgentStepPlannerService] PRODUCT_DETAIL Vision 시도 후 또는 성공한 CLICK 이후에만 SCROLL 재시도 - runId={}, prevAction={}", runId, prevAction);
             return ActionInstructionResponse.scroll(stepIndex, actionId, "500");
         }
 
@@ -284,11 +311,17 @@ public class AgentStepPlannerService {
         try {
             // 스크린샷 결과를 받음
             VisionPlannerInstructionPayload payload = aiVisionPlannerClient.analyze(
+                    runId,
+                    stepIndex,
                     commandSession.getOriginalCommand(),
                     snapshot == null ? null : snapshot.currentUrl(),
                     previousActionResult,
                     previousActionResult.toolResult().screenshot()  // 스크린샷 내용
             );
+
+            log.info("[AgentStepPlannerService] Vision planner 결과 - runId={}, stepIndex={}, action={}, x={}, y={}, confidence={}, label={}",
+                    runId, stepIndex, payload.action(), payload.viewportX(), payload.viewportY(),
+                    payload.confidence(), payload.targetLabel());
 
             // 확신도가 0.6 미만이면 다음 방법으로
             if (payload.confidence() != null && payload.confidence() < MIN_VISION_CONFIDENCE) {
@@ -307,8 +340,13 @@ public class AgentStepPlannerService {
                 );
             }
 
+            // Vision AI가 WAIT를 반환한 경우:
+            // WAIT 액션을 그대로 반환하면 다음 step에서 previousWasClick=false, visionAttempted=false가 되어
+            // CAPTURE_VISIBLE_TAB이 반복 호출되는 무한루프가 발생한다.
+            // null을 반환하면 visionAttempted=true 상태가 유지되어 PRODUCT_DETAIL 블록에서 SCROLL로 진행된다.
             if ("WAIT".equals(payload.action())) {
-                return ActionInstructionResponse.waitAction(stepIndex, buildActionId(runId, stepIndex), DEFAULT_WAIT_MS, DEFAULT_NAVIGATION_TIMEOUT_MS);
+                log.info("[AgentStepPlannerService] Vision planner WAIT 반환 → SCROLL로 대체 (무한루프 방지) - runId={}, stepIndex={}", runId, stepIndex);
+                return null;
             }
         } catch (Exception e) {
             log.warn("[AgentStepPlannerService] Vision planner 실패 - runId={}, stepIndex={}, error={}", runId, stepIndex, e.getMessage());
@@ -438,6 +476,36 @@ public class AgentStepPlannerService {
                     aiResult != null ? aiResult.action() : "null",
                     payload.confidence(), payload.reason());
 
+            log.info("[AgentStepPlannerService] PURCHASE_EXECUTOR guard 진단 - runId={}, stepIndex={}, aiAction={}, optionGroupCount={}, interactiveElementCount={}, hasVisiblePurchaseButton={}, visibleTextHasPurchase={}, rawHtmlHasPurchase={}",
+                    runId,
+                    stepIndex,
+                    aiResult != null ? aiResult.action() : null,
+                    snapshot != null && snapshot.optionGroups() != null ? snapshot.optionGroups().size() : -1,
+                    snapshot != null && snapshot.interactiveElements() != null ? snapshot.interactiveElements().size() : -1,
+                    hasVisiblePurchaseButton(snapshot),
+                    snapshot != null && snapshot.visibleTextSummary() != null && snapshot.visibleTextSummary().contains("구매하기"),
+                    snapshot != null && snapshot.rawHtml() != null && snapshot.rawHtml().contains("구매하기"));
+
+            if (pageType == PageType.PRODUCT_DETAIL
+                    && "PURCHASE_EXECUTOR".equals(agentType)
+                    && aiResult != null) {
+                if (aiResult.action() == BrowserActionType.WAIT
+                        && isOptionSelectionNotRequired(snapshot)
+                        && hasVisiblePurchaseButton(snapshot)) {
+                    log.warn("[AgentStepPlannerService] 구매 버튼이 보이고 optionGroups가 비어 있는데 WAIT 반환 → 거부 후 재탐색 - runId={}, stepIndex={}",
+                            runId, stepIndex);
+                    aiResult = null;
+                }
+
+                if (aiResult != null
+                        && aiResult.action() == BrowserActionType.COMPLETE
+                        && hasVisiblePurchaseButton(snapshot)) {
+                    log.warn("[AgentStepPlannerService] 구매 버튼이 아직 보이는데 COMPLETE 반환 → 거부 후 재탐색 - runId={}, stepIndex={}",
+                            runId, stepIndex);
+                    aiResult = null;
+                }
+            }
+
             // 네이버 등 preferSearchNavigation 플랫폼에서 AI가 NAVIGATE를 반환한 경우:
             // 상품 URL 직접 접근은 봇 차단 위험 → WAIT으로 대체
             // 단, CATALOG_NAVIGATOR가 adcr 판매처 URL로 NAVIGATE를 반환한 경우는 허용
@@ -452,7 +520,7 @@ public class AgentStepPlannerService {
                         && navigateValue != null
                         && navigateValue.contains("cr.shopping.naver.com/adcr")) {
                     log.info("[AgentStepPlannerService] CATALOG_NAVIGATOR → adcr 판매처 URL NAVIGATE 허용 - runId={}, url={}",
-                            runId, navigateValue.length() > 80 ? navigateValue.substring(0, 80) + "..." : navigateValue);
+                            runId, navigateValue);
                     return aiResult;
                 }
                 log.warn("[AgentStepPlannerService] AI가 검색결과/카탈로그에서 NAVIGATE 반환 → 봇 차단/무한루프 위험, WAIT으로 대체 - runId={}, pageType={}", runId, pageType);
@@ -884,13 +952,20 @@ public class AgentStepPlannerService {
         // rawHtml 기반으로 AI가 CSS selector를 반환한 경우: 합성 요소를 생성해 content script가 찾을 수 있게 한다.
         // (interactiveElements에 없는 .blind 요소, 구매버튼 등도 selector로 직접 접근 가능)
         if (payload.target().selector() != null && !payload.target().selector().isBlank()) {
+            String selector = payload.target().selector().trim();
+            // 단독 태그명만 있는 범용 selector는 거부한다.
+            // (예: "button", "a", "div" → document.querySelector('button')은 엉뚱한 첫 번째 요소를 클릭함)
+            if (selector.matches("[a-zA-Z]+")) {
+                log.warn("[AgentStepPlannerService] AI가 bare tag selector 반환 → 거부 - selector={}", selector);
+                return Optional.empty();
+            }
             log.info("[AgentStepPlannerService] AI selector 반환 → 합성 InteractiveElementRequest 생성 - selector={}",
-                    payload.target().selector());
+                    selector);
             return Optional.of(new InteractiveElementRequest(
                     null,
                     payload.target().role(),
                     payload.target().labelText(),
-                    payload.target().selector(),
+                    selector,
                     null,
                     true,
                     false
@@ -924,6 +999,82 @@ public class AgentStepPlannerService {
                 .filter(element -> role == null || role.isBlank() || role.equalsIgnoreCase(element.role()))
                 .filter(element -> keyword == null || keyword.isBlank()
                         || (element.labelText() != null && element.labelText().contains(keyword)))
+                .findFirst();
+    }
+
+    private boolean isOptionSelectionNotRequired(PageSnapshotRequest snapshot) {
+        return snapshot == null
+                || snapshot.optionGroups() == null
+                || snapshot.optionGroups().isEmpty();
+    }
+
+    private boolean hasVisiblePurchaseButton(PageSnapshotRequest snapshot) {
+        return findPurchaseButton(snapshot).isPresent();
+    }
+
+    private Optional<InteractiveElementRequest> findPurchaseButton(PageSnapshotRequest snapshot) {
+        if (snapshot == null || snapshot.interactiveElements() == null) {
+            return Optional.empty();
+        }
+
+        log.info("[AgentStepPlannerService] findPurchaseButton 후보 수집 - total={}",
+                snapshot.interactiveElements().size());
+
+        List<String> purchaseCandidates = snapshot.interactiveElements().stream()
+                .map(element -> String.format("nodeId=%s, role=%s, label=%s, visible=%s, enabled=%s",
+                        element.nodeId(),
+                        element.role(),
+                        element.labelText(),
+                        element.isVisible(),
+                        element.isEnabled()))
+                .filter(text -> text.contains("구매") || text.contains("장바구니") || text.toLowerCase().contains("buy"))
+                .limit(10)
+                .toList();
+
+        log.info("[AgentStepPlannerService] findPurchaseButton 구매 유사 후보={}", purchaseCandidates);
+
+        snapshot.interactiveElements().stream()
+                .limit(20)
+                .forEach(element -> {
+                    String role = element.role() == null ? "" : element.role().toLowerCase();
+                    String label = element.labelText() == null ? "" : element.labelText().toLowerCase();
+                    boolean clickableRole = role.equals("button") || role.equals("a") || role.equals("link");
+                    boolean includeKeyword = label.contains("구매하기")
+                            || label.contains("바로구매")
+                            || label.contains("buy now")
+                            || label.contains("add to cart")
+                            || label.contains("장바구니");
+                    boolean excludeKeyword = label.contains("결제하기")
+                            || label.contains("주문하기")
+                            || label.contains("pay")
+                            || label.contains("결제완료");
+
+                    if (includeKeyword || label.contains("구매") || label.contains("장바구니")) {
+                        log.info("[AgentStepPlannerService] findPurchaseButton 후보 판정 - nodeId={}, role={}, label={}, clickableRole={}, includeKeyword={}, excludeKeyword={}, visible={}, enabled={}",
+                                element.nodeId(), role, label, clickableRole, includeKeyword, excludeKeyword, element.isVisible(), element.isEnabled());
+                    }
+                });
+
+        return snapshot.interactiveElements().stream()
+                .filter(InteractiveElementRequest::isEnabled)
+                .filter(InteractiveElementRequest::isVisible)
+                .filter(element -> {
+                    String role = element.role() == null ? "" : element.role().toLowerCase();
+                    String label = element.labelText() == null ? "" : element.labelText().toLowerCase();
+
+                    boolean clickableRole = role.equals("button") || role.equals("a") || role.equals("link");
+                    boolean includeKeyword = label.contains("구매하기")
+                            || label.contains("바로구매")
+                            || label.contains("buy now")
+                            || label.contains("add to cart")
+                            || label.contains("장바구니");
+                    boolean excludeKeyword = label.contains("결제하기")
+                            || label.contains("주문하기")
+                            || label.contains("pay")
+                            || label.contains("결제완료");
+
+                    return clickableRole && includeKeyword && !excludeKeyword;
+                })
                 .findFirst();
     }
 

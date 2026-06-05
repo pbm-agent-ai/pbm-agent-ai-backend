@@ -129,14 +129,17 @@ class ProductPersistenceServiceTest {
         // when
         productPersistenceService.saveAliExpressSearchResults("아이폰", "KRW", List.of(item1, item2));
 
-        // then
-        assertThat(monitorTargetRepository.findAll()).hasSize(1);
+        // then: 각 상품(productId 기준)마다 별도의 MonitorTarget이 생성됨
+        assertThat(monitorTargetRepository.findAll()).hasSize(2);
         assertThat(productRepository.findAll()).hasSize(2);
         assertThat(priceHistoryRepository.findAll()).hasSize(2);
 
-        MonitorTarget monitorTarget = monitorTargetRepository.findAll().get(0);
-        assertThat(monitorTarget.getPlatform()).isEqualTo(Platform.ALIEXPRESS);
-        assertThat(monitorTarget.getNormalizedKeyword()).isEqualTo("아이폰");
+        MonitorTarget monitorTarget1 = monitorTargetRepository.findAll().stream()
+                .filter(t -> "ali-1".equals(t.getProductId()))
+                .findFirst().orElseThrow();
+        assertThat(monitorTarget1.getPlatform()).isEqualTo(Platform.ALIEXPRESS);
+        assertThat(monitorTarget1.getProductId()).isEqualTo("ali-1");
+        assertThat(monitorTarget1.getSearchKeyword()).isEqualTo("아이폰");
 
         // 수정: second_level_category_id에 매핑된 category_nodes의 categoryPath를 우선 사용해야 한다.
         Product aliProduct1 = productRepository.findAll().stream()

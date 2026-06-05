@@ -1,6 +1,11 @@
 // price-service 빌드 설정
 // 공통 의존성(web, jpa, lombok, postgres)은 루트 build.gradle에서 상속
 
+// bootRun 실행 시 루트 디렉토리를 working directory로 설정 → 루트의 .env 파일 인식
+bootRun {
+    workingDir = rootProject.projectDir
+}
+
 dependencies {
     // Swagger UI / OpenAPI 문서 자동 생성
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0'
@@ -21,6 +26,12 @@ dependencies {
 
     // AOP: @CircuitBreaker, @Retry 등의 Resilience4j 어노테이션을 위한 AspectJ 지원
     implementation 'org.springframework.boot:spring-boot-starter-aop'
+
+    // Web3j: 모니터링 조건 생성 시 AI 에이전트 키페어(ECKeyPair) 생성에 사용
+    implementation 'org.web3j:core:4.9.8'
+
+    // .env 파일을 Spring Environment로 자동 로드 (로컬 개발 환경용)
+    implementation 'me.paulschwarz:spring-dotenv:4.0.0'
 
     // JPA 테스트 시 메모리 DB(H2)를 사용하여 실제 DB 없이도 저장 로직 검증 가능
     testRuntimeOnly 'com.h2database:h2'

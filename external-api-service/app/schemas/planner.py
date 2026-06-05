@@ -52,7 +52,7 @@ class DomPlannerRequest(BaseModel):
     )
     raw_html: Optional[str] = Field(
         None,
-        description="전체 페이지 HTML (전처리 없이 AI에게 직접 전달, 최대 80KB). CATALOG_NAVIGATOR에서 판매처 링크 직접 추출에 사용."
+        description="전체 페이지 HTML (전처리 없이 AI에게 직접 전달, 최대 80KB). 제공 시 모든 agent_type에서 interactiveElements/optionGroups 대신 rawHtml을 우선 분석한다."
     )
 
 

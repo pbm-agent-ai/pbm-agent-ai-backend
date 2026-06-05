@@ -1,5 +1,6 @@
 package com.pbm.command.dto.event;
 
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -25,7 +26,9 @@ public record ProductSelectionEventPayload(
         /** 기존 구독 갱신/재시작을 사용자가 명시적으로 허용했는지 여부 */
         Boolean forceResubscribe,
         /** 사용자가 선택한 후보 상품 목록 */
-        List<ProductCandidateDto> selectedProducts
+        List<ProductCandidateDto> selectedProducts,
+        /** 사용자가 지정한 모니터링 마감일 (null이면 price-service가 기본 7일 적용) */
+        Instant scheduledEndAt
 ) {
 
     public ProductSelectionEventPayload {

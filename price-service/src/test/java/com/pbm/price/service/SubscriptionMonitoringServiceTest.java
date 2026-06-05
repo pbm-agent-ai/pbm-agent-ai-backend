@@ -121,6 +121,7 @@ class SubscriptionMonitoringServiceTest {
                 "https://example.com/p/prod-001", // productUrl
                 "테스트 상품",                     // snapshotTitle
                 BigDecimal.valueOf(50000),         // snapshotPrice
+                null,                             // snapshotImageUrl
                 "테스트 키워드",                   // searchKeyword
                 targetPrice,                      // targetPrice
                 currency,                         // currency
@@ -516,6 +517,7 @@ class SubscriptionMonitoringServiceTest {
                     PRODUCT_URL,                     // productUrl
                     "테스트 상품명",                  // snapshotTitle
                     BigDecimal.valueOf(50000),        // snapshotPrice
+                    null,                            // snapshotImageUrl
                     SEARCH_KEYWORD,                  // searchKeyword
                     BigDecimal.valueOf(30000),        // targetPrice
                     CurrencyType.KRW,                // currency
@@ -712,6 +714,7 @@ class SubscriptionMonitoringServiceTest {
                     PRODUCT_URL,                     // productUrl
                     "테스트 알리 상품",               // snapshotTitle
                     BigDecimal.valueOf(30000),        // snapshotPrice
+                    null,                            // snapshotImageUrl
                     SEARCH_KEYWORD,                  // searchKeyword
                     BigDecimal.valueOf(50000),        // targetPrice
                     CurrencyType.USD,                // currency

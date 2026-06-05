@@ -3,6 +3,8 @@ package com.pbm.command.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pbm.command.domain.CommandFieldType;
+import com.pbm.command.domain.CommandIntent;
 import com.pbm.command.domain.CommandSession;
 import com.pbm.command.domain.CommandSessionStatus;
 import com.pbm.command.domain.PlatformType;
@@ -84,6 +86,37 @@ public class CommandExecutionService {
     public CommandParseResponse parseAndPublishIfReady(CommandParseRequest request, Long userId) {
         CommandParseResponse response = commandParsingService.parse(request);
 
+        // AUTO_PURCHASE: 필수조건 누락 여부와 상관없이 항상 PRE_SEARCH_CLARIFICATION 단계로 보낸다.
+        // 프론트는 productName, platform, maxPrice 3개 필드를 항상 보여주고, parsedCommand로 prefill한다.
+        if (response.intent() == CommandIntent.AUTO_PURCHASE) {
+            List<String> requiredFields = List.of(
+                    CommandFieldType.PRODUCT_NAME.fieldKey(),
+                    CommandFieldType.PLATFORM.fieldKey(),
+                    CommandFieldType.MAX_PRICE.fieldKey()
+            );
+
+            log.info("AUTO_PURCHASE 필수 보완 시작 - userId: {}, 필수 필드: {}", userId, requiredFields);
+
+            CommandSessionResponse sessionResponse = commandSessionService.createPreSearchClarificationSession(
+                    userId,
+                    request.commandText(),
+                    requiredFields,
+                    "자동 결제를 위해 상품명, 플랫폼, 최대 가격을 모두 입력해주세요.",
+                    resolvePrimaryPlatform(response.parsedCommand())
+            );
+
+            return new CommandParseResponse(
+                    response.intent(),
+                    response.parsedCommand(),
+                    requiredFields,
+                    List.of(),
+                    true,
+                    response.confidence(),
+                    sessionResponse.commandId()
+            );
+        }
+
+        // 기존 로직: PRICE_CHECK / PRICE_TRACK 등 AUTO_PURCHASE가 아닌 경우 needsClarification 여부에 따라 분기
         if (!response.needsClarification()) {
             log.info("파싱 결과 추가 확인 불필요 - userId: {} 즉시 가격 요청 발행", userId);
 
@@ -287,7 +320,8 @@ public class CommandExecutionService {
                 session.getTargetPrice(),
                 session.getCommandIntent(),
                 request.forceResubscribe(),
-                selectedProducts
+                selectedProducts,
+                request.scheduledEndAt()
         );
 
         ProductSelectionEvent event = new ProductSelectionEvent(

@@ -1,4 +1,5 @@
 server:
+  forward-headers-strategy: framework
   port: 8081
 
 spring:
@@ -39,6 +40,7 @@ jwt:
   secret: ${JWT_SECRET}
   expiration: ${JWT_EXPIRATION}           # 1800000ms = 30분
   refresh-expiration: ${JWT_REFRESH_EXPIRATION}  # 604800000ms = 7일
+  pairing-expiration: ${JWT_PAIRING_EXPIRATION:600000}  # 10분
 
 eureka:
   client:

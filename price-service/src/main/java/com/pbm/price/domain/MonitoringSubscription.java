@@ -29,11 +29,15 @@ import java.time.Instant;
  *       수집 대상을 조회하여 가격을 갱신한다.
  * 연관: MonitoringSubscriptionRepository, MonitoringSubscriptionStatus.
  * @see MonitoringSubscriptionStatus
+ *
+ * 테이블명 이력:
+ *   - 초기: monitoring_subscriptions
+ *   - 현재: users_monitoring_subscriptions (사용자별 구독임을 명확히 함)
  */
 @Getter
 @Entity
 @Table(
-        name = "monitoring_subscriptions",
+        name = "users_monitoring_subscriptions",
         uniqueConstraints = {
                 @UniqueConstraint(
                         name = "uk_ms_user_platform_product",
@@ -82,6 +86,10 @@ public class MonitoringSubscription {
     @Column(name = "snapshot_price", precision = 19, scale = 4)
     private BigDecimal snapshotPrice;
 
+    /** 등록 시점의 상품 이미지 URL 스냅샷 */
+    @Column(name = "snapshot_image_url", length = 1000)
+    private String snapshotImageUrl;
+
     /** 모니터링 등록에 사용된 검색 키워드 */
     @Column(name = "search_keyword", length = 255)
     private String searchKeyword;
@@ -128,6 +136,27 @@ public class MonitoringSubscription {
     @Column(name = "scheduled_end_at")
     private Instant scheduledEndAt;
 
+    // ──────────────────────────────────────────────────────────────────
+    // Method B: 조건별 AI 에이전트 세션키 (AUTO_PURCHASE 전용)
+    // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * 이 조건 전용 AI 에이전트 이더리움 주소.
+     * AUTO_PURCHASE intent의 신규 구독 생성 시 자동으로 생성되어 저장된다.
+     * payment-service의 PBMSmartAccount.addSessionKey() 호출에 사용된다.
+     */
+    @Column(name = "ai_agent_address", length = 42)
+    private String aiAgentAddress;
+
+    /**
+     * 이 조건 전용 AI 에이전트 개인키 (hex 문자열).
+     * 목표 가격 달성 시 PaymentRequestEvent에 포함되어 payment-service가
+     * PBMSmartAccount.executeAIPayment()를 서명하는 데 사용한다.
+     * 보안 강화를 위해 프로덕션에서는 암호화하여 저장해야 한다.
+     */
+    @Column(name = "ai_agent_private_key", length = 128)
+    private String aiAgentPrivateKey;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -141,6 +170,7 @@ public class MonitoringSubscription {
                                    String productUrl,
                                    String snapshotTitle,
                                    BigDecimal snapshotPrice,
+                                   String snapshotImageUrl,
                                    String searchKeyword,
                                    BigDecimal targetPrice,
                                    CurrencyType currency,
@@ -156,6 +186,7 @@ public class MonitoringSubscription {
         this.productUrl = productUrl;
         this.snapshotTitle = snapshotTitle;
         this.snapshotPrice = snapshotPrice;
+        this.snapshotImageUrl = snapshotImageUrl;
         this.searchKeyword = searchKeyword;
         this.targetPrice = targetPrice;
         this.currency = currency;
@@ -176,6 +207,7 @@ public class MonitoringSubscription {
      * @param productUrl           상품 상세 페이지 URL
      * @param snapshotTitle        등록 시점의 상품명
      * @param snapshotPrice        등록 시점의 가격
+     * @param snapshotImageUrl     등록 시점의 상품 이미지 URL
      * @param searchKeyword        모니터링 등록에 사용된 검색 키워드
      * @param targetPrice          사용자 목표 가격
      * @param currency             통화 구분
@@ -192,6 +224,7 @@ public class MonitoringSubscription {
                                                 String productUrl,
                                                 String snapshotTitle,
                                                 BigDecimal snapshotPrice,
+                                                String snapshotImageUrl,
                                                 String searchKeyword,
                                                 BigDecimal targetPrice,
                                                 CurrencyType currency,
@@ -202,7 +235,7 @@ public class MonitoringSubscription {
                                                 Instant scheduledEndAt) {
         return new MonitoringSubscription(
                 userId, commandId, platform, productId, productUrl,
-                snapshotTitle, snapshotPrice, searchKeyword, targetPrice,
+                snapshotTitle, snapshotPrice, snapshotImageUrl, searchKeyword, targetPrice,
                 currency, intent, status, consecutiveMissCount, checkIntervalMinutes,
                 scheduledEndAt
         );
@@ -242,21 +275,23 @@ public class MonitoringSubscription {
      * 기존 구독의 선택 정보 스냅샷을 갱신한다.
      * <p>
      * 사용자가 동일한 상품(사용자+플랫폼+productId 기준)을 다시 선택했을 때
-     * 최신 commandId, 상품명, 가격, 키워드, 목표 가격 등을 업데이트한다.
+     * 최신 commandId, 상품명, 가격, 이미지, 키워드, 목표 가격 등을 업데이트한다.
      *
-     * @param commandId     새로운 명령 세션 ID
-     * @param productUrl    최신 상품 URL
-     * @param snapshotTitle 최신 상품명 스냅샷
-     * @param snapshotPrice 최신 가격 스냅샷
-     * @param searchKeyword 최신 검색 키워드
-     * @param targetPrice   새로운 목표 가격
-     * @param intent        사용자 의도
-     * @param currency      통화 구분
+     * @param commandId        새로운 명령 세션 ID
+     * @param productUrl       최신 상품 URL
+     * @param snapshotTitle    최신 상품명 스냅샷
+     * @param snapshotPrice    최신 가격 스냅샷
+     * @param snapshotImageUrl 최신 상품 이미지 URL
+     * @param searchKeyword    최신 검색 키워드
+     * @param targetPrice      새로운 목표 가격
+     * @param intent           사용자 의도
+     * @param currency         통화 구분
      */
     public void updateSelectionSnapshot(String commandId,
                                         String productUrl,
                                         String snapshotTitle,
                                         BigDecimal snapshotPrice,
+                                        String snapshotImageUrl,
                                         String searchKeyword,
                                         BigDecimal targetPrice,
                                         String intent,
@@ -265,6 +300,7 @@ public class MonitoringSubscription {
         this.productUrl = productUrl;
         this.snapshotTitle = snapshotTitle;
         this.snapshotPrice = snapshotPrice;
+        this.snapshotImageUrl = snapshotImageUrl;
         this.searchKeyword = searchKeyword;
         this.targetPrice = targetPrice;
         this.intent = intent;
@@ -323,6 +359,20 @@ public class MonitoringSubscription {
      */
     public boolean isExpired(Instant now) {
         return scheduledEndAt != null && scheduledEndAt.isBefore(now);
+    }
+
+    /**
+     * AI 에이전트 키페어를 이 구독에 할당한다.
+     * <p>
+     * AUTO_PURCHASE intent의 신규 구독 생성 시 호출되며,
+     * payment-service가 세션키를 블록체인에 등록한 후 결제 시 사용한다.
+     *
+     * @param aiAgentAddress    AI 에이전트 이더리움 주소 (0x...)
+     * @param aiAgentPrivateKey AI 에이전트 개인키 (64자리 hex)
+     */
+    public void assignSessionKey(String aiAgentAddress, String aiAgentPrivateKey) {
+        this.aiAgentAddress = aiAgentAddress;
+        this.aiAgentPrivateKey = aiAgentPrivateKey;
     }
 
     @PrePersist

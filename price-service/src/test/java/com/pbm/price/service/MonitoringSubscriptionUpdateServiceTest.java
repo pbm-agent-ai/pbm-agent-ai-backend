@@ -1,5 +1,6 @@
 package com.pbm.price.service;
 
+import com.pbm.price.client.PaymentServiceClient;
 import com.pbm.price.domain.CurrencyType;
 import com.pbm.price.domain.MonitoringSubscription;
 import com.pbm.price.domain.MonitoringSubscriptionStatus;
@@ -7,11 +8,14 @@ import com.pbm.price.domain.Platform;
 import com.pbm.price.dto.request.MonitoringSubscriptionUpdateRequest;
 import com.pbm.price.exception.SubscriptionAccessDeniedException;
 import com.pbm.price.exception.SubscriptionNotFoundException;
+import com.pbm.price.publisher.SessionKeyRegistrationEventPublisher;
+import com.pbm.price.publisher.SubscriptionTerminationEventPublisher;
 import com.pbm.price.repository.MonitoringSubscriptionRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -36,6 +40,18 @@ class MonitoringSubscriptionUpdateServiceTest {
 
     @Autowired
     private MonitoringSubscriptionService monitoringSubscriptionService;
+
+    /** SessionKeyRegistrationEventPublisher는 Kafka 의존성이므로 Mock으로 대체 */
+    @MockBean
+    private SessionKeyRegistrationEventPublisher sessionKeyRegistrationEventPublisher;
+
+    /** SubscriptionTerminationEventPublisher는 Kafka 의존성이므로 Mock으로 대체 */
+    @MockBean
+    private SubscriptionTerminationEventPublisher subscriptionTerminationEventPublisher;
+
+    /** PaymentServiceClient는 WebClient 의존성이므로 Mock으로 대체 */
+    @MockBean
+    private PaymentServiceClient paymentServiceClient;
 
     @Autowired
     private MonitoringSubscriptionRepository monitoringSubscriptionRepository;
@@ -202,6 +218,7 @@ class MonitoringSubscriptionUpdateServiceTest {
                 "https://smartstore.naver.com/products/123",
                 "테스트 상품",
                 new BigDecimal("189000"),
+                null,
                 "테스트 키워드",
                 new BigDecimal("200000"),
                 CurrencyType.KRW,

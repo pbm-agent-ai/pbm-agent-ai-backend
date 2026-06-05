@@ -41,7 +41,7 @@ class PaymentControllerTest {
     private Payment createTestPayment(String paymentId, Long userId, String productName) {
         Payment payment = Payment.create(paymentId, userId, productName,
                 "https://example.com/product/" + paymentId,
-                15000, "KRW");
+                15000, "KRW", null);
         payment.markSuccess("0xtxhash" + paymentId);
         return payment;
     }
@@ -50,7 +50,7 @@ class PaymentControllerTest {
     private Payment createFailedPayment(String paymentId, Long userId, String productName) {
         Payment payment = Payment.create(paymentId, userId, productName,
                 "https://example.com/product/" + paymentId,
-                8900, "USD");
+                8900, "USD", null);
         payment.markFailed("잔액 부족");
         return payment;
     }

@@ -32,12 +32,16 @@ public class AiVisionPlannerClient {
     @Retry(name = "openAiProxyService")
     @CircuitBreaker(name = "openAiProxyService", fallbackMethod = "planFallback")
     public VisionPlannerInstructionPayload analyze(
+            String runId,
+            Integer stepIndex,
             String commandText,
             String currentUrl,
             AgentRunActionResultRequest previousActionResult,
             ScreenshotArtifactRequest screenshotArtifact
     ) {
         VisionPlannerRequest request = new VisionPlannerRequest(
+                runId,
+                stepIndex,
                 commandText,
                 currentUrl,
                 screenshotArtifact.dataUrl(),
@@ -63,6 +67,8 @@ public class AiVisionPlannerClient {
     }
 
     VisionPlannerInstructionPayload planFallback(
+            String runId,
+            Integer stepIndex,
             String commandText,
             String currentUrl,
             AgentRunActionResultRequest previousActionResult,
@@ -78,6 +84,8 @@ public class AiVisionPlannerClient {
     }
 
     private record VisionPlannerRequest(
+            @JsonProperty("run_id") String runId,
+            @JsonProperty("step_index") Integer stepIndex,
             @JsonProperty("command_text") String commandText,
             @JsonProperty("current_url") String currentUrl,
             @JsonProperty("screenshot_data_url") String screenshotDataUrl,

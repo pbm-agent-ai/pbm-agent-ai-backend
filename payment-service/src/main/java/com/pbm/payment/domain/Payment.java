@@ -77,6 +77,14 @@ public class Payment {
     @Column(name = "failure_reason", length = 500)
     private String failureReason;
 
+    /**
+     * AI 에이전트 개인키 (조건별 세션키 서명용).
+     * executeAIPayment 호출 시 이 키로 트랜잭션에 서명한다.
+     * 보안 강화가 필요한 프로덕션에서는 암호화하여 저장해야 한다.
+     */
+    @Column(name = "ai_agent_private_key", length = 128)
+    private String aiAgentPrivateKey;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -85,13 +93,14 @@ public class Payment {
 
     // private 생성자로 클래스 내부에서만 호출 가능하도록 만듦
     private Payment(String paymentId, Long userId, String productName, String productUrl,
-                    Integer amount, String currency) {
+                    Integer amount, String currency, String aiAgentPrivateKey) {
         this.paymentId = paymentId;
         this.userId = userId;
         this.productName = productName;
         this.productUrl = productUrl;
         this.amount = amount;
         this.currency = currency;
+        this.aiAgentPrivateKey = aiAgentPrivateKey;
         // 초기 상태는 PENDING, 트랜잭션 해시와 실패 사유는 null로 둔다.
         this.status = PaymentStatus.PENDING;
         this.transactionHash = null;
@@ -103,18 +112,19 @@ public class Payment {
      *
      * 초기 상태는 PENDING으로 설정되며, transactionHash와 failureReason은 null이다.
      *
-     * @param paymentId   외부 결제 식별자 (Kafka 이벤트에서 전달받은 고유 ID)
-     * @param userId      결제 요청 사용자 ID
-     * @param productName 상품명
-     * @param productUrl  상품 URL
-     * @param amount      결제 금액
-     * @param currency    통화 코드 (예: KRW)
+     * @param paymentId         외부 결제 식별자 (Kafka 이벤트에서 전달받은 고유 ID)
+     * @param userId            결제 요청 사용자 ID
+     * @param productName       상품명
+     * @param productUrl        상품 URL
+     * @param amount            결제 금액
+     * @param currency          통화 코드 (예: KRW)
+     * @param aiAgentPrivateKey AI 에이전트 개인키 (세션키 서명용, null이면 스텁 처리)
      * @return 생성된 Payment 엔티티
      */
     // public 정적 팩토리 메서드로 외부에서 객체 만들 때 이걸 사용하도록 만듦
     public static Payment create(String paymentId, Long userId, String productName, String productUrl,
-                                 Integer amount, String currency) {
-        return new Payment(paymentId, userId, productName, productUrl, amount, currency);
+                                 Integer amount, String currency, String aiAgentPrivateKey) {
+        return new Payment(paymentId, userId, productName, productUrl, amount, currency, aiAgentPrivateKey);
     }
 
     /**

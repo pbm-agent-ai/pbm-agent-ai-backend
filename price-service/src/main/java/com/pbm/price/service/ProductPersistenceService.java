@@ -19,14 +19,16 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * 검색 결과를 DB에 영속화하는 서비스.
  *
  * 역할: 네이버/알리 검색 결과를 공통 수집 대상(MonitorTarget), 상품(Product), 가격 이력(PriceHistory)에
  *       맞게 저장한다.
- * 동작: 검색 결과가 들어오면 monitor target을 찾거나 생성하고, 상품을 upsert한 뒤 가격 스냅샷을 누적 저장한다.
+ * 동작: 검색 결과가 들어오면 각 상품별로 monitor target(productId 단위)을 찾거나 생성하고,
+ *       상품을 upsert한 뒤 가격 스냅샷을 누적 저장한다.
+ *       (주의) 검색 결과 저장 시에는 공유 폴링을 예약하지 않는다 (nextFetchAt = null).
+ *       공유 폴링 활성화는 모니터링 구독 생성/갱신 시 이루어진다.
  * 연관: MonitorTargetRepository, ProductRepository, PriceHistoryRepository.
  */
 @Slf4j
@@ -45,6 +47,7 @@ public class ProductPersistenceService {
 
     /**
      * 네이버 검색 결과를 DB에 저장한다.
+     * 각 상품마다 별도의 MonitorTarget을 생성/재사용하며, 공유 폴링은 예약하지 않는다.
      *
      * @param keyword 검색 키워드
      * @param items   외부 API가 반환한 네이버 상품 목록
@@ -55,16 +58,22 @@ public class ProductPersistenceService {
             return;
         }
 
-        MonitorTarget monitorTarget = prepareMonitorTarget(Platform.NAVER, keyword);
         Instant now = Instant.now();
 
         for (NaverShoppingItem item : items) {
+            String externalProductId = resolveExternalProductId(item.productId(), item.link(), item.title());
             String categoryPath = naverCategoryNormalizer.normalize(
                     item.category1(), item.category2(), item.category3(), item.category4()
             );
+
+            // 각 상품별로 MonitorTarget 생성/재사용 (product-unique)
+            MonitorTarget monitorTarget = prepareMonitorTarget(
+                    Platform.NAVER, externalProductId, keyword, item.link()
+            );
+
             CollectedProductSnapshot snapshot = new CollectedProductSnapshot(
                     Platform.NAVER,
-                    resolveExternalProductId(item.productId(), item.link(), item.title()),
+                    externalProductId,
                     item.title(),
                     item.link(),
                     item.image(),
@@ -80,6 +89,7 @@ public class ProductPersistenceService {
 
     /**
      * AliExpress 검색 결과를 DB에 저장한다.
+     * 각 상품마다 별도의 MonitorTarget을 생성/재사용하며, 공유 폴링은 예약하지 않는다.
      *
      * @param keyword        검색 키워드
      * @param targetCurrency API 호출 시 요청한 목표 통화
@@ -91,10 +101,16 @@ public class ProductPersistenceService {
             return;
         }
 
-        MonitorTarget monitorTarget = prepareMonitorTarget(Platform.ALIEXPRESS, keyword);
         Instant now = Instant.now();
 
         for (AliExpressShoppingItem item : items) {
+            String externalProductId = resolveExternalProductId(item.product_id(), item.product_detail_url(), item.product_title());
+
+            // 각 상품별로 MonitorTarget 생성/재사용 (product-unique)
+            MonitorTarget monitorTarget = prepareMonitorTarget(
+                    Platform.ALIEXPRESS, externalProductId, keyword, item.product_detail_url()
+            );
+
             BigDecimal currentPrice = hasText(item.target_sale_price())
                     ? parsePrice(item.target_sale_price())
                     : parsePrice(item.sale_price());
@@ -103,7 +119,7 @@ public class ProductPersistenceService {
                     ? resolveCurrency(targetCurrency)
                     : CurrencyType.USD;
 
-            // AliExpressCategoryNormalizer를  DB lookup 방식으로 바꿨기 때문에 여기에도 적용해줌
+            // AliExpressCategoryNormalizer를 DB lookup 방식으로 바꿨기 때문에 여기에도 적용해줌
             String categoryPath = aliExpressCategoryNormalizer.normalize(
                     item.first_level_category_name(),
                     item.second_level_category_id(),
@@ -111,7 +127,7 @@ public class ProductPersistenceService {
             );
             CollectedProductSnapshot snapshot = new CollectedProductSnapshot(
                     Platform.ALIEXPRESS,
-                    resolveExternalProductId(item.product_id(), item.product_detail_url(), item.product_title()),
+                    externalProductId,
                     item.product_title(),
                     item.product_detail_url(),
                     item.product_main_image_url(),
@@ -126,16 +142,88 @@ public class ProductPersistenceService {
     }
 
     /**
-     * 공통 수집 대상(MonitorTarget)을 찾거나 생성하고 최신 수집 시각을 갱신한다.
+     * 스케줄러가 단일 MonitorTarget에 대해 수집한 네이버 상품 정보를 반영한다.
+     * Product를 upsert하고 PriceHistory를 추가한다.
+     * (MonitorTarget은 이미 존재하므로 새로 생성하지 않음)
+     *
+     * @param target  수집 대상 MonitorTarget
+     * @param item    네이버 API가 반환한 매칭된 상품
+     * @param checkedAt 수집 완료 시각
      */
-    private MonitorTarget prepareMonitorTarget(Platform platform, String keyword) {
-        String normalizedKeyword = normalizeKeyword(keyword);
+    @Transactional
+    public void saveRefreshedNaverProduct(MonitorTarget target, NaverShoppingItem item, Instant checkedAt) {
+        String externalProductId = resolveExternalProductId(item.productId(), item.link(), item.title());
+        String categoryPath = naverCategoryNormalizer.normalize(
+                item.category1(), item.category2(), item.category3(), item.category4()
+        );
+        CollectedProductSnapshot snapshot = new CollectedProductSnapshot(
+                Platform.NAVER,
+                externalProductId,
+                item.title(),
+                item.link(),
+                item.image(),
+                item.mallName(),
+                categoryPath,
+                parsePrice(item.lprice()),
+                parsePrice(item.hprice()),
+                CurrencyType.KRW
+        );
+        saveSnapshot(target, snapshot, checkedAt);
+    }
 
+    /**
+     * 스케줄러가 단일 MonitorTarget에 대해 수집한 알리 상품 정보를 반영한다.
+     * Product를 upsert하고 PriceHistory를 추가한다.
+     *
+     * @param target         수집 대상 MonitorTarget
+     * @param item           알리 API가 반환한 매칭된 상품
+     * @param targetCurrency 타겟 통화 (보통 "KRW")
+     * @param checkedAt      수집 완료 시각
+     */
+    @Transactional
+    public void saveRefreshedAliExpressProduct(MonitorTarget target, AliExpressShoppingItem item,
+                                                String targetCurrency, Instant checkedAt) {
+        String externalProductId = resolveExternalProductId(item.product_id(), item.product_detail_url(), item.product_title());
+        BigDecimal currentPrice = hasText(item.target_sale_price())
+                ? parsePrice(item.target_sale_price())
+                : parsePrice(item.sale_price());
+        CurrencyType currency = hasText(item.target_sale_price())
+                ? resolveCurrency(targetCurrency)
+                : CurrencyType.USD;
+
+        String categoryPath = aliExpressCategoryNormalizer.normalize(
+                item.first_level_category_name(),
+                item.second_level_category_id(),
+                item.second_level_category_name()
+        );
+
+        CollectedProductSnapshot snapshot = new CollectedProductSnapshot(
+                Platform.ALIEXPRESS,
+                externalProductId,
+                item.product_title(),
+                item.product_detail_url(),
+                item.product_main_image_url(),
+                item.shop_name(),
+                categoryPath,
+                currentPrice,
+                parsePrice(item.target_original_price()),
+                currency
+        );
+        saveSnapshot(target, snapshot, checkedAt);
+    }
+
+    /**
+     * 공통 수집 대상(MonitorTarget)을 productId 기준으로 찾거나 생성한다.
+     * nextFetchAt은 설정하지 않으므로(호출하지 않음) 공유 폴링이 예약되지 않는다.
+     */
+    private MonitorTarget prepareMonitorTarget(Platform platform, String productId, String searchKeyword, String productUrl) {
         MonitorTarget monitorTarget = monitorTargetRepository
-                .findByPlatformAndNormalizedKeyword(platform, normalizedKeyword)
-                .orElseGet(() -> MonitorTarget.create(platform, normalizedKeyword, defaultFetchIntervalMinutes));
+                .findByPlatformAndProductId(platform, productId)
+                .orElseGet(() -> MonitorTarget.create(platform, productId, searchKeyword, productUrl, defaultFetchIntervalMinutes));
 
-        monitorTarget.markFetched(Instant.now());
+        // 검색 결과 저장 시에는 공유 폴링을 예약하지 않음 (nextFetchAt = null 유지)
+        // 대신 검색 컨텍스트(키워드, URL)만 갱신한다
+        monitorTarget.updateSearchContext(searchKeyword, productUrl);
         return monitorTargetRepository.save(monitorTarget);
     }
 
@@ -187,22 +275,6 @@ public class ProductPersistenceService {
     }
 
     /**
-     * 공유 수집 대상 기준 키워드를 정규화한다.
-     *
-     * 구현 이유:
-     * - "아이폰 15", "아이폰15"처럼 공백 차이만 있는 입력을 같은 수집 대상으로 묶기 위함이다.
-     * - 영문 검색어는 대소문자 차이도 제거한다.
-     */
-    private String normalizeKeyword(String keyword) {
-        if (keyword == null) {
-            return "";
-        }
-        return keyword.trim()
-                .replaceAll("\\s+", "")
-                .toLowerCase(Locale.ROOT);
-    }
-
-    /**
      * 외부 상품 ID가 없을 때 URL 또는 제목으로 대체 식별자를 만든다.
      */
     private String resolveExternalProductId(String externalProductId, String productUrl, String title) {
@@ -238,7 +310,7 @@ public class ProductPersistenceService {
         if (!hasText(currency)) {
             return CurrencyType.KRW;
         }
-        return CurrencyType.valueOf(currency.trim().toUpperCase(Locale.ROOT));
+        return CurrencyType.valueOf(currency.trim().toUpperCase(java.util.Locale.ROOT));
     }
 
     private boolean hasText(String value) {
@@ -248,7 +320,7 @@ public class ProductPersistenceService {
     /**
      * 외부 검색 결과를 내부 영속화 구조로 잠시 옮겨 담는 내부 record.
      */
-    private record CollectedProductSnapshot(
+    public record CollectedProductSnapshot(
             Platform platform,
             String externalProductId,
             String title,

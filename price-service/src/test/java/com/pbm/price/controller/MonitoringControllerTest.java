@@ -208,6 +208,7 @@ class MonitoringControllerTest {
                 "https://smartstore.naver.com/nike/products/123",
                 "나이키 에어맥스 270",
                 new BigDecimal("189000"),
+                null,
                 "나이키 에어맥스 270",
                 new BigDecimal("200000"),
                 CurrencyType.KRW,

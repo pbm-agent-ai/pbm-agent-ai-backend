@@ -397,7 +397,7 @@ class AgentStepPlannerServiceTest {
                 snapshot,
                 LocalDateTime.now()
         );
-        given(aiVisionPlannerClient.analyze(any(), any(), any(), any())).willReturn(
+        given(aiVisionPlannerClient.analyze(any(), any(), any(), any(), any(), any())).willReturn(
                 new VisionPlannerInstructionPayload("CLICK", 0.45, 0.82, "지금 구매", 0.88, "vision fallback 성공")
         );
 

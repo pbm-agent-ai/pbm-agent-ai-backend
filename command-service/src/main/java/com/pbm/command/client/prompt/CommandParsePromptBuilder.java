@@ -98,14 +98,15 @@ public class CommandParsePromptBuilder {
     public String buildUserPrompt(CommandParseRequest request) {
         return """
                 아래 사용자 명령을 파싱하라.
-                
+
                 commandText: %s
-                
+
                 다시 한 번 강조한다.
                 - JSON만 반환하라.
                 - 추측하지 마라.
                 - 애매하면 null을 사용하라.
-                - intent/productCategory/platform은 허용 목록 밖의 값을 쓰지 마라.
+                - intent/productCategory는 허용 목록 밖의 값을 쓰지 마라.
+                - platforms는 반드시 JSON 배열로 반환하라. 사용자가 여러 플랫폼을 언급했으면 모두 포함하라. 예: ["NAVER", "ALIEXPRESS"]
                 """.formatted(
                 request.commandText() == null ? "" : request.commandText()
         );

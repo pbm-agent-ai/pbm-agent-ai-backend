@@ -5,6 +5,8 @@ import com.pbm.price.dto.event.PriceValidationResultEvent;
 import com.pbm.price.dto.event.PriceAlertEvent;
 import com.pbm.price.dto.event.ProductSelectionEvent;
 import com.pbm.price.dto.event.ProductSelectionRequiredEvent;
+import com.pbm.price.dto.event.SessionKeyRegistrationEvent;
+import com.pbm.price.dto.event.SubscriptionTerminationEvent;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -98,6 +100,32 @@ public class KafkaConfig {
     public KafkaTemplate<String, PaymentRequestEvent> paymentRequestKafkaTemplate() {
         Map<String, Object> props = baseProducerProps();
         DefaultKafkaProducerFactory<String, PaymentRequestEvent> factory =
+                new DefaultKafkaProducerFactory<>(props);
+        return new KafkaTemplate<>(factory);
+    }
+
+    /**
+     * session-key-registration 토픽 전용 KafkaTemplate.
+     * payment-service가 자체 DTO로 역직렬화할 수 있도록 타입 헤더를 비활성화한다.
+     */
+    @Bean
+    public KafkaTemplate<String, SessionKeyRegistrationEvent> sessionKeyRegistrationKafkaTemplate() {
+        Map<String, Object> props = baseProducerProps();
+        props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
+        DefaultKafkaProducerFactory<String, SessionKeyRegistrationEvent> factory =
+                new DefaultKafkaProducerFactory<>(props);
+        return new KafkaTemplate<>(factory);
+    }
+
+    /**
+     * subscription-termination 토픽 전용 KafkaTemplate.
+     * payment-service가 자체 DTO로 역직렬화할 수 있도록 타입 헤더를 비활성화한다.
+     */
+    @Bean
+    public KafkaTemplate<String, SubscriptionTerminationEvent> subscriptionTerminationKafkaTemplate() {
+        Map<String, Object> props = baseProducerProps();
+        props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
+        DefaultKafkaProducerFactory<String, SubscriptionTerminationEvent> factory =
                 new DefaultKafkaProducerFactory<>(props);
         return new KafkaTemplate<>(factory);
     }

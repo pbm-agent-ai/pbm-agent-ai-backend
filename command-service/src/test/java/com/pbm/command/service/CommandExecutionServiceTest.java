@@ -125,10 +125,10 @@ class CommandExecutionServiceTest {
     }
 
     @Test
-    @DisplayName("needsClarification이 true이면 PRE_SEARCH_CLARIFICATION 세션 생성 + 발행 보류 + commandId 반환")
-    void parseAndPublishIfReady_clarificationNeeded_doesNotPublish() {
+    @DisplayName("AUTO_PURCHASE는 항상 PRE_SEARCH_CLARIFICATION 세션 생성 + 발행 보류 + 3개 공통 필드 반환")
+    void parseAndPublishIfReady_autoPurchase_alwaysGoesToClarification() {
         // given
-        String expectedCommandId = "cmd-uuid-clarify-1234";
+        String expectedCommandId = "cmd-uuid-auto-clarify";
         Long userId = 1L;
         CommandParseRequest request = new CommandParseRequest("나이키 조던 20만원 이하면 결제해줘");
 
@@ -149,16 +149,17 @@ class CommandExecutionServiceTest {
         CommandParseResponse response = new CommandParseResponse(
                 CommandIntent.AUTO_PURCHASE,
                 parsedCommand,
-                List.of("size", "platform"),
-                List.of("color", "model"),
-                true,          // needsClarification == true
-                0.55,
-                null           // 아직 commandId 없음
+                List.of(),     // 실제로는 무시됨 (AUTO_PURCHASE는 항상 강제 오버라이드)
+                List.of(),
+                false,         // needsClarification == false여도 AUTO_PURCHASE는 항상 clarification
+                0.91,
+                null
         );
 
         when(commandParsingService.parse(any(CommandParseRequest.class))).thenReturn(response);
 
-        // PRE_SEARCH_CLARIFICATION 세션 생성 mock
+        // PRE_SEARCH_CLARIFICATION 세션 생성 mock (항상 3개 공통 필드로 호출)
+        var expectedFields = List.of("productName", "platform", "maxPrice");
         CommandSessionResponse sessionResponse = new CommandSessionResponse(
                 expectedCommandId, 1L, request.commandText(), null, null, null, null,
                 List.of(), null, null, null, null, null, null, null
@@ -166,7 +167,7 @@ class CommandExecutionServiceTest {
         given(commandSessionService.createPreSearchClarificationSession(
                 eq(userId),
                 eq(request.commandText()),
-                eq(List.of("size", "platform")),
+                eq(expectedFields),
                 anyString(),
                 eq(null)
         )).willReturn(sessionResponse);
@@ -176,15 +177,21 @@ class CommandExecutionServiceTest {
 
         // then
         assertThat(actual.commandId()).isEqualTo(expectedCommandId);
-        assertThat(actual.intent()).isEqualTo(response.intent());
+        assertThat(actual.intent()).isEqualTo(CommandIntent.AUTO_PURCHASE);
         assertThat(actual.needsClarification()).isTrue();
+        assertThat(actual.missingRequiredFields()).containsExactly("productName", "platform", "maxPrice");
+        assertThat(actual.ambiguousFields()).isEmpty();
+        // parsedCommand는 그대로 유지되어 프론트가 prefill할 수 있어야 함
+        assertThat(actual.parsedCommand().productName()).isEqualTo("나이키 조던");
+        assertThat(actual.parsedCommand().maxPrice()).isEqualTo(200000);
+        // Kafka 발행은 절대 일어나지 않아야 함
         verify(priceRequestService, never()).publishParsedCommandRequest(anyLong(), anyString(), any(), anyString());
     }
 
     @Test
-    @DisplayName("productCategory가 UNKNOWN이어도 키워드 검색 가능한 정보가 있으면 SEARCHING 세션 생성 후 발행한다")
-    void parseAndPublishIfReady_unknownCategoryButSearchable_publishes() {
-        String expectedCommandId = "cmd-uuid-unknown-1234";
+    @DisplayName("AUTO_PURCHASE는 productCategory가 UNKNOWN이어도 항상 PRE_SEARCH_CLARIFICATION으로 보낸다")
+    void parseAndPublishIfReady_autoPurchaseUnknownCategory_goesToClarification() {
+        String expectedCommandId = "cmd-uuid-auto-unknown";
         Long userId = 6L;
         CommandParseRequest request = new CommandParseRequest("네이버에서 칠성사이다 210ml 30개가 50000원 이하면 구매해줘");
 
@@ -205,10 +212,122 @@ class CommandExecutionServiceTest {
         CommandParseResponse response = new CommandParseResponse(
                 CommandIntent.AUTO_PURCHASE,
                 parsedCommand,
-                List.of(),
+                List.of(),     // 모든 필드가 채워져 needsClarification=false
                 List.of(),
                 false,
                 0.98,
+                null
+        );
+
+        when(commandParsingService.parse(any(CommandParseRequest.class))).thenReturn(response);
+
+        // AUTO_PURCHASE는 항상 PRE_SEARCH_CLARIFICATION 세션 생성
+        var expectedFields = List.of("productName", "platform", "maxPrice");
+        CommandSessionResponse sessionResponse = new CommandSessionResponse(
+                expectedCommandId, userId, request.commandText(), null, null, null, null,
+                List.of(), null, null, null, null, "NAVER", null, null
+        );
+        given(commandSessionService.createPreSearchClarificationSession(
+                eq(userId), eq(request.commandText()), eq(expectedFields), anyString(), eq("NAVER")
+        )).willReturn(sessionResponse);
+
+        CommandParseResponse actual = commandExecutionService.parseAndPublishIfReady(request, userId);
+
+        assertThat(actual.commandId()).isEqualTo(expectedCommandId);
+        assertThat(actual.needsClarification()).isTrue();
+        assertThat(actual.missingRequiredFields()).containsExactly("productName", "platform", "maxPrice");
+        assertThat(actual.ambiguousFields()).isEmpty();
+        // parsedCommand는 그대로 유지되어 프론트가 prefill 가능
+        assertThat(actual.parsedCommand().productName()).isEqualTo("칠성사이다 210ml 30개");
+        assertThat(actual.parsedCommand().platforms()).containsExactly(PlatformType.NAVER);
+        assertThat(actual.parsedCommand().maxPrice()).isEqualTo(50000);
+        // Kafka 발행은 절대 일어나지 않아야 함
+        verify(priceRequestService, never()).publishParsedCommandRequest(anyLong(), anyString(), any(), anyString());
+        verify(commandSessionService, never()).createSearchingSession(anyLong(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("PRICE_CHECK은 needsClarification 여부에 따라 기존 분기를 유지한다 (AUTO_PURCHASE가 아닌 경우)")
+    void parseAndPublishIfReady_priceCheck_usesExistingClarificationLogic() {
+        // given - PRICE_CHECK + needsClarification=true
+        String expectedCommandId = "cmd-uuid-price-clarify";
+        Long userId = 2L;
+        CommandParseRequest request = new CommandParseRequest("아이폰 가격 알려줘");
+
+        ParsedCommand parsedCommand = new ParsedCommand(
+                ProductCategory.ELECTRONICS,
+                "아이폰",
+                "애플",
+                null,
+                null,
+                null,
+                null,
+                null,           // platform 누락
+                null,           // maxPrice 누락 (PRICE_CHECK이므로 skip)
+                null,
+                "KRW"
+        );
+
+        CommandParseResponse response = new CommandParseResponse(
+                CommandIntent.PRICE_CHECK,
+                parsedCommand,
+                List.of("platform"),
+                List.of(),
+                true,
+                0.85,
+                null
+        );
+
+        when(commandParsingService.parse(any(CommandParseRequest.class))).thenReturn(response);
+
+        CommandSessionResponse sessionResponse = new CommandSessionResponse(
+                expectedCommandId, userId, request.commandText(), null, null, null, null,
+                List.of(), null, null, null, null, null, null, null
+        );
+        given(commandSessionService.createPreSearchClarificationSession(
+                eq(userId), eq(request.commandText()), eq(List.of("platform")), anyString(), eq(null)
+        )).willReturn(sessionResponse);
+
+        // when
+        CommandParseResponse actual = commandExecutionService.parseAndPublishIfReady(request, userId);
+
+        // then - PRICE_CHECK의 needsClarification=true는 기존처럼 PRE_SEARCH_CLARIFICATION
+        assertThat(actual.commandId()).isEqualTo(expectedCommandId);
+        assertThat(actual.intent()).isEqualTo(CommandIntent.PRICE_CHECK);
+        assertThat(actual.needsClarification()).isTrue();
+        assertThat(actual.missingRequiredFields()).containsExactly("platform");
+        verify(priceRequestService, never()).publishParsedCommandRequest(anyLong(), anyString(), any(), anyString());
+    }
+
+    @Test
+    @DisplayName("PRICE_CHECK은 needsClarification=false이면 기존처럼 SEARCHING 세션 생성 후 발행한다")
+    void parseAndPublishIfReady_priceCheckNoClarification_publishes() {
+        // given - PRICE_CHECK + needsClarification=false
+        String expectedCommandId = "cmd-uuid-price-search";
+        Long userId = 3L;
+        CommandParseRequest request = new CommandParseRequest("아이폰 15 프로 140만원 NAVER 가격 알려줘");
+
+        ParsedCommand parsedCommand = new ParsedCommand(
+                ProductCategory.ELECTRONICS,
+                "아이폰 15 프로",
+                "애플",
+                "아이폰",
+                "15 프로",
+                null,
+                null,
+                java.util.List.of(PlatformType.NAVER),
+                1400000,
+                null,
+                "KRW"
+        );
+
+        CommandParseResponse response = new CommandParseResponse(
+                CommandIntent.PRICE_CHECK,
+                parsedCommand,
+                List.of(),
+                List.of(),
+                false,
+                0.95,
                 null
         );
 
@@ -221,11 +340,14 @@ class CommandExecutionServiceTest {
         given(commandSessionService.createSearchingSession(eq(userId), eq(request.commandText()), eq("NAVER")))
                 .willReturn(sessionResponse);
 
+        // when
         CommandParseResponse actual = commandExecutionService.parseAndPublishIfReady(request, userId);
 
+        // then - PRICE_CHECK의 needsClarification=false는 기존처럼 SEARCHING + 발행
         assertThat(actual.commandId()).isEqualTo(expectedCommandId);
+        assertThat(actual.intent()).isEqualTo(CommandIntent.PRICE_CHECK);
         assertThat(actual.needsClarification()).isFalse();
-        verify(priceRequestService).publishParsedCommandRequest(userId, "AUTO_PURCHASE", parsedCommand, expectedCommandId);
+        verify(priceRequestService).publishParsedCommandRequest(userId, "PRICE_CHECK", parsedCommand, expectedCommandId);
         verify(commandSessionService, never()).createPreSearchClarificationSession(anyLong(), anyString(), anyList(), anyString(), any());
     }
 

@@ -1,6 +1,8 @@
 package com.pbm.command.dto.response;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.pbm.command.domain.PlatformType;
 import com.pbm.command.domain.ProductCategory;
 
@@ -26,7 +28,7 @@ public record ParsedCommand(
         String model,
         String color,
         String size,
-        List<PlatformType> platforms,
+        @JsonAlias("platform") @JsonDeserialize(using = PlatformListDeserializer.class) List<PlatformType> platforms,
         Integer maxPrice,
         Integer minPrice,
         String currency,

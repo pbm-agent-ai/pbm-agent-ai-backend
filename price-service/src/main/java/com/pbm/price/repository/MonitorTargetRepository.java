@@ -13,10 +13,15 @@ import java.util.Optional;
  */
 public interface MonitorTargetRepository extends JpaRepository<MonitorTarget, Long> {
 
-    Optional<MonitorTarget> findByPlatformAndNormalizedKeyword(Platform platform, String normalizedKeyword);
+    /**
+     * 플랫폼 + 상품 ID로 공통 수집 대상을 조회한다.
+     * product-unique 식별 기준이다.
+     */
+    Optional<MonitorTarget> findByPlatformAndProductId(Platform platform, String productId);
 
     /**
      * 수집 예정 시각이 도래한 대상 목록을 조회한다.
+     * nextFetchAt이 null인 대상은 아직 활성화되지 않은 대상이므로 제외된다.
      * 스케줄러가 주기적으로 이 메서드를 호출하여 만료된 모니터링 대상을 찾는다.
      *
      * @param threshold 기준 시각 (보통 now)

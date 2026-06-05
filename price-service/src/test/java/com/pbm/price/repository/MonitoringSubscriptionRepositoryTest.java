@@ -48,6 +48,7 @@ class MonitoringSubscriptionRepositoryTest {
         assertThat(saved.getProductUrl()).isEqualTo("https://example.com/product/prod-1");
         assertThat(saved.getSnapshotTitle()).isEqualTo("테스트 상품");
         assertThat(saved.getSnapshotPrice()).isEqualByComparingTo(BigDecimal.valueOf(50000));
+        assertThat(saved.getSnapshotImageUrl()).isEqualTo("https://example.com/image/prod-1.jpg");
         assertThat(saved.getSearchKeyword()).isEqualTo("테스트 키워드");
         assertThat(saved.getTargetPrice()).isEqualByComparingTo(BigDecimal.valueOf(45000));
         assertThat(saved.getCurrency()).isEqualTo(CurrencyType.KRW);
@@ -109,7 +110,8 @@ class MonitoringSubscriptionRepositoryTest {
         MonitoringSubscription subscription = MonitoringSubscription.create(
                 1L, commandId, Platform.NAVER, "prod-1",
                 "https://example.com/product/1", "테스트 상품",
-                BigDecimal.valueOf(50000), "키워드", BigDecimal.valueOf(45000),
+                BigDecimal.valueOf(50000), "https://example.com/image/prod-1.jpg",
+                "키워드", BigDecimal.valueOf(45000),
                 CurrencyType.KRW, "PRICE_TRACK", MonitoringSubscriptionStatus.ACTIVE,
                 0, 10, null
         );
@@ -139,7 +141,7 @@ class MonitoringSubscriptionRepositoryTest {
         // given: 과거 nextCheckAt을 가진 ACTIVE 구독
         MonitoringSubscription dueSub = MonitoringSubscription.create(
                 1L, UUID.randomUUID().toString(), Platform.NAVER, "prod-due",
-                null, null, null, null, null,
+                null, null, null, null, null, null,
                 CurrencyType.KRW, null, MonitoringSubscriptionStatus.ACTIVE,
                 0, 10, null
         );
@@ -149,7 +151,7 @@ class MonitoringSubscriptionRepositoryTest {
         // 미래 nextCheckAt을 가진 ACTIVE 구독 (수집 대상 아님)
         MonitoringSubscription futureSub = MonitoringSubscription.create(
                 2L, UUID.randomUUID().toString(), Platform.ALIEXPRESS, "prod-future",
-                null, null, null, null, null,
+                null, null, null, null, null, null,
                 CurrencyType.USD, null, MonitoringSubscriptionStatus.ACTIVE,
                 0, 10, null
         );
@@ -159,7 +161,7 @@ class MonitoringSubscriptionRepositoryTest {
         // PAUSED 상태 구독 (수집 대상 아님)
         MonitoringSubscription pausedSub = MonitoringSubscription.create(
                 3L, UUID.randomUUID().toString(), Platform.NAVER, "prod-paused",
-                null, null, null, null, null,
+                null, null, null, null, null, null,
                 CurrencyType.KRW, null, MonitoringSubscriptionStatus.PAUSED,
                 0, 10, null
         );
@@ -250,6 +252,7 @@ class MonitoringSubscriptionRepositoryTest {
                 "https://example.com/product/" + productId,
                 "테스트 상품",
                 BigDecimal.valueOf(50000),
+                "https://example.com/image/" + productId + ".jpg",
                 "테스트 키워드",
                 BigDecimal.valueOf(45000),
                 CurrencyType.KRW,

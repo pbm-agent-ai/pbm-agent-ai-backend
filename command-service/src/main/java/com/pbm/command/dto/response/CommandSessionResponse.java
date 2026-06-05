@@ -8,7 +8,10 @@ import com.pbm.command.domain.CommandSessionStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 명령 세션 응답 DTO.
@@ -115,7 +118,9 @@ public record CommandSessionResponse(
      */
     public static CommandSessionResponse from(CommandSession session, int page, int size) {
         List<ProductCandidateResponse> allCandidates = parseCandidates(session.getCandidatesJson());
-        List<ProductCandidateResponse> pagedCandidates = sliceCandidates(allCandidates, page, size);
+        // 플랫폼별로 번갈아 노출 (NAVER→ALIEXPRESS→NAVER→...) 후 페이지 자르기
+        List<ProductCandidateResponse> interleavedCandidates = interleaveCandidatesByPlatform(allCandidates);
+        List<ProductCandidateResponse> pagedCandidates = sliceCandidates(interleavedCandidates, page, size);
 
         return new CommandSessionResponse(
                 session.getCommandId(),
@@ -168,6 +173,55 @@ public record CommandSessionResponse(
         } catch (JsonProcessingException e) {
             return List.of();
         }
+    }
+
+    /**
+     * 후보 상품 목록을 플랫폼별로 번갈아 정렬한다.
+     * <p>
+     * 예: [N1, N2, N3, A1, A2] → [N1, A1, N2, A2, N3]
+     * 한 쪽 플랫폼이 먼저 소진되면 나머지 플랫폼 상품을 순서대로 이어 붙인다.
+     * 플랫폼이 1종류뿐이면 원본 순서를 그대로 유지한다.
+     *
+     * @param candidates 원본 후보 목록
+     * @return 플랫폼 인터리빙된 후보 목록
+     */
+    private static List<ProductCandidateResponse> interleaveCandidatesByPlatform(
+            List<ProductCandidateResponse> candidates
+    ) {
+        if (candidates == null || candidates.size() <= 1) {
+            return candidates;
+        }
+
+        // 플랫폼별 큐(순서 보장)를 구성한다. LinkedHashMap으로 최초 등장 순서를 유지한다.
+        Map<String, List<ProductCandidateResponse>> buckets = new LinkedHashMap<>();
+        for (ProductCandidateResponse candidate : candidates) {
+            String key = candidate.platform() != null ? candidate.platform() : "UNKNOWN";
+            buckets.computeIfAbsent(key, k -> new ArrayList<>()).add(candidate);
+        }
+
+        // 플랫폼이 하나뿐이면 원본 반환
+        if (buckets.size() <= 1) {
+            return candidates;
+        }
+
+        // 플랫폼 큐를 라운드로빈으로 꺼내 인터리빙 리스트를 생성한다.
+        List<List<ProductCandidateResponse>> queues = new ArrayList<>(buckets.values());
+        List<ProductCandidateResponse> result = new ArrayList<>(candidates.size());
+
+        // 인덱스를 따로 관리해 각 큐에서 순서대로 꺼낸다.
+        int[] indices = new int[queues.size()];
+        boolean progress = true;
+        while (progress) {
+            progress = false;
+            for (int q = 0; q < queues.size(); q++) {
+                List<ProductCandidateResponse> queue = queues.get(q);
+                if (indices[q] < queue.size()) {
+                    result.add(queue.get(indices[q]++));
+                    progress = true;
+                }
+            }
+        }
+        return result;
     }
 
     private static List<ProductCandidateResponse> sliceCandidates(List<ProductCandidateResponse> candidates, int page, int size) {

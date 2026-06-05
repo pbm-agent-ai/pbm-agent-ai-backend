@@ -216,6 +216,7 @@ public class SubscriptionMonitoringService {
                 candidate.productUrl(),
                 candidate.title(),
                 BigDecimal.ZERO,
+                candidate.imageUrl(),
                 candidate.searchKeyword(),
                 BigDecimal.ZERO,
                 CurrencyType.valueOf(candidate.currency()),
@@ -542,13 +543,17 @@ public class SubscriptionMonitoringService {
         }
 
         // payment-topic 이벤트 발행 (결제 요청용)
+        // aiAgentPrivateKey: 조건 생성 시 발급된 AI 에이전트 개인키
+        //   → null이면 payment-service가 StubPaymentProcessor로 폴백
+        // recipientAddress: MVP에서는 null → payment-service가 마스터 주소를 기본값으로 사용
         PaymentRequestEventPayload paymentPayload = new PaymentRequestEventPayload(
                 subscription.getUserId(),
                 snapshot.title(),
                 snapshot.productUrl(),
                 currentPriceInKrw.intValue(),
                 CurrencyType.KRW.name(),
-                subscription.getSearchKeyword()
+                subscription.getAiAgentPrivateKey(),
+                null
         );
         PaymentRequestEvent paymentEvent = new PaymentRequestEvent(
                 UUID.randomUUID().toString(),

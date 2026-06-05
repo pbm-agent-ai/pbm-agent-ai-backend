@@ -1,0 +1,22 @@
+{
+  "runId": "3533d91e-c800-458b-bfa0-87c509db89eb",
+  "stepIndex": 6,
+  "currentUrl": "https://ko.aliexpress.com/item/1005011608788808.html?pdp_npi=6%40dis%21KRW%2112600%2112600%21%21%218.07%218.07%21%40214114e317805379593746560e0f97%2112000056046465353%21affd%21%21%21%211%210%21",
+  "action": "WAIT",
+  "imageWidth": null,
+  "imageHeight": null,
+  "rawX": null,
+  "rawY": null,
+  "normalizedX": null,
+  "normalizedY": null,
+  "pixelInterpretation": null,
+  "grid1000Interpretation": null,
+  "targetLabel": null,
+  "confidence": 1.0,
+  "reason": "현재 페이지는 사용자가 찾는 \"mx master 3s 검정색\" 마우스의 제품 페이지가 아닙니다. 이 페이지에서 사용자의 목표를 달성할 명확한 클릭 타겟이 없습니다. (예: 검색, 관련 상품 목록 없음)",
+  "errorCode": null,
+  "errorMessage": null,
+  "savedAtUtc": "20260604T015340",
+  "rawPath": "/app/vision-debug/20260604T015340_3533d91e-c800-458b-bfa0-87c509db89eb_step6_raw.png",
+  "annotatedPath": "/app/vision-debug/20260604T015340_3533d91e-c800-458b-bfa0-87c509db89eb_step6_annotated.png"
+}

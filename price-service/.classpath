@@ -6,13 +6,20 @@
 			<attribute name="gradle_used_by_scope" value="main,test"/>
 		</attributes>
 	</classpathentry>
-	<classpathentry excluding="**" kind="src" output="bin/main" path="src/main/resources">
+	<classpathentry kind="src" output="bin/main" path="src/main/resources">
 		<attributes>
 			<attribute name="gradle_scope" value="main"/>
 			<attribute name="gradle_used_by_scope" value="main,test"/>
 		</attributes>
 	</classpathentry>
 	<classpathentry kind="src" output="bin/test" path="src/test/java">
+		<attributes>
+			<attribute name="gradle_scope" value="test"/>
+			<attribute name="gradle_used_by_scope" value="test"/>
+			<attribute name="test" value="true"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="src" output="bin/test" path="src/test/resources">
 		<attributes>
 			<attribute name="gradle_scope" value="test"/>
 			<attribute name="gradle_used_by_scope" value="test"/>
@@ -32,20 +39,5 @@
 			<attribute name="test" value="true"/>
 		</attributes>
 	</classpathentry>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/com.h2database/h2/2.2.224/7bdade27d8cd197d9b5ce9dc251f41d2edc5f7ad/h2-2.2.224.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/com.h2database/h2/2.2.224/3b207e6b1933e49bf68f375b52a1ce0ed8b912b7/h2-2.2.224-sources.jar"/>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/org.springframework.cloud/spring-cloud-starter-circuitbreaker-resilience4j/3.1.0/e45bd053bc2d7cb014710c25eb0dba7c179a074d/spring-cloud-starter-circuitbreaker-resilience4j-3.1.0.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/org.springframework.cloud/spring-cloud-starter-circuitbreaker-resilience4j/3.1.0/60d68ea68e0c89e00d324003fbf0d2521bbe0be5/spring-cloud-starter-circuitbreaker-resilience4j-3.1.0-sources.jar"/>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/org.springframework.cloud/spring-cloud-circuitbreaker-resilience4j/3.1.0/7004e67c9c125d5f8d173ceed797434ea9d611d0/spring-cloud-circuitbreaker-resilience4j-3.1.0.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/org.springframework.cloud/spring-cloud-circuitbreaker-resilience4j/3.1.0/a29bf4355459b96a329181cced93b5aeae5ac840/spring-cloud-circuitbreaker-resilience4j-3.1.0-sources.jar"/>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-spring-boot3/2.1.0/9bc59dff030e693581c063bb560707fcb405a323/resilience4j-spring-boot3-2.1.0.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-spring-boot3/2.1.0/25cbf1a79c3b540556b9aa5989d14e8bc52f42a6/resilience4j-spring-boot3-2.1.0-sources.jar"/>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-micrometer/2.1.0/87e236c7ef25e634b97956191963673acedfc7fb/resilience4j-micrometer-2.1.0.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-micrometer/2.1.0/fee85cd6f97266cd35540061fa1d2bc0ec45695d/resilience4j-micrometer-2.1.0-sources.jar"/>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-spring6/2.1.0/cb1cb7edff868a5b0c16f596c3c25027148236ec/resilience4j-spring6-2.1.0.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-spring6/2.1.0/230935e99e8749bb154c77c6fa66ca679772fb1a/resilience4j-spring6-2.1.0-sources.jar"/>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-framework-common/2.1.0/8ac6760110660ac7b8105ca3e7327e0231a9e8a6/resilience4j-framework-common-2.1.0.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-framework-common/2.1.0/c330a5c0ea528cbecdd3ec345f04f7bc671163f7/resilience4j-framework-common-2.1.0-sources.jar"/>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-circuitbreaker/2.1.0/8138ed9546d984f023cf20539dba4e33b6246866/resilience4j-circuitbreaker-2.1.0.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-circuitbreaker/2.1.0/a716a3462070aa1ee3d3d2a923ecadd5a3f44397/resilience4j-circuitbreaker-2.1.0-sources.jar"/>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-timelimiter/2.1.0/326f89e40ee01f9f235f67efd137dcedf3da1dc4/resilience4j-timelimiter-2.1.0.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-timelimiter/2.1.0/32e889cb71199d035a2f802db544f69f5f4d3b9/resilience4j-timelimiter-2.1.0-sources.jar"/>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-retry/2.1.0/afaad85737e3ae522ef3161bef4ac8d557e5c95b/resilience4j-retry-2.1.0.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-retry/2.1.0/c98870143b67c15d1d8d20a0af9d68b52f82d6ce/resilience4j-retry-2.1.0-sources.jar"/>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-ratelimiter/2.1.0/48dff23ede5fef4bdbc6ade6e7b27c86a96f59e8/resilience4j-ratelimiter-2.1.0.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-ratelimiter/2.1.0/fb0f35c574fd4ba55d764769b7e646de8d8100f3/resilience4j-ratelimiter-2.1.0-sources.jar"/>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-consumer/2.1.0/f794bde800b36915a24a6b29cc02b5367d1b15a2/resilience4j-consumer-2.1.0.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-consumer/2.1.0/718a76b8a732efb87c9d0ee24ae6a3c30f4ccd3/resilience4j-consumer-2.1.0-sources.jar"/>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-core/2.1.0/edebba65e2778e666a5e0832ee3210f85d1c2873/resilience4j-core-2.1.0.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-core/2.1.0/12e75eef6f1373a28e8ca0afe743ab6f7a9d3c3f/resilience4j-core-2.1.0-sources.jar"/>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-annotations/2.1.0/6135ef7272e2fe2321a39a53d8e289d995e4f458/resilience4j-annotations-2.1.0.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-annotations/2.1.0/279cf4f1f6a20d99fbfc61166a3b7626a6f61521/resilience4j-annotations-2.1.0-sources.jar"/>
-	<classpathentry kind="lib" path="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-circularbuffer/2.1.0/c3c1370b6fc557413e8190c6513425f30aa52d2/resilience4j-circularbuffer-2.1.0.jar" sourcepath="/Users/coffeepeanut/.gradle/caches/modules-2/files-2.1/io.github.resilience4j/resilience4j-circularbuffer/2.1.0/11393406faaf4dc294d693ff51793eb151d7683f/resilience4j-circularbuffer-2.1.0-sources.jar"/>
 	<classpathentry kind="output" path="bin/default"/>
 </classpath>

@@ -1,15 +1,19 @@
 package com.pbm.price.service;
 
+import com.pbm.price.client.PaymentServiceClient;
 import com.pbm.price.domain.CurrencyType;
 import com.pbm.price.domain.MonitoringSubscription;
 import com.pbm.price.domain.MonitoringSubscriptionStatus;
 import com.pbm.price.domain.Platform;
 import com.pbm.price.dto.event.ProductCandidateDto;
+import com.pbm.price.publisher.SessionKeyRegistrationEventPublisher;
+import com.pbm.price.publisher.SubscriptionTerminationEventPublisher;
 import com.pbm.price.repository.MonitoringSubscriptionRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 
 import java.math.BigDecimal;
@@ -18,6 +22,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 /**
  * MonitoringSubscriptionService의 createOrUpdateFromSelection 로직을 검증하는 테스트.
@@ -33,6 +41,18 @@ class MonitoringSubscriptionServiceTest {
 
     @Autowired
     private MonitoringSubscriptionService monitoringSubscriptionService;
+
+    /** SessionKeyRegistrationEventPublisher는 Kafka 의존성이므로 Mock으로 대체 */
+    @MockBean
+    private SessionKeyRegistrationEventPublisher sessionKeyRegistrationEventPublisher;
+
+    /** SubscriptionTerminationEventPublisher는 Kafka 의존성이므로 Mock으로 대체 */
+    @MockBean
+    private SubscriptionTerminationEventPublisher subscriptionTerminationEventPublisher;
+
+    /** PaymentServiceClient는 WebClient 의존성이므로 Mock으로 대체 */
+    @MockBean
+    private PaymentServiceClient paymentServiceClient;
 
     @Autowired
     private MonitoringSubscriptionRepository monitoringSubscriptionRepository;
@@ -52,7 +72,7 @@ class MonitoringSubscriptionServiceTest {
                 lprice,                                       // lprice
                 "테스트몰",                                    // mallName
                 "https://example.com/product/prod-1",         // productUrl
-                null,                                          // imageUrl
+                "https://example.com/image/prod-1.jpg",       // imageUrl
                 currency,                                     // currency
                 platform,                                     // platform
                 "테스트 키워드"                                // searchKeyword
@@ -78,6 +98,7 @@ class MonitoringSubscriptionServiceTest {
         assertThat(result.getProductUrl()).isEqualTo("https://example.com/product/prod-1");
         assertThat(result.getSnapshotTitle()).isEqualTo("테스트 상품");
         assertThat(result.getSnapshotPrice()).isEqualByComparingTo(BigDecimal.valueOf(50000));
+        assertThat(result.getSnapshotImageUrl()).isEqualTo("https://example.com/image/prod-1.jpg");
         assertThat(result.getSearchKeyword()).isEqualTo("테스트 키워드");
         assertThat(result.getTargetPrice()).isEqualByComparingTo(BigDecimal.valueOf(TARGET_PRICE));
         assertThat(result.getCurrency()).isEqualTo(CurrencyType.KRW);
@@ -105,7 +126,7 @@ class MonitoringSubscriptionServiceTest {
                 "48000",                                       // 변경된 lprice
                 "갱신된몰",                                    // 변경된 mallName
                 "https://example.com/product/prod-1-updated",  // 변경된 URL
-                null,                                          // imageUrl
+                "https://example.com/image/prod-1-updated.jpg",// 변경된 imageUrl
                 "KRW",                                         // 동일 currency
                 "NAVER",                                       // 동일 platform
                 "갱신된 키워드"                                 // 변경된 searchKeyword
@@ -120,6 +141,7 @@ class MonitoringSubscriptionServiceTest {
         assertThat(result.getProductUrl()).isEqualTo("https://example.com/product/prod-1-updated");
         assertThat(result.getSnapshotTitle()).isEqualTo("갱신된 상품명");
         assertThat(result.getSnapshotPrice()).isEqualByComparingTo(BigDecimal.valueOf(48000));
+        assertThat(result.getSnapshotImageUrl()).isEqualTo("https://example.com/image/prod-1-updated.jpg");
         assertThat(result.getSearchKeyword()).isEqualTo("갱신된 키워드");
         assertThat(result.getTargetPrice()).isEqualByComparingTo(BigDecimal.valueOf(40000));
         assertThat(result.getIntent()).isEqualTo("AUTO_PURCHASE");
@@ -151,6 +173,62 @@ class MonitoringSubscriptionServiceTest {
     }
 
     @Test
+    @DisplayName("AUTO_PURCHASE 재등록: 기존 구독이 있어도 세션키 등록 이벤트가 새로 발행된다")
+    void createOrUpdateFromSelection_publishesSessionKeyEvent_whenUpdatingWithAutoPurchase() {
+        // given: PRICE_TRACK으로 첫 구독 생성 (세션키 없음)
+        ProductCandidateDto candidate = createCandidate("NAVER", "KRW", "50000");
+        monitoringSubscriptionService.createOrUpdateFromSelection(
+                USER_ID, COMMAND_ID, TARGET_PRICE, "PRICE_TRACK", candidate);
+
+        // when: 동일 상품을 AUTO_PURCHASE로 재등록
+        MonitoringSubscription result = monitoringSubscriptionService.createOrUpdateFromSelection(
+                USER_ID, UUID.randomUUID().toString(), TARGET_PRICE, "AUTO_PURCHASE", candidate);
+
+        // then: 세션키 등록 이벤트가 1회 발행되었는지 확인
+        verify(sessionKeyRegistrationEventPublisher, times(1)).publish(any());
+        // then: 구독 엔티티에 AI 에이전트 주소와 개인키가 저장되었는지 확인
+        assertThat(result.getAiAgentAddress()).isNotBlank();
+        assertThat(result.getAiAgentPrivateKey()).isNotBlank();
+    }
+
+    @Test
+    @DisplayName("AUTO_PURCHASE 재등록: COMPLETED 상태였던 구독도 세션키 등록 이벤트가 발행된다")
+    void createOrUpdateFromSelection_publishesSessionKeyEvent_whenReregisteringCompletedSubscription() {
+        // given: 구독 생성 후 COMPLETED 상태로 변경
+        ProductCandidateDto candidate = createCandidate("NAVER", "KRW", "50000");
+        MonitoringSubscription existing = monitoringSubscriptionService.createOrUpdateFromSelection(
+                USER_ID, COMMAND_ID, TARGET_PRICE, "PRICE_TRACK", candidate);
+        existing.changeStatus(MonitoringSubscriptionStatus.COMPLETED);
+        monitoringSubscriptionRepository.save(existing);
+
+        // when: 완료된 상품을 AUTO_PURCHASE로 재등록
+        MonitoringSubscription result = monitoringSubscriptionService.createOrUpdateFromSelection(
+                USER_ID, UUID.randomUUID().toString(), TARGET_PRICE, "AUTO_PURCHASE", candidate);
+
+        // then
+        verify(sessionKeyRegistrationEventPublisher, times(1)).publish(any());
+        assertThat(result.getStatus()).isEqualTo(MonitoringSubscriptionStatus.ACTIVE);
+        assertThat(result.getAiAgentAddress()).isNotBlank();
+        assertThat(result.getAiAgentPrivateKey()).isNotBlank();
+    }
+
+    @Test
+    @DisplayName("PRICE_TRACK 재등록: AUTO_PURCHASE가 아니면 세션키 이벤트를 발행하지 않는다")
+    void createOrUpdateFromSelection_doesNotPublishSessionKeyEvent_whenUpdatingWithPriceTrack() {
+        // given: 기존 구독 생성
+        ProductCandidateDto candidate = createCandidate("NAVER", "KRW", "50000");
+        monitoringSubscriptionService.createOrUpdateFromSelection(
+                USER_ID, COMMAND_ID, TARGET_PRICE, "PRICE_TRACK", candidate);
+
+        // when: PRICE_TRACK으로 재등록
+        monitoringSubscriptionService.createOrUpdateFromSelection(
+                USER_ID, UUID.randomUUID().toString(), TARGET_PRICE, "PRICE_TRACK", candidate);
+
+        // then: 세션키 이벤트가 발행되지 않아야 함
+        verify(sessionKeyRegistrationEventPublisher, never()).publish(any());
+    }
+
+    @Test
     @DisplayName("동일 사용자+플랫폼+상품 구독이 있으면 중복 후보로 반환한다")
     void findDuplicateSelections_returnsExistingProductCandidates() {
         // given
@@ -158,7 +236,7 @@ class MonitoringSubscriptionServiceTest {
         monitoringSubscriptionService.createOrUpdateFromSelection(USER_ID, COMMAND_ID, TARGET_PRICE, INTENT, candidate);
 
         ProductCandidateDto otherCandidate = new ProductCandidateDto(
-                "prod-2", "다른 상품", "51000", "다른몰", "https://example.com/product/prod-2", null, "KRW", "NAVER", "다른 키워드"
+                "prod-2", "다른 상품", "51000", "다른몰", "https://example.com/product/prod-2", "https://example.com/image/prod-2.jpg", "KRW", "NAVER", "다른 키워드"
         );
 
         // when

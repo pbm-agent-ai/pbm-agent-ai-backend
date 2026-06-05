@@ -116,7 +116,7 @@ class ProductSelectionConsumerTest {
         MonitoringSubscription subscription = MonitoringSubscription.create(
                 USER_ID, COMMAND_ID, Platform.NAVER,
                 productId, "https://example.com/" + productId,
-                "테스트 상품", BigDecimal.valueOf(250000),
+                "테스트 상품", BigDecimal.valueOf(250000), null,
                 "테스트 키워드", BigDecimal.valueOf(TARGET_PRICE),
                 CurrencyType.KRW, "PRICE_CHECK",
                 MonitoringSubscriptionStatus.ACTIVE, 0, 5, null
@@ -142,7 +142,7 @@ class ProductSelectionConsumerTest {
                 Instant.now(),
                 "command-service",
                 new ProductSelectionEventPayload(
-                        COMMAND_ID, USER_ID, TARGET_PRICE, intent, forceResubscribe, selectedProducts
+                        COMMAND_ID, USER_ID, TARGET_PRICE, intent, forceResubscribe, selectedProducts, null
                 )
         );
     }
@@ -296,12 +296,12 @@ class ProductSelectionConsumerTest {
         // 충족 상품 → createOrUpdateFromSelection + process
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
                 eq(USER_ID), eq(COMMAND_ID), eq(TARGET_PRICE), eq("PRICE_TRACK"),
-                eq(prod1)
+                eq(prod1), any()
         )).thenReturn(sub1);
         // 미충족 상품 → createOrUpdateFromSelection (모니터링 등록)
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
                 eq(USER_ID), eq(COMMAND_ID), eq(TARGET_PRICE), eq("PRICE_TRACK"),
-                eq(prod2)
+                eq(prod2), any()
         )).thenReturn(sub2);
 
         // when
@@ -309,7 +309,7 @@ class ProductSelectionConsumerTest {
 
         // then
         verify(monitoringSubscriptionService, times(2)).createOrUpdateFromSelection(
-                anyLong(), anyString(), anyInt(), anyString(), any()
+                anyLong(), anyString(), anyInt(), anyString(), any(), any()
         );
         verify(subscriptionMonitoringService).process(100L);   // 충족 상품만 process
         verify(subscriptionMonitoringService, never()).process(200L);  // 미충족은 process X
@@ -337,7 +337,7 @@ class ProductSelectionConsumerTest {
         MonitoringSubscription sub2 = createSubscription(200L, "p2");
 
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
-                anyLong(), anyString(), anyInt(), anyString(), any()
+                anyLong(), anyString(), anyInt(), anyString(), any(), any()
         )).thenReturn(sub1, sub2);
 
         // when
@@ -364,7 +364,7 @@ class ProductSelectionConsumerTest {
 
         MonitoringSubscription sub1 = createSubscription(100L, "p1");
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
-                anyLong(), anyString(), anyInt(), anyString(), any()
+                anyLong(), anyString(), anyInt(), anyString(), any(), any()
         )).thenReturn(sub1);
 
         // when
@@ -390,7 +390,7 @@ class ProductSelectionConsumerTest {
 
         MonitoringSubscription sub1 = createSubscription(100L, "p1");
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
-                anyLong(), anyString(), anyInt(), anyString(), any()
+                anyLong(), anyString(), anyInt(), anyString(), any(), any()
         )).thenReturn(sub1);
 
         // when
@@ -435,7 +435,7 @@ class ProductSelectionConsumerTest {
         mockRefreshedFound("p1", "상품 p1", "200000", "https://example.com/p1");
         MonitoringSubscription sub = createSubscription(100L, "p1");
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
-                anyLong(), anyString(), anyInt(), anyString(), any()
+                anyLong(), anyString(), anyInt(), anyString(), any(), any()
         )).thenReturn(sub);
 
         // when
@@ -495,12 +495,12 @@ class ProductSelectionConsumerTest {
         // 최저가 p2만 createOrUpdateFromSelection + process
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
                 eq(USER_ID), eq(COMMAND_ID), eq(TARGET_PRICE), eq("AUTO_PURCHASE"),
-                eq(prod2)
+                eq(prod2), any()
         )).thenReturn(subPurchased);
         // 미충족 상품 모니터링 등록
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
                 eq(USER_ID), eq(COMMAND_ID), eq(TARGET_PRICE), eq("AUTO_PURCHASE"),
-                eq(prod3)
+                eq(prod3), any()
         )).thenReturn(subMonitoring);
 
         // when
@@ -508,7 +508,7 @@ class ProductSelectionConsumerTest {
 
         // then
         verify(monitoringSubscriptionService, times(2)).createOrUpdateFromSelection(
-                anyLong(), anyString(), anyInt(), anyString(), any()
+                anyLong(), anyString(), anyInt(), anyString(), any(), any()
         );
         verify(subscriptionMonitoringService).process(100L);    // 최저가 p2만 process
 
@@ -538,7 +538,7 @@ class ProductSelectionConsumerTest {
         MonitoringSubscription sub2 = createSubscription(200L, "p2");
 
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
-                anyLong(), anyString(), anyInt(), anyString(), any()
+                anyLong(), anyString(), anyInt(), anyString(), any(), any()
         )).thenReturn(sub1, sub2);
 
         // when
@@ -567,7 +567,7 @@ class ProductSelectionConsumerTest {
 
         MonitoringSubscription sub = createSubscription(100L, "p1");
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
-                anyLong(), anyString(), anyInt(), anyString(), any()
+                anyLong(), anyString(), anyInt(), anyString(), any(), any()
         )).thenReturn(sub);
 
         // when
@@ -603,7 +603,7 @@ class ProductSelectionConsumerTest {
         MonitoringSubscription subPurchased = createSubscription(100L, "p1");
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
                 eq(USER_ID), eq(COMMAND_ID), eq(TARGET_PRICE), eq("AUTO_PURCHASE"),
-                any()
+                any(), any()
         )).thenReturn(subPurchased);
 
         // when
@@ -637,7 +637,7 @@ class ProductSelectionConsumerTest {
         MonitoringSubscription sub1 = createSubscription(100L, "p1");
         MonitoringSubscription sub2 = createSubscription(200L, "p2");
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
-                anyLong(), anyString(), anyInt(), anyString(), any()
+                anyLong(), anyString(), anyInt(), anyString(), any(), any()
         )).thenReturn(sub1, sub2);
 
         // when

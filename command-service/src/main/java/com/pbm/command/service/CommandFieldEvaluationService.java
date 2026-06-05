@@ -13,10 +13,11 @@ import java.util.List;
 /**
  * 파싱 결과의 누락 필드와 모호 필드를 계산하는 서비스.
  *
- * 역할: GPT가 추출한 ParsedCommand를 카테고리 정책과 비교하여
+ * 역할: GPT가 추출한 ParsedCommand를 공통 필수 필드 정책과 비교하여
  *       프론트 모달에 보여줄 missingRequiredFields, ambiguousFields를 계산한다.
- * 동작: 필수 필드는 null/빈값 여부를 검사하고,
+ * 동작: 필수 필드(PRODUCT_NAME, MAX_PRICE, PLATFORM)는 null/빈값 여부를 검사하고,
  *       자동 결제 또는 상품명 모호성 상황에서는 추가 확인 필드를 별도로 수집한다.
+ *       (현재 모든 카테고리 공통 정책이며, 카테고리별 size/color/model 의존 로직은 제거됨)
  * 연관: CommandFieldPolicyService, ParsedCommand, FieldEvaluationResult.
  */
 @Service
@@ -37,7 +38,7 @@ public class CommandFieldEvaluationService {
      */
     public FieldEvaluationResult evaluate(CommandIntent intent, ParsedCommand parsedCommand) {
         // 필수인데 비어있는 필드 계산
-        List<String> missingRequiredFields = calculateMissingRequiredFields(parsedCommand);
+        List<String> missingRequiredFields = calculateMissingRequiredFields(intent, parsedCommand);
         // 값은 있지만 더 확인해야 하는 필드 계산
         List<String> ambiguousFields = calculateAmbiguousFields(intent, parsedCommand);
         // 두 결과를 하나의 객체로 합쳐서 변환
@@ -45,27 +46,34 @@ public class CommandFieldEvaluationService {
     }
 
     /**
-     * 카테고리 정책 기준으로 필수 누락 필드를 계산한다.
+     * 공통 필수 필드 기준으로 누락 필드를 계산한다.
      *
+     * @param intent        사용자 의도
      * @param parsedCommand GPT가 추출한 구조화 결과
      * @return 비어 있는 필수 필드 목록
      */
-    public List<String> calculateMissingRequiredFields(ParsedCommand parsedCommand) {
-        // GPT가 아예 아무것도 못 뽑았으면, 최소한 이 3개는 무조건 필요하다고 알려줌
+    public List<String> calculateMissingRequiredFields(CommandIntent intent, ParsedCommand parsedCommand) {
+        // GPT가 아예 아무것도 못 뽑았으면 최소 필수 필드를 반환 (PRICE_CHECK는 maxPrice 제외)
         if (parsedCommand == null) {
-            return List.of(
-                    CommandFieldType.PRODUCT_CATEGORY.fieldKey(),
-                    CommandFieldType.PRODUCT_NAME.fieldKey(),
-                    CommandFieldType.MAX_PRICE.fieldKey()
-            );
+            List<String> required = new ArrayList<>();
+            required.add(CommandFieldType.PRODUCT_CATEGORY.fieldKey());
+            required.add(CommandFieldType.PRODUCT_NAME.fieldKey());
+            if (intent != CommandIntent.PRICE_CHECK) {
+                required.add(CommandFieldType.MAX_PRICE.fieldKey());
+            }
+            return List.copyOf(required);
         }
 
         // ArrayList: 여기에 필드키를 하나씩 추가할거라서 가변 리스트 사용
-        ProductCategory category = parsedCommand.productCategory();
         List<String> missingFields = new ArrayList<>();
 
-        // 이 카테고리에서 필수인 필드들 중에 비어있는 게 뭔지 하나씩 검사
-        for (CommandFieldType fieldType : commandFieldPolicyService.getRequiredFields(category)) {
+        // 공통 필수 필드(PRODUCT_NAME, MAX_PRICE, PLATFORM) 중 비어있는 게 뭔지 검사
+        // getRequiredFields는 모든 카테고리에서 동일한 결과를 반환함
+        for (CommandFieldType fieldType : commandFieldPolicyService.getRequiredFields(parsedCommand.productCategory())) {
+            // MAX_PRICE타입을 검사할때 Intent가 PRICE_CHECK이면 그냥 continue시키는 로직
+            if (fieldType == CommandFieldType.MAX_PRICE && intent == CommandIntent.PRICE_CHECK) {
+                continue;
+            }
             if (isMissing(fieldType, parsedCommand)) {
                 missingFields.add(fieldType.fieldKey());
             }
@@ -95,22 +103,23 @@ public class CommandFieldEvaluationService {
             return List.copyOf(ambiguousFields);
         }
 
-        ProductCategory category = parsedCommand.productCategory();
-
         // 자동 결제의 경우 진짜 돈이 나가므로 더 확실한 정보가 필요함
+        // 현재는 PLATFORM이 공통 필수 필드에 포함되어 있어 별도 확인 불필요하나,
+        // 향후 추가 확인 필드가 필요하면 policy를 통해 확장 가능
         if (intent == CommandIntent.AUTO_PURCHASE) {
             addMissingFieldKeys(
                     ambiguousFields,
-                    commandFieldPolicyService.getAutoPurchaseClarificationFields(category),
+                    commandFieldPolicyService.getAutoPurchaseClarificationFields(parsedCommand.productCategory()),
                     parsedCommand
             );
         }
 
         // 상품명이 2단어 이하로 너무 짧을 경우 검색 결과가 너무 많아지므로 추가 정보를 받아옴
+        // 카테고리별 size/color/model 의존 로직은 제거되었으며, 필요 시 공통 필드로 확장 가능
         if (isBroadProductName(parsedCommand)) {
             addMissingFieldKeys(
                     ambiguousFields,
-                    commandFieldPolicyService.getBroadProductClarificationFields(category),
+                    commandFieldPolicyService.getBroadProductClarificationFields(parsedCommand.productCategory()),
                     parsedCommand
             );
         }

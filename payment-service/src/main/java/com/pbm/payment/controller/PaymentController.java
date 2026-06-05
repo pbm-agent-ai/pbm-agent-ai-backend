@@ -8,8 +8,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -31,14 +31,15 @@ public class PaymentController {
     private final PaymentService paymentService;
 
     /**
-     * 특정 사용자의 결제 내역 목록을 최신순으로 조회한다.
-     * 
-     * @param userId 조회할 사용자 ID (필수)
+     * 현재 인증된 사용자의 결제 내역 목록을 최신순으로 조회한다.
+     * Gateway가 JWT를 검증하고 X-User-Id 헤더로 userId를 주입한다.
+     *
+     * @param userId Gateway가 주입한 사용자 ID (X-User-Id 헤더)
      * @return 사용자의 결제 요약 목록을 감싼 ApiResponse
      */
     @GetMapping
     public ApiResponse<List<PaymentSummaryResponse>> getPaymentsByUserId(
-            @RequestParam Long userId
+            @RequestHeader("X-User-Id") Long userId
     ) {
         log.info("결제 목록 조회 요청 - userId: {}", userId);
 

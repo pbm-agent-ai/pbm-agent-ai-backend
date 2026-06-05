@@ -13,6 +13,7 @@ import com.pbm.command.repository.CommandSessionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -178,7 +179,21 @@ public class CommandSessionService {
         // 현재 product-selection 단계의 핵심 저장 대상은 후보 상품 목록이다.
         // missingFields/categoryPath는 기존 메서드 시그니처를 유지하기 위한 호환 필드로 남겨둔다.
         String missingFieldsJson = serializeMissingFields(missingFields);
-        String candidatesJson = serializeCandidates(candidates);
+
+        // 다중 플랫폼 검색 시 플랫폼별로 Kafka 이벤트가 각각 도착할 수 있다.
+        // 이미 PRODUCT_SELECTION_REQUIRED 상태인 세션에 추가 이벤트가 오면 기존 후보와 병합한다.
+        List<ProductCandidateDto> mergedCandidates = candidates;
+        if (session.getStatus() == com.pbm.command.domain.CommandSessionStatus.PRODUCT_SELECTION_REQUIRED
+                && session.getCandidatesJson() != null) {
+            List<ProductCandidateDto> existing = deserializeCandidates(session.getCandidatesJson());
+            List<ProductCandidateDto> combined = new ArrayList<>(existing);
+            if (candidates != null) {
+                combined.addAll(candidates);
+            }
+            mergedCandidates = combined;
+        }
+
+        String candidatesJson = serializeCandidates(mergedCandidates);
         session.toProductSelectionRequired(missingFieldsJson, clarificationMessage, categoryPath,
                 candidatesJson, targetPrice, intent);
 
@@ -367,6 +382,23 @@ public class CommandSessionService {
             return objectMapper.writeValueAsString(missingFields);
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("missingFields JSON 직렬화 실패", e);
+        }
+    }
+
+    /**
+     * 세션에 저장된 candidates JSON 문자열을 ProductCandidateDto 리스트로 역직렬화한다.
+     * <p>
+     * 다중 플랫폼 이벤트 병합 시 기존 후보를 꺼내기 위해 사용한다.
+     */
+    private List<ProductCandidateDto> deserializeCandidates(String json) {
+        if (json == null || json.isBlank()) {
+            return new ArrayList<>();
+        }
+        try {
+            return objectMapper.readValue(json,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, ProductCandidateDto.class));
+        } catch (JsonProcessingException e) {
+            return new ArrayList<>();
         }
     }
 

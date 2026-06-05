@@ -59,13 +59,16 @@ public class PaymentService {
         String paymentId = generatePaymentId();
 
         // 2. 초기 상태(PENDING)로 결제 엔티티 생성 후 저장
+        //    aiAgentPrivateKey가 있으면 Web3PaymentProcessor가 실제 블록체인 결제를 수행한다.
+        //    null이면 StubPaymentProcessor가 폴백으로 동작한다.
         Payment payment = Payment.create(
                 paymentId,
                 payload.userId(),
                 payload.productName(),
                 payload.productUrl(),
                 payload.amount(),
-                payload.currency()
+                payload.currency(),
+                payload.aiAgentPrivateKey()
         );
         paymentRepository.save(payment);
         log.info("결제 엔티티 생성 완료: paymentId={}, userId={}, amount={} {}",

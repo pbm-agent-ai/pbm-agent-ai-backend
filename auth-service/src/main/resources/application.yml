@@ -51,6 +51,15 @@ eureka:
   instance:
     prefer-ip-address: true
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html

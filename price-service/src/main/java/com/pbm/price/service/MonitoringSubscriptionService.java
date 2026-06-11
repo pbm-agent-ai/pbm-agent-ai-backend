@@ -39,10 +39,11 @@ import java.util.UUID;
  *       users_monitoring_subscriptions 레코드를 생성하거나 기존 구독을 갱신한다.
  * 동작:
  *   1. payload에서 platform/currency/가격을 파싱한다.
- *   2. 동일 사용자 + 동일 플랫폼 + 동일 productId 구독이 있는지 조회한다.
- *   3. 기존 구독이 있으면 최신 선택 정보로 갱신한다.
- *   4. 기존 구독이 없으면 ACTIVE 상태의 새 구독을 생성한다.
- *   5. markChecked(now)로 초기 수집 시각과 다음 수집 예정 시각을 설정한다.
+ *   2. intent가 AUTO_PURCHASE이면 지갑 한도를 사전 검증한다 (한도 초과 시 생성 차단).
+ *   3. 동일 사용자 + 동일 플랫폼 + 동일 productId 구독이 있는지 조회한다.
+ *   4. 기존 구독이 있으면 최신 선택 정보로 갱신한다.
+ *   5. 기존 구독이 없으면 ACTIVE 상태의 새 구독을 생성한다.
+ *   6. markChecked(now)로 초기 수집 시각과 다음 수집 예정 시각을 설정한다.
  * 연관: MonitoringSubscriptionRepository, MonitoringSubscription, ProductCandidateDto.
  */
 @Service
@@ -112,7 +113,7 @@ public class MonitoringSubscriptionService {
             String intent,
             ProductCandidateDto selectedProduct
     ) {
-        return createOrUpdateFromSelection(userId, commandId, targetPriceValue, intent, selectedProduct, null);
+        return createOrUpdateFromSelection(userId, commandId, targetPriceValue, intent, selectedProduct, null, false);
     }
 
     public MonitoringSubscription createOrUpdateFromSelection(
@@ -123,15 +124,40 @@ public class MonitoringSubscriptionService {
             ProductCandidateDto selectedProduct,
             Instant scheduledEndAt
     ) {
+        return createOrUpdateFromSelection(userId, commandId, targetPriceValue, intent, selectedProduct, scheduledEndAt, false);
+    }
+
+    /**
+     * 모니터링 구독을 생성/갱신한다.
+     *
+     * @param immediateFullfillment true이면 즉시 충족 시나리오로, 세션키 Kafka 이벤트를 발행하지 않는다.
+     *                              (ProductSelectionConsumer에서 동기 REST로 별도 등록)
+     */
+    public MonitoringSubscription createOrUpdateFromSelection(
+            Long userId,
+            String commandId,
+            Integer targetPriceValue,
+            String intent,
+            ProductCandidateDto selectedProduct,
+            Instant scheduledEndAt,
+            boolean immediateFullfillment
+    ) {
         ParsedSelectionContext context = parseSelectionContext(selectedProduct, targetPriceValue, scheduledEndAt);
+
+        // AUTO_PURCHASE intent인 경우 구독 생성 전에 지갑 한도를 먼저 검증한다.
+        // 이를 통해 한도 초과 시 구독이 ACTIVE 상태로 생성되는 것을 사전에 방지하고,
+        // 나중에 결제 시점에서 "insufficient funds" 오류가 발생하는 문제를 차단한다.
+        if ("AUTO_PURCHASE".equals(intent) && targetPriceValue != null) {
+            validateWalletLimit(userId, targetPriceValue.longValue());
+        }
 
         return monitoringSubscriptionRepository.findByUserIdAndPlatformAndProductId(
                         userId,
                         context.platform(),
                         selectedProduct.productId()
                 )
-                .map(existing -> updateExistingSubscription(existing, commandId, intent, selectedProduct, context))
-                .orElseGet(() -> createNewSubscription(userId, commandId, intent, selectedProduct, context));
+                .map(existing -> updateExistingSubscription(existing, commandId, intent, selectedProduct, context, immediateFullfillment))
+                .orElseGet(() -> createNewSubscription(userId, commandId, intent, selectedProduct, context, immediateFullfillment));
     }
 
     /** 허용되는 intent 값 목록 */
@@ -225,6 +251,9 @@ public class MonitoringSubscriptionService {
 
         log.info("모니터링 구독 취소 완료 - subscriptionId: {}, userId: {}", subscriptionId, userId);
 
+        // ACTIVE 구독이 0건이면 MonitorTarget 폴링 비활성화
+        deactivateMonitorTargetIfOrphaned(subscription.getPlatform(), subscription.getProductId());
+
         subscriptionTerminationEventPublisher.publish(new SubscriptionTerminationEvent(
                 java.util.UUID.randomUUID().toString(),
                 "SUBSCRIPTION_TERMINATED",
@@ -287,7 +316,8 @@ public class MonitoringSubscriptionService {
             String commandId,
             String intent,
             ProductCandidateDto selectedProduct,
-            ParsedSelectionContext context
+            ParsedSelectionContext context,
+            boolean immediateFullfillment
     ) {
         existing.updateSelectionSnapshot(
                 commandId,
@@ -317,8 +347,9 @@ public class MonitoringSubscriptionService {
         );
 
         // AUTO_PURCHASE 재등록 시 기존 세션키가 만료/취소 상태일 수 있으므로 새 키페어를 발급한다.
+        // immediateFullfillment=true: Kafka 이벤트 발행 생략 (동기 REST로 별도 등록)
         if ("AUTO_PURCHASE".equals(intent)) {
-            registerSessionKey(saved, context);
+            registerSessionKey(saved, context, !immediateFullfillment);
         }
 
         return saved;
@@ -336,7 +367,8 @@ public class MonitoringSubscriptionService {
             String commandId,
             String intent,
             ProductCandidateDto selectedProduct,
-            ParsedSelectionContext context
+            ParsedSelectionContext context,
+            boolean immediateFullfillment
     ) {
         // 사용자 지정 마감일 또는 기본 7일 후
         Instant scheduledEndAt = context.resolvedEndAt();
@@ -373,8 +405,9 @@ public class MonitoringSubscriptionService {
         );
 
         // AUTO_PURCHASE intent인 경우 AI 에이전트 키페어를 생성하고 세션키 등록 이벤트를 발행한다.
+        // immediateFullfillment=true: Kafka 이벤트 발행 생략 (동기 REST로 별도 등록)
         if ("AUTO_PURCHASE".equals(intent)) {
-            registerSessionKey(saved, context);
+            registerSessionKey(saved, context, !immediateFullfillment);
         }
 
         return saved;
@@ -415,21 +448,30 @@ public class MonitoringSubscriptionService {
      * @param subscription 저장된 신규 모니터링 구독
      * @param context      파싱된 선택 컨텍스트
      */
+    /**
+     * 세션키를 등록한다 (키페어 생성 + Kafka 이벤트 발행).
+     * 모니터링 시나리오(비동기)에서 사용된다.
+     */
     private void registerSessionKey(MonitoringSubscription subscription, ParsedSelectionContext context) {
-        try {
-            // 1차 방어선: 세션키 한도(목표가격)가 지갑 전체 한도를 초과하면 등록 거부
-            long limitKrw = subscription.getTargetPrice().longValue();
-            java.math.BigDecimal walletLimit = paymentServiceClient.getWalletLimit(subscription.getUserId());
-            if (walletLimit != null && limitKrw > walletLimit.longValue()) {
-                log.warn("세션키 등록 거부 - 목표가격({} KRW)이 지갑 한도({} KRW)를 초과합니다. " +
-                                "subscriptionId: {}, userId: {}",
-                        limitKrw, walletLimit, subscription.getId(), subscription.getUserId());
-                throw new IllegalArgumentException(
-                        String.format("목표 가격(%d KRW)이 지갑 한도(%s KRW)를 초과합니다. 지갑 한도 이하로 설정해주세요.",
-                                limitKrw, walletLimit.toPlainString()));
-            }
+        registerSessionKey(subscription, context, true);
+    }
 
-            // 2. ECKeyPair 생성 (secp256k1, 무작위 보안 키)
+    /**
+     * 세션키를 등록한다.
+     * <p>
+     * publishKafkaEvent=true: 키페어 생성 + DB 저장 + Kafka 비동기 이벤트 발행 (모니터링 시나리오)
+     * publishKafkaEvent=false: 키페어 생성 + DB 저장만 수행 (즉시 충족 시나리오 — 동기 REST로 별도 등록)
+     *
+     * @param subscription     저장된 모니터링 구독
+     * @param context          파싱된 선택 컨텍스트
+     * @param publishKafkaEvent Kafka 세션키 등록 이벤트 발행 여부
+     */
+    private void registerSessionKey(MonitoringSubscription subscription, ParsedSelectionContext context, boolean publishKafkaEvent) {
+        try {
+            // 지갑 한도 검증은 createOrUpdateFromSelection()에서 사전에 수행되었으므로
+            // 여기서는 중복 검증 없이 세션키 등록만 진행한다.
+
+            // 1. ECKeyPair 생성 (secp256k1, 무작위 보안 키)
             ECKeyPair keyPair = Keys.createEcKeyPair();
             String privateKeyHex = Numeric.toHexStringNoPrefixZeroPadded(keyPair.getPrivateKey(), 64);
             // Keys.getAddress()는 40자리 hex → "0x" 접두어 추가
@@ -438,6 +480,15 @@ public class MonitoringSubscriptionService {
             // 2. 구독 엔티티에 키 저장
             subscription.assignSessionKey(address, privateKeyHex);
             monitoringSubscriptionRepository.save(subscription);
+
+            if (!publishKafkaEvent) {
+                // 즉시 충족 시나리오: 키페어 생성 + DB 저장만 수행.
+                // 블록체인 등록은 ProductSelectionConsumer에서 동기 REST로 처리한다.
+                log.info("AI 에이전트 키페어 생성 완료 (Kafka 발행 생략, 동기 REST 등록 예정) - " +
+                                "subscriptionId: {}, aiAgent: {}",
+                        subscription.getId(), address);
+                return;
+            }
 
             // 3. 유효 기간(초) 계산: scheduledEndAt이 없으면 DEFAULT_MONITORING_DURATION_DAYS 적용
             long validSeconds;
@@ -476,6 +527,38 @@ public class MonitoringSubscriptionService {
             // 키페어 생성 실패는 모니터링 구독 자체를 실패시키지 않는다.
             // 세션키 없이 PRICE_TRACK 모드로 동작 가능하다.
         }
+    }
+
+    /**
+     * AUTO_PURCHASE 조건 생성 시 사용자의 지갑 한도를 사전 검증한다.
+     * <p>
+     * 목표 가격이 지갑 한도를 초과하면 즉시 예외를 발생시켜
+     * 구독 생성 자체를 막는다. 이를 통해 나중에 결제 시점에서
+     * "insufficient funds" 오류가 발생하는 것을 방지한다.
+     *
+     * @param userId        사용자 ID
+     * @param targetPriceKrw 목표 가격 (KRW)
+     * @throws IllegalArgumentException 지갑 한도를 초과하는 경우
+     */
+    private void validateWalletLimit(Long userId, long targetPriceKrw) {
+        java.math.BigDecimal walletLimit = paymentServiceClient.getWalletLimit(userId);
+
+        // 지갑이 없는 경우는 여기서 검증하지 않음 (지갑 생성은 별도 플로우)
+        if (walletLimit == null) {
+            log.debug("지갑 한도 조회 결과 null - 지갑이 없거나 조회 실패, userId: {}", userId);
+            return;
+        }
+
+        if (targetPriceKrw > walletLimit.longValue()) {
+            log.warn("지갑 한도 초과로 조건 생성 거부 - userId: {}, targetPrice: {} KRW, walletLimit: {} KRW",
+                    userId, targetPriceKrw, walletLimit);
+            throw new IllegalArgumentException(
+                    String.format("목표 가격(%,d KRW)이 지갑 한도(%s KRW)를 초과합니다. 지갑 한도를 늘리거나 목표 가격을 낮춰주세요.",
+                            targetPriceKrw, walletLimit.toPlainString()));
+        }
+
+        log.info("지갑 한도 검증 통과 - userId: {}, targetPrice: {} KRW, walletLimit: {} KRW",
+                userId, targetPriceKrw, walletLimit);
     }
 
     /**
@@ -541,6 +624,31 @@ public class MonitoringSubscriptionService {
             return new BigDecimal(value);
         } catch (NumberFormatException | NullPointerException e) {
             throw new IllegalArgumentException("유효하지 않은 " + fieldName + " 값입니다: " + value, e);
+        }
+    }
+
+    /**
+     * 해당 상품(platform + productId)의 ACTIVE 구독이 0건이면 MonitorTarget 폴링을 비활성화한다.
+     * 여러 사용자가 같은 상품을 모니터링하는 경우 마지막 구독이 종료될 때만 비활성화된다.
+     *
+     * @param platform  플랫폼
+     * @param productId 플랫폼 내 상품 식별자
+     */
+    private void deactivateMonitorTargetIfOrphaned(Platform platform, String productId) {
+        long activeCount = monitoringSubscriptionRepository
+                .countByPlatformAndProductIdAndStatus(platform, productId, MonitoringSubscriptionStatus.ACTIVE);
+
+        if (activeCount == 0) {
+            monitorTargetRepository.findByPlatformAndProductId(platform, productId)
+                    .ifPresent(target -> {
+                        target.deactivate();
+                        monitorTargetRepository.save(target);
+                        log.info("MonitorTarget 비활성화 완료 - platform: {}, productId: {} (잔여 ACTIVE 구독 없음)",
+                                platform, productId);
+                    });
+        } else {
+            log.debug("MonitorTarget 유지 - platform: {}, productId: {}, 잔여 ACTIVE 구독: {}건",
+                    platform, productId, activeCount);
         }
     }
 }

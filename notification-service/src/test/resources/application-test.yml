@@ -5,14 +5,23 @@ spring:
   application:
     name: notification-service
 
-  # 테스트에서는 DB/JPA 자동설정 제외
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
-      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+  # 테스트용 H2 인메모리 DB
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+    show-sql: true
 
   kafka:
-    bootstrap-servers: ${spring.embedded.kafka.brokers}
+    bootstrap-servers: ${spring.embedded.kafka.brokers:localhost:9092}
     consumer:
       group-id: notification-service-test
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
@@ -22,12 +31,37 @@ spring:
         spring.json.use.type.headers: false
         spring.json.value.default.type: com.pbm.notification.dto.event.PriceAlertEvent
 
+  # 테스트에서는 메일 발송 비활성화
+  mail:
+    host: localhost
+    port: 3025
+    username: test
+    password: test
+
 app:
   kafka:
     topics:
       price-alert: price-alert
+  telegram:
+    bot-token: test-bot-token
+    api-url: http://localhost:8089
+  mail:
+    from: test@pbm-agent.com
 
 # 테스트에서는 Eureka 비활성화
 eureka:
   client:
     enabled: false
+
+# Resilience4j 테스트 설정
+resilience4j:
+  circuitbreaker:
+    instances:
+      telegram:
+        sliding-window-size: 2
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 5s
+      email:
+        sliding-window-size: 2
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 5s

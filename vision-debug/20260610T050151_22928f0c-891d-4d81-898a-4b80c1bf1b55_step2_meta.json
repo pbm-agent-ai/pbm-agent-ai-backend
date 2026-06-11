@@ -1,0 +1,22 @@
+{
+  "runId": "22928f0c-891d-4d81-898a-4b80c1bf1b55",
+  "stepIndex": 2,
+  "currentUrl": "https://search.shopping.naver.com/search/all?query=%EC%82%BC%EC%84%B1%EC%A0%84%EC%9E%90%20%EA%B0%A4%EB%9F%AD%EC%8B%9C%20%EB%B2%84%EC%A6%88%204%20SM-R540N&vertical=search",
+  "action": "WAIT",
+  "imageWidth": null,
+  "imageHeight": null,
+  "rawX": null,
+  "rawY": null,
+  "normalizedX": null,
+  "normalizedY": null,
+  "pixelInterpretation": null,
+  "grid1000Interpretation": null,
+  "targetLabel": null,
+  "confidence": 1.0,
+  "reason": "목표 상품명과 가격에 정확히 일치하는 상품 카드가 없습니다. 첫 번째 상품은 광고 상품이며, 목표 상품명과 모델명(SM-R640 vs SM-R540N), 가격(323,100원 vs 231,400원)이 일치하지 않습니다. 두 번째 상품은 가격 정보가 불명확하며, 정확한 모델명 SM-R540N이 보이지 않습니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "savedAtUtc": "20260610T050151",
+  "rawPath": "/app/vision-debug/20260610T050151_22928f0c-891d-4d81-898a-4b80c1bf1b55_step2_raw.png",
+  "annotatedPath": "/app/vision-debug/20260610T050151_22928f0c-891d-4d81-898a-4b80c1bf1b55_step2_annotated.png"
+}

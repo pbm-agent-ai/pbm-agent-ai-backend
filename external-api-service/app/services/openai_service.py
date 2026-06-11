@@ -212,6 +212,8 @@ def _save_vision_debug_artifacts(
             "reason": reason,
             "errorCode": request.error_code,
             "errorMessage": request.error_message,
+            "mode": request.mode,
+            "targetOption": request.target_option,
             "savedAtUtc": timestamp,
             "rawPath": str(raw_path),
             "annotatedPath": str(annotated_path),
@@ -942,6 +944,8 @@ async def analyze_screenshot_action(request: VisionPlannerRequest) -> VisionPlan
         "가격 텍스트, 상품명, 배너, 일반 설명문은 클릭 타겟이 아니다. 버튼/링크/CTA가 아니면 CLICK을 반환하지 마라. "
         "WAIT나 COMPLETE인 경우 viewport_x, viewport_y, target_label은 반드시 null이어야 한다. "
         "명확한 타겟이 없으면 WAIT를 반환하라. "
+        "mode가 SMARTSTORE_OPTION_SELECTION이면 target_option을 우선 기준으로 삼아, 화면에 보이는 해당 옵션 텍스트 또는 그 옵션을 펼치는 opener를 클릭하라. "
+        "target_option이 현재 화면에 없으면 해당 옵션 목록을 열 수 있는 toggle/button을 클릭하고, 그래도 불명확하면 WAIT를 반환하라. "
     )
 
     screenshot_base64 = request.screenshot_data_url.split(",", 1)[1]
@@ -956,6 +960,8 @@ async def analyze_screenshot_action(request: VisionPlannerRequest) -> VisionPlan
                     "currentUrl": request.current_url,
                     "errorCode": request.error_code,
                     "errorMessage": request.error_message,
+                    "mode": request.mode,
+                    "targetOption": request.target_option,
                 },
                 ensure_ascii=False,
             )
@@ -1072,12 +1078,15 @@ async def analyze_screenshot_action(request: VisionPlannerRequest) -> VisionPlan
                         "currentUrl": request.current_url,
                         "errorCode": request.error_code,
                         "errorMessage": request.error_message,
+                        "mode": request.mode,
+                        "targetOption": request.target_option,
                     },
                     ensure_ascii=False,
                 )
                 + "\n\n[중요] CLICK일 때만 viewport_x와 viewport_y에 0~1000 grid 정수 좌표를 넣어라. "
                 "WAIT/COMPLETE면 viewport_x, viewport_y, target_label을 반드시 null로 반환하라. "
-                "가격 텍스트/상품명은 클릭 대상이 아니다."
+                "가격 텍스트/상품명은 클릭 대상이 아니다. "
+                "mode가 SMARTSTORE_OPTION_SELECTION이면 targetOption에 맞는 옵션 또는 opener를 우선 찾는다."
             )),
         ]
         retry_response = await client.aio.models.generate_content(

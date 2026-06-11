@@ -6,6 +6,7 @@ import com.pbm.price.dto.event.SubscriptionTerminationEvent;
 import com.pbm.price.dto.event.SubscriptionTerminationEventPayload;
 import com.pbm.price.publisher.SubscriptionTerminationEventPublisher;
 import com.pbm.price.repository.MonitoringSubscriptionRepository;
+import com.pbm.price.repository.MonitorTargetRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -15,75 +16,36 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * 모니터링 구독 만료 스케줄러.
+ *
+ * 역할: 종료 예정 시각(scheduledEndAt)이 지난 ACTIVE 구독을 자동으로 COMPLETED 처리한다.
+ *       ACTIVE 구독이 0건이 되면 해당 MonitorTarget의 폴링을 비활성화한다.
+ *
+ * 변경 이력:
+ *   - 기존 processDueSubscriptions() 제거: 조건 평가는 PriceMonitoringScheduler가
+ *     가격 수집 직후 인라인으로 수행하므로 별도 스케줄링이 불필요해짐.
+ *   - 만료 처리만 유지: 시간 기반 자동 종료는 가격 수집과 무관하므로 독립 스케줄러로 유지.
+ *
+ * 연관: MonitoringSubscriptionRepository, MonitorTargetRepository,
+ *       SubscriptionTerminationEventPublisher.
+ */
 @Slf4j
 @Component
 public class SubscriptionMonitoringScheduler {
 
     private final MonitoringSubscriptionRepository monitoringSubscriptionRepository;
-    private final SubscriptionMonitoringService subscriptionMonitoringService;
+    private final MonitorTargetRepository monitorTargetRepository;
     private final SubscriptionTerminationEventPublisher subscriptionTerminationEventPublisher;
 
     public SubscriptionMonitoringScheduler(
             MonitoringSubscriptionRepository monitoringSubscriptionRepository,
-            SubscriptionMonitoringService subscriptionMonitoringService,
+            MonitorTargetRepository monitorTargetRepository,
             SubscriptionTerminationEventPublisher subscriptionTerminationEventPublisher
     ) {
         this.monitoringSubscriptionRepository = monitoringSubscriptionRepository;
-        this.subscriptionMonitoringService = subscriptionMonitoringService;
+        this.monitorTargetRepository = monitorTargetRepository;
         this.subscriptionTerminationEventPublisher = subscriptionTerminationEventPublisher;
-    }
-
-    /**
-     * 수집 예정 시각이 도래한 ACTIVE 구독을 조회하여 순차 처리한다.
-     *
-     * fixedDelay를 사용하는 이유:
-     * - 이전 배치가 끝난 뒤 일정 시간 후 다음 배치를 시작하기 위함
-     * - 외부 API 호출 시간이 길어져도 배치 중복 실행을 피하기 쉬움
-     *
-     * application.yml에서:
-     * app:
-     *  monitoring:
-     *      scheduler-interval-ms: 60000
-     */
-    @Scheduled(fixedDelayString = "${app.monitoring.scheduler-interval-ms:60000}")
-    public void processDueSubscriptions() {
-        Instant now = Instant.now();
-
-        List<MonitoringSubscription> dueSubscriptions =
-                monitoringSubscriptionRepository.findByStatusAndNextCheckAtBefore(
-                        MonitoringSubscriptionStatus.ACTIVE,
-                        now
-                );
-
-        if (dueSubscriptions.isEmpty()) {
-            log.debug("처리할 모니터링 구독 없음 - now: {}", now);
-            return;
-        }
-
-        log.info("모니터링 구독 배치 시작 - count: {}, now: {}", dueSubscriptions.size(), now);
-
-        for (MonitoringSubscription subscription : dueSubscriptions) {
-            try {
-                log.info("모니터링 구독 처리 시작 - subscriptionId: {}, commandId: {}, productId: {}, platform: {}",
-                        subscription.getId(),
-                        subscription.getCommandId(),
-                        subscription.getProductId(),
-                        subscription.getPlatform());
-
-                // 실제 재조회/가격 비교/상태 전이/이벤트 발행은 전용 서비스에 위임한다.
-                subscriptionMonitoringService.process(subscription.getId());
-
-                log.info("모니터링 구독 처리 완료 - subscriptionId: {}", subscription.getId());
-            } catch (Exception e) {
-                // 한 건 실패가 전체 배치를 중단시키지 않도록 개별 예외를 먹고 다음 건으로 진행함.
-                log.error("모니터링 구독 처리 실패 - subscriptionId: {}, commandId: {}",
-                        subscription.getId(),
-                        subscription.getCommandId(),
-                        e);
-            }
-        }
-
-        log.info("모니터링 구독 배치 종료 - count: {}", dueSubscriptions.size());
     }
 
     /**
@@ -114,6 +76,24 @@ public class SubscriptionMonitoringScheduler {
             monitoringSubscriptionRepository.save(subscription);
             log.info("모니터링 구독 만료 완료 처리 - subscriptionId: {}, scheduledEndAt: {}",
                     subscription.getId(), subscription.getScheduledEndAt());
+
+            // ACTIVE 구독이 0건이면 MonitorTarget 폴링 비활성화
+            long activeCount = monitoringSubscriptionRepository
+                    .countByPlatformAndProductIdAndStatus(
+                            subscription.getPlatform(),
+                            subscription.getProductId(),
+                            MonitoringSubscriptionStatus.ACTIVE
+                    );
+            if (activeCount == 0) {
+                monitorTargetRepository.findByPlatformAndProductId(
+                        subscription.getPlatform(), subscription.getProductId()
+                ).ifPresent(target -> {
+                    target.deactivate();
+                    monitorTargetRepository.save(target);
+                    log.info("MonitorTarget 비활성화 완료 - platform: {}, productId: {} (잔여 ACTIVE 구독 없음)",
+                            subscription.getPlatform(), subscription.getProductId());
+                });
+            }
 
             subscriptionTerminationEventPublisher.publish(new SubscriptionTerminationEvent(
                     UUID.randomUUID().toString(),

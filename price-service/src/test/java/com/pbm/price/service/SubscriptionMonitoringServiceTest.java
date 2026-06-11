@@ -11,7 +11,9 @@ import com.pbm.price.dto.response.AliexpressProductDetailResponse;
 import com.pbm.price.dto.response.NaverShoppingItem;
 import com.pbm.price.publisher.PaymentRequestEventPublisher;
 import com.pbm.price.publisher.PriceAlertEventPublisher;
+import com.pbm.price.publisher.PriceValidationResultEventPublisher;
 import com.pbm.price.repository.MonitoringSubscriptionRepository;
+import com.pbm.price.repository.MonitorTargetRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -66,10 +68,16 @@ class SubscriptionMonitoringServiceTest {
     private PaymentRequestEventPublisher paymentRequestEventPublisher;
 
     @Mock
+    private PriceValidationResultEventPublisher priceValidationResultEventPublisher;
+
+    @Mock
     private ExternalApiClient externalApiClient;
 
     @Mock
     private PriceCurrencyConverter priceCurrencyConverter;
+
+    @Mock
+    private MonitorTargetRepository monitorTargetRepository;
 
     /** 테스트에서 제어할 refreshSubscription 결과 */
     private SubscriptionMonitoringService.NormalizedProductSnapshot controlledSnapshot;
@@ -86,8 +94,10 @@ class SubscriptionMonitoringServiceTest {
         // 익명 하위 클래스로 refreshSubscription을 오버라이드하여 테스트 가능하게 함
         service = new SubscriptionMonitoringService(
                 monitoringSubscriptionRepository,
+                monitorTargetRepository,
                 priceAlertEventPublisher,
                 paymentRequestEventPublisher,
+                priceValidationResultEventPublisher,
                 externalApiClient,
                 priceCurrencyConverter
         ) {
@@ -306,7 +316,7 @@ class SubscriptionMonitoringServiceTest {
         assertThat(sub.getLastCheckedAt()).isNotNull();
         verify(monitoringSubscriptionRepository).save(sub);
         verify(priceAlertEventPublisher).publish(any());
-        verify(paymentRequestEventPublisher).publish(any());
+        // payment-topic 발행 제거됨 - command-service가 브라우저 자동화 후 결제 이벤트 발행
     }
 
     @Test
@@ -331,7 +341,7 @@ class SubscriptionMonitoringServiceTest {
         // then: TRIGGERED
         assertThat(sub.getStatus()).isEqualTo(MonitoringSubscriptionStatus.TRIGGERED);
         verify(priceAlertEventPublisher).publish(any());
-        verify(paymentRequestEventPublisher).publish(any());
+        // payment-topic 발행 제거됨 - command-service가 브라우저 자동화 후 결제 이벤트 발행
     }
 
     // =========================================================================
@@ -361,7 +371,7 @@ class SubscriptionMonitoringServiceTest {
         assertThat(sub.getLastCheckedAt()).isNotNull();
         verify(monitoringSubscriptionRepository).save(sub);
         verify(priceAlertEventPublisher).publish(any());
-        verify(paymentRequestEventPublisher).publish(any());
+        // payment-topic 발행 제거됨 - command-service가 브라우저 자동화 후 결제 이벤트 발행
     }
 
     @Test
@@ -384,7 +394,7 @@ class SubscriptionMonitoringServiceTest {
         // then: TRIGGERED
         assertThat(sub.getStatus()).isEqualTo(MonitoringSubscriptionStatus.TRIGGERED);
         verify(priceAlertEventPublisher).publish(any());
-        verify(paymentRequestEventPublisher).publish(any());
+        // payment-topic 발행 제거됨 - command-service가 브라우저 자동화 후 결제 이벤트 발행
     }
 
     // =========================================================================
@@ -469,8 +479,10 @@ class SubscriptionMonitoringServiceTest {
     private SubscriptionMonitoringService createRealService() {
         return new SubscriptionMonitoringService(
                 monitoringSubscriptionRepository,
+                monitorTargetRepository,
                 priceAlertEventPublisher,
                 paymentRequestEventPublisher,
+                priceValidationResultEventPublisher,
                 externalApiClient,
                 priceCurrencyConverter
         );

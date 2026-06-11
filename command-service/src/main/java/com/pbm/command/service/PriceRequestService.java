@@ -32,6 +32,8 @@ import java.util.UUID;
 // 가격 요청 확인을 kafka price-topic으로 발행하는 서비스
 public class PriceRequestService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(PriceRequestService.class);
+
     // KafkaTemplate<Key 타입, Value 타입>
     // Key = String, Value = PriceRequestEvent(이벤트 객체)
     private final KafkaTemplate<String, PriceRequestEvent> kafkaTemplate;
@@ -44,6 +46,56 @@ public class PriceRequestService {
     ) {
         this.kafkaTemplate = kafkaTemplate;
         this.priceTopic = priceTopic;
+    }
+
+    /**
+     * URL 모니터링 구독 등록 요청을 price-topic으로 발행한다.
+     * <p>
+     * URL별로 각각 이벤트를 발행하여 price-service가 MonitoringSubscription을 생성하도록 한다.
+     *
+     * @param userId       요청 사용자 ID
+     * @param commandId    명령 세션 ID
+     * @param productUrls  모니터링 대상 URL 목록
+     * @param targetPrice  목표 가격
+     * @param currency     통화
+     * @param condition    ALL | ANY
+     * @param intent       AUTO_PURCHASE | PRICE_TRACK
+     */
+    public void publishUrlMonitoringRequest(
+            Long userId,
+            String commandId,
+            List<String> productUrls,
+            Integer targetPrice,
+            String currency,
+            String condition,
+            String intent
+    ) {
+        for (String productUrl : productUrls) {
+            String eventId = UUID.randomUUID().toString();
+            PriceRequestEvent event = new PriceRequestEvent(
+                    eventId,
+                    "URL_MONITOR_REQUEST",
+                    Instant.now(),
+                    "command-service",
+                    new PriceRequestEventPayload(
+                            userId,
+                            null,           // keyword — URL 모니터링은 키워드 불필요
+                            targetPrice,
+                            "URL",          // platform — URL 타입 식별자
+                            currency,
+                            commandId,
+                            intent,
+                            null,           // parsedCommandSnapshot
+                            productUrl,     // productUrl — 단건 URL
+                            null,           // searchKeyword
+                            null,           // productUrls
+                            condition       // urlCondition — ALL | ANY
+                    )
+            );
+            kafkaTemplate.send(priceTopic, String.valueOf(userId), event);
+        }
+        log.info("URL 모니터링 구독 등록 이벤트 발행 - commandId: {}, urlCount: {}, condition: {}",
+                commandId, productUrls.size(), condition);
     }
 
     /**

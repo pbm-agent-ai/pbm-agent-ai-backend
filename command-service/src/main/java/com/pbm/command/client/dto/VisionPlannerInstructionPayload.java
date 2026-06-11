@@ -11,6 +11,8 @@ public record VisionPlannerInstructionPayload(
         @JsonProperty("viewport_x") Double viewportX,
         @JsonProperty("viewport_y") Double viewportY,
         @JsonProperty("target_label") String targetLabel,
+        @JsonProperty("option_present") Boolean optionPresent,
+        @JsonProperty("option_groups") java.util.List<VisionPlannerOptionGroupPayload> optionGroups,
         Double confidence,
         String reason
 ) {

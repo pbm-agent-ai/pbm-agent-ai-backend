@@ -45,6 +45,10 @@ services:
     image: prom/prometheus:latest
     ports:
       - "9091:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - eureka-server
 
   grafana:
     image: grafana/grafana:latest
@@ -52,6 +56,11 @@ services:
       - "3001:3000"
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
 
   # ─── 서비스 디스커버리 ────────────────────────────────────
   eureka-server:
@@ -72,9 +81,10 @@ services:
       - "8080:8080"
     depends_on:
       - eureka-server
+    env_file:
+      - .env
     environment:
       - EUREKA_URL=http://eureka-server:8761/eureka/
-      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
 
   # ─── 인증 서비스 ──────────────────────────────────────────
   auth-service:
@@ -87,6 +97,8 @@ services:
       - postgres
       - redis
       - eureka-server
+    env_file:
+      - .env
     environment:
       - EUREKA_SERVER_URL=http://eureka-server:8761/eureka/
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
@@ -95,7 +107,6 @@ services:
       - AUTH_DB_PASSWORD=${AUTH_DB_PASSWORD:-password}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
       - JWT_EXPIRATION=${JWT_EXPIRATION:-1800000}
       - JWT_REFRESH_EXPIRATION=${JWT_REFRESH_EXPIRATION:-604800000}
 
@@ -110,6 +121,8 @@ services:
       - kafka
       - eureka-server
       - redis
+    env_file:
+      - .env
     environment:
       - EUREKA_SERVER_URL=http://eureka-server:8761/eureka/
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
@@ -119,7 +132,6 @@ services:
       - COMMAND_DB_PASSWORD=${COMMAND_DB_PASSWORD:-password}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
       - JWT_DEVICE_EXPIRATION=${JWT_DEVICE_EXPIRATION:-2592000000}
       - JWT_AGENT_EXPIRATION=${JWT_AGENT_EXPIRATION:-1800000}
 
@@ -134,6 +146,8 @@ services:
       - kafka
       - eureka-server
       - external-api-service
+    env_file:
+      - .env
     environment:
       - EUREKA_URL=http://eureka-server:8761/eureka/
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
@@ -141,7 +155,7 @@ services:
       - PRICE_DB_URL=jdbc:postgresql://postgres:5432/price_db
       - PRICE_DB_USERNAME=${PRICE_DB_USERNAME:-postgres}
       - PRICE_DB_PASSWORD=${PRICE_DB_PASSWORD:-password}
-      - EXCHANGE_RATE_API_KEY=${EXCHANGE_RATE_API_KEY}
+      - PAYMENT_SERVICE_URL=http://payment-service:8084
 
   # ─── 결제 서비스 ──────────────────────────────────────────
   payment-service:
@@ -153,31 +167,35 @@ services:
     depends_on:
       - kafka
       - eureka-server
+    env_file:
+      - .env
     environment:
+      # 도커 내부 네트워크 주소 (호스트 환경변수보다 이 값이 우선 적용됨)
       - EUREKA_SERVER_URL=http://eureka-server:8761/eureka/
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - PAYMENT_DB_URL=jdbc:postgresql://postgres:5432/payment_db
       - PAYMENT_DB_USERNAME=${PAYMENT_DB_USERNAME:-postgres}
       - PAYMENT_DB_PASSWORD=${PAYMENT_DB_PASSWORD:-password}
-      - SEPOLIA_RPC_URL=${SEPOLIA_RPC_URL}
-      - BLOCKCHAIN_PRIVATE_KEY=${BLOCKCHAIN_PRIVATE_KEY}
-      - CONTRACT_ACCOUNT_FACTORY=${CONTRACT_ACCOUNT_FACTORY}
-      - CONTRACT_PBM_TOKEN=${CONTRACT_PBM_TOKEN}
-      - CONTRACT_PAYMASTER=${CONTRACT_PAYMASTER}
 
   # ─── 알림 서비스 ──────────────────────────────────────────
   notification-service:
     build:
       context: .
       dockerfile: notification-service/Dockerfile
-    expose:
-      - "8085"
+    ports:
+      - "8085:8085"
     depends_on:
       - kafka
       - eureka-server
+      - postgres
+    env_file:
+      - .env
     environment:
       - EUREKA_SERVER_URL=http://eureka-server:8761/eureka/
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - NOTIFICATION_DB_URL=jdbc:postgresql://postgres:5432/notification_db
+      - NOTIFICATION_DB_USERNAME=${NOTIFICATION_DB_USERNAME:-postgres}
+      - NOTIFICATION_DB_PASSWORD=${NOTIFICATION_DB_PASSWORD:-password}
 
   # ─── 외부 API 래핑 서비스 (네이버 쇼핑 등) ────────────────
   external-api-service:
@@ -185,25 +203,18 @@ services:
       context: ./external-api-service
     ports:
       - "8090:8090"
+    env_file:
+      - .env
     environment:
-      - NAVER_CLIENT_ID=${NAVER_CLIENT_ID:-}
-      - NAVER_CLIENT_SECRET=${NAVER_CLIENT_SECRET:-}
       # 모킹 모드: 기본값은 false(실제 API 호출). 필요 시 true로 설정하여 고정 데이터 반환
       - NAVER_MOCK_ENABLED=${NAVER_MOCK_ENABLED:-false}
-      # AliExpress Affiliate API 환경변수
-      - ALIEXPRESS_APP_KEY=${ALIEXPRESS_APP_KEY:-}
-      - ALIEXPRESS_APP_SECRET=${ALIEXPRESS_APP_SECRET:-}
-      - ALIEXPRESS_BASE_URL=${ALIEXPRESS_BASE_URL:-https://api-sg.aliexpress.com/sync}
       # AliExpress 모킹 모드: 기본값은 false(실제 API 호출). 필요 시 true로 설정하여 고정 데이터 반환
       - ALIEXPRESS_MOCK_ENABLED=${ALIEXPRESS_MOCK_ENABLED:-false}
-      # OpenAI API 환경변수
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.4-mini}
+      - ALIEXPRESS_BASE_URL=${ALIEXPRESS_BASE_URL:-https://api-sg.aliexpress.com/sync}
       # OpenAI 모킹 모드: 기본값은 false(실제 API 호출). 필요 시 true로 설정하여 고정 데이터 반환
       - OPENAI_MOCK_ENABLED=${OPENAI_MOCK_ENABLED:-false}
-      # Gemini API 환경변수 (Vision Planner용)
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.4-mini}
       - VISION_DEBUG_DIR=/app/vision-debug
     volumes:
       - ./vision-debug:/app/vision-debug

@@ -1,0 +1,22 @@
+{
+  "runId": "2e40b81d-3aad-4cb6-83bd-3e0363fe583c",
+  "stepIndex": 2,
+  "currentUrl": "https://ko.aliexpress.com/w/wholesale-%EC%9D%B4%EC%96%B4%ED%8F%B0.html",
+  "action": "WAIT",
+  "imageWidth": null,
+  "imageHeight": null,
+  "rawX": null,
+  "rawY": null,
+  "normalizedX": null,
+  "normalizedY": null,
+  "pixelInterpretation": null,
+  "grid1000Interpretation": null,
+  "targetLabel": null,
+  "confidence": 1.0,
+  "reason": "현재 페이지는 상품 상세페이지가 아니므로 옵션 선택 UI가 존재하지 않습니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "savedAtUtc": "20260610T023209",
+  "rawPath": "/app/vision-debug/20260610T023209_2e40b81d-3aad-4cb6-83bd-3e0363fe583c_step2_raw.png",
+  "annotatedPath": "/app/vision-debug/20260610T023209_2e40b81d-3aad-4cb6-83bd-3e0363fe583c_step2_annotated.png"
+}

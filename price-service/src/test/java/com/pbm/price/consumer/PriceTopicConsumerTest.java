@@ -11,6 +11,7 @@ import com.pbm.price.service.AliExpressProductUrlService;
 import com.pbm.price.service.AliExpressShoppingService;
 import com.pbm.price.service.NaverProductUrlService;
 import com.pbm.price.service.NaverShoppingService;
+import com.pbm.price.service.UrlMonitoringService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -62,6 +63,9 @@ class PriceTopicConsumerTest {
     @Mock
     private NaverProductUrlService naverProductUrlService;
 
+    @Mock
+    private UrlMonitoringService urlMonitoringService;
+
     private PriceTopicConsumer priceTopicConsumer;
 
     @BeforeEach
@@ -72,7 +76,8 @@ class PriceTopicConsumerTest {
                 aliExpressCategoryIdResolver,
                 aliExpressProductUrlService,
                 naverProductUrlService,
-                productSelectionRequiredEventPublisher
+                productSelectionRequiredEventPublisher,
+                urlMonitoringService
         );
     }
 

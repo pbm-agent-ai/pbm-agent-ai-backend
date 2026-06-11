@@ -1,0 +1,28 @@
+{
+  "runId": "6ad6e7a6-c897-4ccb-97b0-b5ddaadfc1ef",
+  "stepIndex": 4,
+  "currentUrl": "https://www.coupang.com/vp/products/9309807813?itemId=27585107825&vendorItemId=94548723294&src=1032001&spec=10305197&addtag=400&ctag=9309807813&lptag=I27585107825&itime=20260609211814&pageType=PRODUCT&pageValue=9309807813&wPcid=17749240518236981493538&wRef=cr.shopping.naver.com&wTime=20260609211814&redirect=landing&mcid=e4f7195464dc401a8a04bc7e86c6d66c&n_keyword=&n_ad_group=&n_ad=&n_rank=&n_keyword_id=&n_media=&n_campaign_type=&n_query=",
+  "action": "CLICK",
+  "imageWidth": 1503,
+  "imageHeight": 853,
+  "rawX": 866.0,
+  "rawY": 985.0,
+  "normalizedX": 0.866,
+  "normalizedY": 0.985,
+  "pixelInterpretation": {
+    "x": 866,
+    "y": 985
+  },
+  "grid1000Interpretation": {
+    "x": 1301,
+    "y": 840
+  },
+  "targetLabel": "바로구매",
+  "confidence": 1.0,
+  "reason": "최종 구매 버튼 '바로구매'를 클릭합니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "savedAtUtc": "20260609T121840",
+  "rawPath": "/app/vision-debug/20260609T121840_6ad6e7a6-c897-4ccb-97b0-b5ddaadfc1ef_step4_raw.png",
+  "annotatedPath": "/app/vision-debug/20260609T121840_6ad6e7a6-c897-4ccb-97b0-b5ddaadfc1ef_step4_annotated.png"
+}

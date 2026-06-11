@@ -1,0 +1,2 @@
+ALTER TABLE IF EXISTS agent_runs
+    ADD COLUMN IF NOT EXISTS option_presence_scroll_count INTEGER NOT NULL DEFAULT 0;

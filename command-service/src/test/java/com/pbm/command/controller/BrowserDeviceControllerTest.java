@@ -92,7 +92,8 @@ class BrowserDeviceControllerTest {
                 "device-123",
                 BrowserDeviceStatus.ONLINE,
                 LocalDateTime.of(2026, 5, 16, 13, 5),
-                new AssignedRunResponse("run-1", "agent-token", "cmd-1", "ALIEXPRESS")
+                new AssignedRunResponse("run-1", "agent-token", "cmd-1", "ALIEXPRESS"),
+                java.util.List.of()
         );
 
         given(browserDeviceService.heartbeat("device-123")).willReturn(response);

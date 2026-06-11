@@ -1,0 +1,22 @@
+{
+  "runId": "713284d4-e4cc-4422-a930-c63c784ddfc0",
+  "stepIndex": 2,
+  "currentUrl": "https://search.shopping.naver.com/search/all?query=4%20%EC%82%BC%EC%84%B1%EC%A0%84%EC%9E%90%20%EA%B0%A4%EB%9F%AD%EC%8B%9C%20%EB%B2%84%EC%A6%88%204%20SM-R540N&vertical=search",
+  "action": "WAIT",
+  "imageWidth": null,
+  "imageHeight": null,
+  "rawX": null,
+  "rawY": null,
+  "normalizedX": null,
+  "normalizedY": null,
+  "pixelInterpretation": null,
+  "grid1000Interpretation": null,
+  "targetLabel": null,
+  "confidence": 0.7,
+  "reason": "스크린샷에 표시된 상품의 제목(갤럭시 버즈4 무선 블루투스이어폰 화이트)에 목표 상품명인 '삼성전자 갤럭시 버즈 4 SM-R540N'의 모델명 'SM-R540N'이 포함되어 있지 않아 정확한 상품인지 확신하기 어렵습니다. 또한, 목표 가격(231400원)과 표시된 가격(233100원)이 일치하지 않습니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "savedAtUtc": "20260610T070926",
+  "rawPath": "/app/vision-debug/20260610T070926_713284d4-e4cc-4422-a930-c63c784ddfc0_step2_raw.png",
+  "annotatedPath": "/app/vision-debug/20260610T070926_713284d4-e4cc-4422-a930-c63c784ddfc0_step2_annotated.png"
+}

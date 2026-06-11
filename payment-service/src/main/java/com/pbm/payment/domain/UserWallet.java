@@ -106,6 +106,16 @@ public class UserWallet {
         return new UserWallet(userId, userAddress, userPrivateKey, walletAddress, walletLimit);
     }
 
+    /**
+     * 지갑 한도를 변경한다.
+     *
+     * @param newLimitKrw 새 한도 (KRW)
+     */
+    public void updateWalletLimit(long newLimitKrw) {
+        this.walletLimit = BigDecimal.valueOf(newLimitKrw);
+        this.updatedAt = Instant.now();
+    }
+
     @PrePersist
     void prePersist() {
         Instant now = Instant.now();

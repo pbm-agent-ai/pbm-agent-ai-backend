@@ -13,10 +13,14 @@ import com.pbm.price.dto.event.PaymentRequestEvent;
 import com.pbm.price.dto.event.PaymentRequestEventPayload;
 import com.pbm.price.dto.event.PriceAlertEvent;
 import com.pbm.price.dto.event.PriceAlertEventPayload;
+import com.pbm.price.dto.event.PriceValidationResultEvent;
+import com.pbm.price.dto.event.PriceValidationResultEventPayload;
 import com.pbm.price.dto.response.NaverShoppingItem;
 import com.pbm.price.publisher.PaymentRequestEventPublisher;
 import com.pbm.price.publisher.PriceAlertEventPublisher;
+import com.pbm.price.publisher.PriceValidationResultEventPublisher;
 import com.pbm.price.repository.MonitoringSubscriptionRepository;
+import com.pbm.price.repository.MonitorTargetRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
 import org.springframework.stereotype.Service;
@@ -74,21 +78,27 @@ public class SubscriptionMonitoringService {
     }
 
     private final MonitoringSubscriptionRepository monitoringSubscriptionRepository;
+    private final MonitorTargetRepository monitorTargetRepository;
     private final PriceAlertEventPublisher priceAlertEventPublisher;
     private final PaymentRequestEventPublisher paymentRequestEventPublisher;
+    private final PriceValidationResultEventPublisher priceValidationResultEventPublisher;
     private final ExternalApiClient externalApiClient;
     private final PriceCurrencyConverter priceCurrencyConverter;
 
     public SubscriptionMonitoringService(
             MonitoringSubscriptionRepository monitoringSubscriptionRepository,
+            MonitorTargetRepository monitorTargetRepository,
             PriceAlertEventPublisher priceAlertEventPublisher,
             PaymentRequestEventPublisher paymentRequestEventPublisher,
+            PriceValidationResultEventPublisher priceValidationResultEventPublisher,
             ExternalApiClient externalApiClient,
             PriceCurrencyConverter priceCurrencyConverter
     ) {
         this.monitoringSubscriptionRepository = monitoringSubscriptionRepository;
+        this.monitorTargetRepository = monitorTargetRepository;
         this.priceAlertEventPublisher = priceAlertEventPublisher;
         this.paymentRequestEventPublisher = paymentRequestEventPublisher;
+        this.priceValidationResultEventPublisher = priceValidationResultEventPublisher;
         this.externalApiClient = externalApiClient;
         this.priceCurrencyConverter = priceCurrencyConverter;
     }
@@ -135,6 +145,9 @@ public class SubscriptionMonitoringService {
                 subscription.changeStatus(MonitoringSubscriptionStatus.FAILED);
                 log.warn("연속 miss 임계치 초과로 FAILED 처리 - subscriptionId: {}, missCount: {}",
                         subscriptionId, subscription.getConsecutiveMissCount());
+                monitoringSubscriptionRepository.save(subscription);
+                deactivateMonitorTargetIfOrphaned(subscription.getPlatform(), subscription.getProductId());
+                return;
             }
 
             monitoringSubscriptionRepository.save(subscription);
@@ -150,6 +163,7 @@ public class SubscriptionMonitoringService {
             log.warn("가격 또는 통화 정보가 없어 FAILED 처리 - subscriptionId: {}, currency: {}, currentPrice: {}",
                     subscriptionId, snapshot.currency(), snapshot.currentPrice());
             monitoringSubscriptionRepository.save(subscription);
+            deactivateMonitorTargetIfOrphaned(subscription.getPlatform(), subscription.getProductId());
             return;
         }
 
@@ -174,6 +188,7 @@ public class SubscriptionMonitoringService {
             log.info("목표 가격 충족! TRIGGERED 전환 및 이벤트 발행 - subscriptionId: {}, convertedPriceKrw: {}, targetPrice: {}",
                     subscriptionId, currentPriceInKrw, subscription.getTargetPrice());
 
+            deactivateMonitorTargetIfOrphaned(subscription.getPlatform(), subscription.getProductId());
             publishTriggeredEvents(subscription, snapshot, currentPriceInKrw);
         } else {
             // 목표 가격 초과 → ACTIVE 유지
@@ -198,6 +213,9 @@ public class SubscriptionMonitoringService {
         return switch (subscription.getPlatform()) {
             case NAVER -> refreshNaver(subscription);
             case ALIEXPRESS -> refreshAliExpress(subscription);
+            // URL 타입은 익스텐션이 직접 가격을 수집하므로 서버 재조회가 없다.
+            // 스케줄러에서 이미 필터링되지만 안전을 위해 found=false 반환
+            case URL -> new NormalizedProductSnapshot(false, null, null, null, null, null);
         };
     }
 
@@ -519,51 +537,195 @@ public class SubscriptionMonitoringService {
         Instant now = Instant.now();
 
         // price-alert 이벤트 발행 (알림용)
+        // intent에 따라 eventType을 다르게 설정:
+        //   - "AUTO_PURCHASE" → "AUTO_PAYMENT_START" (결제 파이프라인 트리거)
+        //   - 그 외            → "PRICE_CONDITION_MET" (일반 조건 충족 알림)
+        String intent = subscription.getIntent();
+        String eventType = "AUTO_PURCHASE".equals(intent) ? "AUTO_PAYMENT_START" : "PRICE_CONDITION_MET";
+
         PriceAlertEventPayload alertPayload = new PriceAlertEventPayload(
                 subscription.getUserId(),
                 snapshot.title(),
                 currentPriceInKrw.intValue(),
                 subscription.getTargetPrice().intValue(),
                 snapshot.productUrl(),
-                subscription.getSearchKeyword()
+                subscription.getSearchKeyword(),
+                intent
         );
         PriceAlertEvent alertEvent = new PriceAlertEvent(
                 UUID.randomUUID().toString(),
-                "PRICE_ALERT",
+                eventType,
                 now,
                 "price-service",
                 alertPayload
         );
         priceAlertEventPublisher.publish(alertEvent);
-        log.info("price-alert 이벤트 발행 완료 - subscriptionId: {}, eventId: {}",
-                subscription.getId(), alertEvent.eventId());
+        log.info("price-alert 이벤트 발행 완료 - subscriptionId: {}, eventId: {}, eventType: {}, intent: {}",
+                subscription.getId(), alertEvent.eventId(), eventType, intent);
 
-        if (!"AUTO_PURCHASE".equals(subscription.getIntent())) {
+        if (!"AUTO_PURCHASE".equals(intent)) {
             return;
         }
 
-        // payment-topic 이벤트 발행 (결제 요청용)
-        // aiAgentPrivateKey: 조건 생성 시 발급된 AI 에이전트 개인키
-        //   → null이면 payment-service가 StubPaymentProcessor로 폴백
-        // recipientAddress: MVP에서는 null → payment-service가 마스터 주소를 기본값으로 사용
-        PaymentRequestEventPayload paymentPayload = new PaymentRequestEventPayload(
-                subscription.getUserId(),
+        // price-validation-result 이벤트 발행 (command-service → AgentRun 생성용)
+        // 모니터링 트리거 시점의 실제 가격(triggerPrice)을 함께 전달해야
+        // CATALOG_NAVIGATOR가 올바른 기준가로 판매처를 탐색할 수 있다.
+        // aiAgentPrivateKey: command-service가 결제 이벤트 발행 시 사용
+        ProductCandidateDto triggeredProduct = new ProductCandidateDto(
+                subscription.getProductId(),
                 snapshot.title(),
+                currentPriceInKrw.toPlainString(),  // 트리거 시점의 실제 가격으로 업데이트
+                null,                                // mallName: MonitoringSubscription에 미저장
                 snapshot.productUrl(),
-                currentPriceInKrw.intValue(),
+                subscription.getSnapshotImageUrl(),
                 CurrencyType.KRW.name(),
-                subscription.getAiAgentPrivateKey(),
-                null
+                subscription.getPlatform().name(),
+                subscription.getSearchKeyword()
         );
-        PaymentRequestEvent paymentEvent = new PaymentRequestEvent(
+        PriceValidationResultEventPayload browserPurchasePayload = new PriceValidationResultEventPayload(
+                subscription.getId(),
+                subscription.getCommandId(),
+                "BROWSER_PURCHASE_IN_PROGRESS",
+                List.of(triggeredProduct),
+                List.of(),
+                subscription.getProductId(),
+                "모니터링 조건 충족 - 브라우저 자동 구매 시작",
+                false,
+                List.of(),
+                null,
+                currentPriceInKrw.intValue(),  // triggerPrice: 모니터링 트리거 시점의 실제 KRW 가격
+                subscription.getAiAgentPrivateKey()  // AI 에이전트 개인키 (결제 이벤트 발행용)
+        );
+        PriceValidationResultEvent browserPurchaseEvent = new PriceValidationResultEvent(
                 UUID.randomUUID().toString(),
-                "PAYMENT_REQUESTED",
+                "MONITORING_TRIGGERED_BROWSER_PURCHASE",
                 now,
                 "price-service",
-                paymentPayload
+                browserPurchasePayload
         );
-        paymentRequestEventPublisher.publish(paymentEvent);
-        log.info("payment-topic 이벤트 발행 완료 - subscriptionId: {}, eventId: {}",
-                subscription.getId(), paymentEvent.eventId());
+        priceValidationResultEventPublisher.publish(browserPurchaseEvent);
+        log.info("모니터링 트리거 브라우저 구매 이벤트 발행 완료 - subscriptionId: {}, commandId: {}, triggerPrice: {}",
+                subscription.getId(), subscription.getCommandId(), currentPriceInKrw.intValue());
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // PriceMonitoringScheduler 연동: 가격 수집 후 인라인 조건 평가
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /**
+     * 수집된 가격으로 해당 상품의 모든 ACTIVE 구독 조건을 평가한다.
+     * PriceMonitoringScheduler가 API로 가격을 수집한 직후 호출한다.
+     * 기존 process()와 달리 API를 다시 호출하지 않고, 이미 수집된 가격으로 바로 비교한다.
+     *
+     * @param platform     플랫폼 구분
+     * @param productId    플랫폼 내 상품 식별자
+     * @param currentPrice 수집된 현재 가격 (원본 통화)
+     * @param currency     수집된 가격의 통화
+     * @param title        상품명 (이벤트 발행용)
+     * @param productUrl   상품 URL (이벤트 발행용)
+     */
+    public void evaluateSubscriptionsForTarget(Platform platform, String productId,
+                                                BigDecimal currentPrice, CurrencyType currency,
+                                                String title, String productUrl) {
+        List<MonitoringSubscription> activeSubs = monitoringSubscriptionRepository
+                .findByPlatformAndProductIdAndStatus(platform, productId, MonitoringSubscriptionStatus.ACTIVE);
+
+        if (activeSubs.isEmpty()) {
+            return;
+        }
+
+        BigDecimal priceInKrw = priceCurrencyConverter.toKrw(currentPrice, currency);
+        if (priceInKrw == null) {
+            log.warn("가격 환산 실패 - platform: {}, productId: {}, price: {} {}", platform, productId, currentPrice, currency);
+            return;
+        }
+
+        Instant now = Instant.now();
+
+        for (MonitoringSubscription sub : activeSubs) {
+            try {
+                // 수집 성공 → 연속 실패 카운트 초기화
+                sub.resetMissCount();
+
+                if (sub.getTargetPrice() != null && priceInKrw.compareTo(sub.getTargetPrice()) <= 0) {
+                    // 목표 가격 충족 → TRIGGERED
+                    sub.changeStatus(MonitoringSubscriptionStatus.TRIGGERED);
+                    monitoringSubscriptionRepository.save(sub);
+
+                    log.info("인라인 조건 평가 - 목표가 충족! subscriptionId: {}, priceKrw: {}, targetPrice: {}",
+                            sub.getId(), priceInKrw, sub.getTargetPrice());
+
+                    NormalizedProductSnapshot snapshot = new NormalizedProductSnapshot(
+                            true, productId, productUrl, title, currentPrice, currency
+                    );
+                    publishTriggeredEvents(sub, snapshot, priceInKrw);
+                } else {
+                    // 목표 가격 미충족 → ACTIVE 유지
+                    monitoringSubscriptionRepository.save(sub);
+                    log.debug("인라인 조건 평가 - 미충족. subscriptionId: {}, priceKrw: {}, targetPrice: {}",
+                            sub.getId(), priceInKrw, sub.getTargetPrice());
+                }
+            } catch (Exception e) {
+                log.error("인라인 조건 평가 실패 - subscriptionId: {}", sub.getId(), e);
+            }
+        }
+
+        // 트리거된 구독으로 인해 ACTIVE가 0건이면 MonitorTarget 비활성화
+        deactivateMonitorTargetIfOrphaned(platform, productId);
+    }
+
+    /**
+     * 상품 수집 실패 시 해당 상품의 모든 ACTIVE 구독에 miss를 기록한다.
+     * PriceMonitoringScheduler가 API 매칭 실패 시 호출한다.
+     *
+     * @param platform  플랫폼 구분
+     * @param productId 플랫폼 내 상품 식별자
+     */
+    public void handleCollectionMiss(Platform platform, String productId) {
+        List<MonitoringSubscription> activeSubs = monitoringSubscriptionRepository
+                .findByPlatformAndProductIdAndStatus(platform, productId, MonitoringSubscriptionStatus.ACTIVE);
+
+        if (activeSubs.isEmpty()) {
+            return;
+        }
+
+        Instant now = Instant.now();
+        for (MonitoringSubscription sub : activeSubs) {
+            sub.markMiss(now);
+            log.warn("수집 miss 기록 - subscriptionId: {}, missCount: {}", sub.getId(), sub.getConsecutiveMissCount());
+
+            if (sub.getConsecutiveMissCount() >= MAX_CONSECUTIVE_MISS_COUNT) {
+                sub.changeStatus(MonitoringSubscriptionStatus.FAILED);
+                log.warn("연속 miss 임계치 초과 FAILED 처리 - subscriptionId: {}", sub.getId());
+            }
+            monitoringSubscriptionRepository.save(sub);
+        }
+
+        deactivateMonitorTargetIfOrphaned(platform, productId);
+    }
+
+    /**
+     * 해당 상품(platform + productId)의 ACTIVE 구독이 0건이면 MonitorTarget 폴링을 비활성화한다.
+     * 여러 사용자가 같은 상품을 모니터링하는 경우 마지막 구독이 종료될 때만 비활성화된다.
+     *
+     * @param platform  플랫폼
+     * @param productId 플랫폼 내 상품 식별자
+     */
+    private void deactivateMonitorTargetIfOrphaned(Platform platform, String productId) {
+        long activeCount = monitoringSubscriptionRepository
+                .countByPlatformAndProductIdAndStatus(platform, productId, MonitoringSubscriptionStatus.ACTIVE);
+
+        if (activeCount == 0) {
+            monitorTargetRepository.findByPlatformAndProductId(platform, productId)
+                    .ifPresent(target -> {
+                        target.deactivate();
+                        monitorTargetRepository.save(target);
+                        log.info("MonitorTarget 비활성화 완료 - platform: {}, productId: {} (잔여 ACTIVE 구독 없음)",
+                                platform, productId);
+                    });
+        } else {
+            log.debug("MonitorTarget 유지 - platform: {}, productId: {}, 잔여 ACTIVE 구독: {}건",
+                    platform, productId, activeCount);
+        }
     }
 }

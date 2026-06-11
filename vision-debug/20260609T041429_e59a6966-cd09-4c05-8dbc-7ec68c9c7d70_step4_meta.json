@@ -1,0 +1,22 @@
+{
+  "runId": "e59a6966-cd09-4c05-8dbc-7ec68c9c7d70",
+  "stepIndex": 4,
+  "currentUrl": "https://www.coupang.com/vp/products/9309807813?itemId=27585107825&vendorItemId=94548723294&src=1032001&spec=10305197&addtag=400&ctag=9309807813&lptag=I27585107825&itime=20260609131414&pageType=PRODUCT&pageValue=9309807813&wPcid=17749240518236981493538&wRef=cr.shopping.naver.com&wTime=20260609131414&redirect=landing&mcid=8ae03102f6084232841adcd4c9e73d83&n_keyword=&n_ad_group=&n_ad=&n_rank=&n_keyword_id=&n_media=&n_campaign_type=&n_query=",
+  "action": "WAIT",
+  "imageWidth": null,
+  "imageHeight": null,
+  "rawX": null,
+  "rawY": null,
+  "normalizedX": null,
+  "normalizedY": null,
+  "pixelInterpretation": null,
+  "grid1000Interpretation": null,
+  "targetLabel": null,
+  "confidence": 1.0,
+  "reason": "사용자가 네이버에서 구매를 요청했으나, 현재 페이지는 쿠팡입니다. 네이버로 이동할 수 있는 명확한 클릭 목표가 없습니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "savedAtUtc": "20260609T041429",
+  "rawPath": "/app/vision-debug/20260609T041429_e59a6966-cd09-4c05-8dbc-7ec68c9c7d70_step4_raw.png",
+  "annotatedPath": "/app/vision-debug/20260609T041429_e59a6966-cd09-4c05-8dbc-7ec68c9c7d70_step4_annotated.png"
+}

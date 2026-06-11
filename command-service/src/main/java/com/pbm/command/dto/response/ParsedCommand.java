@@ -32,7 +32,16 @@ public record ParsedCommand(
         Integer maxPrice,
         Integer minPrice,
         String currency,
-        String searchCategoryHint
+        String searchCategoryHint,
+        /** URL_MONITOR intent 전용: 사용자가 직접 입력한 상품 URL 목록 */
+        List<String> productUrls,
+        /** URL_MONITOR intent 전용: "ALL"(모두 충족) | "ANY"(하나라도 충족) */
+        String monitorCondition,
+        /**
+         * URL_MONITOR intent 전용: 실제 구매/추적 의도.
+         * GPT가 문장에서 판단: "구매해줘" → "AUTO_PURCHASE", "알려줘/추적해줘" → "PRICE_TRACK"
+         */
+        String purchaseIntent
 ) {
 
     /**
@@ -51,6 +60,28 @@ public record ParsedCommand(
             Integer minPrice,
             String currency
     ) {
-        this(productCategory, productName, brand, line, model, color, size, platforms, maxPrice, minPrice, currency, null);
+        this(productCategory, productName, brand, line, model, color, size, platforms,
+                maxPrice, minPrice, currency, null, null, null, null);
+    }
+
+    /**
+     * searchCategoryHint만 있고 URL 필드는 없는 호출부와의 호환성을 위한 보조 생성자.
+     */
+    public ParsedCommand(
+            ProductCategory productCategory,
+            String productName,
+            String brand,
+            String line,
+            String model,
+            String color,
+            String size,
+            List<PlatformType> platforms,
+            Integer maxPrice,
+            Integer minPrice,
+            String currency,
+            String searchCategoryHint
+    ) {
+        this(productCategory, productName, brand, line, model, color, size, platforms,
+                maxPrice, minPrice, currency, searchCategoryHint, null, null, null);
     }
 }

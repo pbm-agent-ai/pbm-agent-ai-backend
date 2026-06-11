@@ -5,6 +5,9 @@ server:
 spring:
   application:
     name: command-service
+  sql:
+    init:
+      mode: always
 
   # command-sessions 테이블 접근을 위해 JPA 자동 설정을 활성화한다.
   # datasource/jpa 설정은 아래에서 환경변수로 주입받는다.
@@ -48,6 +51,9 @@ app:
       product-selection-required-topic: product-selection-required
       product-selection-topic: product-selection
       price-validation-result-topic: price-validation-result
+      payment-topic: payment-topic  # 결제 페이지 도달 시 PBM 토큰 차감 요청
+      option-selection-request-topic: option-selection-request  # 옵션 선택 요청 (→ notification)
+      option-selection-response-topic: option-selection-response  # 옵션 선택 응답 (← notification)
 
 proxy:
   base-url: ${EXTERNAL_API_SERVICE_URL:http://127.0.0.1:8090}
@@ -93,6 +99,15 @@ eureka:
     fetch-registry: true
   instance:
     prefer-ip-address: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
 
 springdoc:
   swagger-ui:

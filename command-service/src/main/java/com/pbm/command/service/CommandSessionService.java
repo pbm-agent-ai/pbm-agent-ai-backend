@@ -115,6 +115,22 @@ public class CommandSessionService {
     }
 
     /**
+     * GPT가 자연어에서 추출한 상품 옵션(색상, 사이즈)을 세션에 저장한다.
+     * 이후 상품 상세페이지 optionGroups 매칭 시 활용한다.
+     *
+     * @param commandId 세션 식별자
+     * @param color     GPT가 추출한 색상 (예: "black"), null 가능
+     * @param size      GPT가 추출한 사이즈 (예: "M"), null 가능
+     */
+    @Transactional
+    public void updateParsedOptions(String commandId, String color, String size) {
+        if (color == null && size == null) return;
+        CommandSession session = commandSessionRepository.findByCommandId(commandId)
+                .orElseThrow(() -> new CommandSessionNotFoundException("세션을 찾을 수 없습니다. commandId: " + commandId));
+        session.updateParsedOptions(color, size);
+    }
+
+    /**
      * commandId로 세션을 조회한다.
      *
      * @param commandId UUID 문자열

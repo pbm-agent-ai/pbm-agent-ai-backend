@@ -1,5 +1,6 @@
 package com.pbm.price.consumer;
 
+import com.pbm.price.client.PaymentServiceClient;
 import com.pbm.price.common.PriceCurrencyConverter;
 import com.pbm.price.domain.CurrencyType;
 import com.pbm.price.domain.MonitoringSubscription;
@@ -44,7 +45,7 @@ import static org.mockito.Mockito.when;
  * 역할: 다중 선택 이벤트 수신 시 intent별 분기 처리(PRICE_CHECK / PRICE_TRACK / AUTO_PURCHASE)와
  *       검증 결과 이벤트 발행을 검증한다.
  * 연관: ProductSelectionConsumer, MonitoringSubscriptionService, SubscriptionMonitoringService,
- *       PriceValidationResultEventPublisher.
+ *       PriceValidationResultEventPublisher, PaymentServiceClient.
  */
 @ExtendWith(MockitoExtension.class)
 class ProductSelectionConsumerTest {
@@ -60,6 +61,9 @@ class ProductSelectionConsumerTest {
 
     @Mock
     private PriceCurrencyConverter priceCurrencyConverter;
+
+    @Mock
+    private PaymentServiceClient paymentServiceClient;
 
     @Captor
     private ArgumentCaptor<PriceValidationResultEvent> resultEventCaptor;
@@ -80,7 +84,8 @@ class ProductSelectionConsumerTest {
                 monitoringSubscriptionService,
                 subscriptionMonitoringService,
                 priceValidationResultEventPublisher,
-                priceCurrencyConverter
+                priceCurrencyConverter,
+                paymentServiceClient
         );
     }
 

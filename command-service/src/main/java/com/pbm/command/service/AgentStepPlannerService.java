@@ -43,6 +43,9 @@ public class AgentStepPlannerService {
     private static final int DEFAULT_APPROVAL_TIMEOUT_MS = 600000;
     private static final double MIN_AI_CONFIDENCE = 0.55d;
     private static final double MIN_VISION_CONFIDENCE = 0.60d;
+    private static final int MAX_OPTION_PRESENCE_SCROLL_ATTEMPTS = 2;
+    public static final String NEXT_EXTERNAL_VISION_STAGE_KEY = "nextExternalVisionStage";
+    public static final String INTERNAL_REQUEST_OPTION_SELECTION_TOOL = "REQUEST_OPTION_SELECTION";
     /** 잘못된 도메인 감지 후 플랫폼 이동을 시도하는 최대 횟수 (초과 시 ABORT) */
     private static final int MAX_DOMAIN_REDIRECT_ATTEMPTS = 10;
 
@@ -69,7 +72,7 @@ public class AgentStepPlannerService {
             CommandSession commandSession,
             PageSnapshotRequest snapshot
     ) {
-        return planNextAction(runId, stepIndex, commandSession, snapshot, null);
+        return planNextAction(runId, stepIndex, commandSession, snapshot, null, null);
     }
 
     public ActionInstructionResponse planNextAction(
@@ -77,7 +80,8 @@ public class AgentStepPlannerService {
             int stepIndex,
             CommandSession commandSession,
             PageSnapshotRequest snapshot,
-            AgentRunActionResultRequest previousActionResult
+            AgentRunActionResultRequest previousActionResult,
+            String selectedOptionValue
     ) {
         ProductCandidateResponse targetProduct = resolveTargetProduct(commandSession);
 
@@ -148,10 +152,24 @@ public class AgentStepPlannerService {
                 stepIndex,
                 commandSession,
                 snapshot,
-                previousActionResult
+                previousActionResult,
+                selectedOptionValue
         );
         if (visionInstruction != null) {
             return visionInstruction;
+        }
+
+        if (selectedOptionValue != null && !selectedOptionValue.isBlank()) {
+            ActionInstructionResponse selectedOptionInstruction = buildExplicitSmartstoreOptionInstruction(
+                    runId,
+                    stepIndex,
+                    snapshot,
+                    previousActionResult,
+                    selectedOptionValue
+            );
+            if (selectedOptionInstruction != null) {
+                return selectedOptionInstruction;
+            }
         }
 
         // vision이 스크린샷 기반으로 시도됐으나 실패(confidence 부족 or 오류)한 경우:
@@ -166,14 +184,16 @@ public class AgentStepPlannerService {
                 return aiInstruction;
             }
 
-            Optional<ActionInstructionResponse> optionInstruction = buildOptionSelectionInstruction(
-                    stepIndex,
-                    actionId,
-                    commandSession,
-                    snapshot
-            );
-            if (optionInstruction.isPresent()) {
-                return optionInstruction.get();
+            if (selectedOptionValue == null || selectedOptionValue.isBlank()) {
+                Optional<ActionInstructionResponse> optionInstruction = buildOptionSelectionInstruction(
+                        stepIndex,
+                        actionId,
+                        commandSession,
+                        snapshot
+                );
+                if (optionInstruction.isPresent()) {
+                    return optionInstruction.get();
+                }
             }
         } else {
             log.info("[AgentStepPlannerService] Vision 시도 후 실패 → DOM AI 재시도 건너뜀, SCROLL/ABORT로 직행 - runId={}, stepIndex={}", runId, stepIndex);
@@ -290,7 +310,8 @@ public class AgentStepPlannerService {
             int stepIndex,
             CommandSession commandSession,
             PageSnapshotRequest snapshot,
-            AgentRunActionResultRequest previousActionResult
+            AgentRunActionResultRequest previousActionResult,
+            String selectedOptionValue
     ) {
         if (previousActionResult == null) {
             return null;
@@ -316,7 +337,11 @@ public class AgentStepPlannerService {
                     commandSession.getOriginalCommand(),
                     snapshot == null ? null : snapshot.currentUrl(),
                     previousActionResult,
-                    previousActionResult.toolResult().screenshot()  // 스크린샷 내용
+                    previousActionResult.toolResult().screenshot(),  // 스크린샷 내용
+                    selectedOptionValue == null || selectedOptionValue.isBlank()
+                            ? "GENERAL"
+                            : "SMARTSTORE_OPTION_SELECTION",
+                    selectedOptionValue
             );
 
             log.info("[AgentStepPlannerService] Vision planner 결과 - runId={}, stepIndex={}, action={}, x={}, y={}, confidence={}, label={}",
@@ -350,6 +375,99 @@ public class AgentStepPlannerService {
             }
         } catch (Exception e) {
             log.warn("[AgentStepPlannerService] Vision planner 실패 - runId={}, stepIndex={}, error={}", runId, stepIndex, e.getMessage());
+        }
+
+        return null;
+    }
+
+    private ActionInstructionResponse buildExternalOptionPresenceInstruction(
+            String runId,
+            int stepIndex,
+            CommandSession commandSession,
+            PageSnapshotRequest snapshot,
+            AgentRunActionResultRequest previousActionResult,
+            int optionPresenceScrollCount
+    ) {
+        if (previousActionResult == null) {
+            return null;
+        }
+
+        if (previousActionResult.toolResult() == null || previousActionResult.toolResult().screenshot() == null) {
+            if (previousActionResult.status() == com.pbm.command.domain.ActionExecutionStatus.FAILURE
+                    && previousActionResult.errorCode() == com.pbm.command.domain.ActionErrorCode.ELEMENT_NOT_FOUND) {
+                return ActionInstructionResponse.useTool(
+                        stepIndex,
+                        buildActionId(runId, stepIndex),
+                        "CAPTURE_VISIBLE_TAB",
+                        java.util.Map.of(
+                                "format", "png",
+                                NEXT_EXTERNAL_VISION_STAGE_KEY, ExternalStoreVisionStage.OPTION_PRESENCE.name()
+                        )
+                );
+            }
+            return null;
+        }
+
+        try {
+            VisionPlannerInstructionPayload payload = aiVisionPlannerClient.analyze(
+                    runId,
+                    stepIndex,
+                    commandSession.getOriginalCommand(),
+                    snapshot == null ? null : snapshot.currentUrl(),
+                    previousActionResult,
+                    previousActionResult.toolResult().screenshot(),
+                    "OPTION_PRESENCE",
+                    null
+            );
+
+            log.info("[AgentStepPlannerService] External OPTION_PRESENCE vision 결과 - runId={}, stepIndex={}, action={}, x={}, y={}, optionPresent={}, confidence={}, label={}",
+                    runId, stepIndex, payload.action(), payload.viewportX(), payload.viewportY(),
+                    payload.optionPresent(), payload.confidence(), payload.targetLabel());
+
+            if (payload.confidence() != null && payload.confidence() < MIN_VISION_CONFIDENCE) {
+                log.info("[AgentStepPlannerService] External OPTION_PRESENCE confidence 부족 - runId={}, stepIndex={}, confidence={}",
+                        runId, stepIndex, payload.confidence());
+                return null;
+            }
+
+            if (Boolean.FALSE.equals(payload.optionPresent())) {
+                if (optionPresenceScrollCount < MAX_OPTION_PRESENCE_SCROLL_ATTEMPTS) {
+                    log.info("[AgentStepPlannerService] OPTION_PRESENCE에서 옵션 미발견 → SCROLL 재시도 - runId={}, stepIndex={}, scrollCount={}",
+                            runId, stepIndex, optionPresenceScrollCount);
+                    return ActionInstructionResponse.scroll(stepIndex, buildActionId(runId, stepIndex), "500");
+                }
+
+                log.info("[AgentStepPlannerService] OPTION_PRESENCE 스크롤 한도 도달 → PURCHASE 캡처 요청 - runId={}, stepIndex={}, scrollCount={}",
+                        runId, stepIndex, optionPresenceScrollCount);
+                return ActionInstructionResponse.useTool(
+                        stepIndex,
+                        buildActionId(runId, stepIndex),
+                        "CAPTURE_VISIBLE_TAB",
+                        java.util.Map.of(
+                                "format", "png",
+                                NEXT_EXTERNAL_VISION_STAGE_KEY, ExternalStoreVisionStage.PURCHASE.name()
+                        )
+                );
+            }
+
+            if ("CLICK".equals(payload.action()) && payload.viewportX() != null && payload.viewportY() != null) {
+                return ActionInstructionResponse.visionClick(
+                        stepIndex,
+                        buildActionId(runId, stepIndex),
+                        payload.viewportX(),
+                        payload.viewportY(),
+                        payload.targetLabel()
+                );
+            }
+
+            if ("WAIT".equals(payload.action())) {
+                log.info("[AgentStepPlannerService] External OPTION_PRESENCE vision WAIT → null 반환 (후속 fallback 허용) - runId={}, stepIndex={}",
+                        runId, stepIndex);
+                return null;
+            }
+        } catch (Exception e) {
+            log.warn("[AgentStepPlannerService] External OPTION_PRESENCE vision 실패 - runId={}, stepIndex={}, error={}",
+                    runId, stepIndex, e.getMessage());
         }
 
         return null;
@@ -533,6 +651,66 @@ public class AgentStepPlannerService {
                     runId, stepIndex, e.getMessage());
             return null;
         }
+    }
+
+    public ActionInstructionResponse planNextAction(
+            String runId,
+            int stepIndex,
+            CommandSession commandSession,
+            PageSnapshotRequest snapshot,
+            AgentRunActionResultRequest previousActionResult,
+            Integer triggerPrice,
+            String selectedOptionValue,
+            ExternalStoreVisionStage externalStoreVisionStage,
+            int optionPresenceScrollCount
+    ) {
+        if (externalStoreVisionStage == ExternalStoreVisionStage.OPTION_PRESENCE) {
+            ActionInstructionResponse optionPresenceInstruction = buildExternalOptionPresenceInstruction(
+                    runId,
+                    stepIndex,
+                    commandSession,
+                    snapshot,
+                    previousActionResult,
+                    optionPresenceScrollCount
+            );
+            if (optionPresenceInstruction != null) {
+                return optionPresenceInstruction;
+            }
+        }
+
+        return planNextAction(runId, stepIndex, commandSession, snapshot, previousActionResult, selectedOptionValue);
+    }
+
+    public boolean hasUnmatchedOptions(
+            CommandSession commandSession,
+            PageSnapshotRequest snapshot,
+            String selectedOptionValue
+    ) {
+        if (commandSession == null || snapshot == null || snapshot.optionGroups() == null || snapshot.optionGroups().isEmpty()) {
+            return false;
+        }
+
+        String normalizedCommand = normalize(commandSession.getOriginalCommand());
+        for (OptionGroupRequest optionGroup : snapshot.optionGroups()) {
+            String desiredOption = findDesiredOption(normalizedCommand, optionGroup);
+            if (desiredOption == null) {
+                continue;
+            }
+
+            if (selectedOptionValue != null
+                    && normalize(selectedOptionValue).contains(normalize(desiredOption))) {
+                continue;
+            }
+
+            if (optionGroup.selectedOption() != null
+                    && normalize(optionGroup.selectedOption()).contains(normalize(desiredOption))) {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -806,6 +984,181 @@ public class AgentStepPlannerService {
             return targetProduct.searchKeyword();
         }
         return commandSession.getOriginalCommand();
+    }
+
+    private ActionInstructionResponse buildExplicitSmartstoreOptionInstruction(
+            String runId,
+            int stepIndex,
+            PageSnapshotRequest snapshot,
+            AgentRunActionResultRequest previousActionResult,
+            String selectedOptionValue
+    ) {
+        if (snapshot == null
+                || selectedOptionValue == null
+                || selectedOptionValue.isBlank()) {
+            return null;
+        }
+
+        String actionId = buildActionId(runId, stepIndex);
+        String normalizedSelected = normalize(selectedOptionValue);
+
+        if (snapshot.optionGroups() == null || snapshot.optionGroups().isEmpty()) {
+            return ActionInstructionResponse.useTool(
+                    stepIndex,
+                    actionId,
+                    "CAPTURE_VISIBLE_TAB",
+                    java.util.Map.of(
+                            "format", "png",
+                            "mode", "SMARTSTORE_OPTION_SELECTION",
+                            "selectedOptionValue", selectedOptionValue
+                    )
+            );
+        }
+
+        for (OptionGroupRequest optionGroup : snapshot.optionGroups()) {
+            if (!isRelevantSmartstoreOptionGroup(optionGroup, normalizedSelected)) {
+                continue;
+            }
+
+            if (optionGroup.selectedOption() != null
+                    && normalize(optionGroup.selectedOption()).contains(normalizedSelected)) {
+                continue;
+            }
+
+            Optional<InteractiveElementRequest> exactVisibleOption = findVisibleSmartstoreOptionElement(
+                    snapshot,
+                    optionGroup,
+                    selectedOptionValue
+            );
+            if (exactVisibleOption.isPresent()) {
+                log.info("[AgentStepPlannerService] Smartstore 옵션 DOM 클릭 - group={}, selectedOption={}, nodeId={}, label={}",
+                        optionGroup.groupName(), selectedOptionValue,
+                        exactVisibleOption.get().nodeId(), exactVisibleOption.get().labelText());
+                return ActionInstructionResponse.click(stepIndex, actionId, exactVisibleOption.get());
+            }
+
+            boolean previousClickSucceeded = previousActionResult != null
+                    && previousActionResult.status() == ActionExecutionStatus.SUCCESS
+                    && previousActionResult.action() == BrowserActionType.CLICK;
+
+            if (!previousClickSucceeded) {
+                Optional<InteractiveElementRequest> opener = findSmartstoreOptionOpener(snapshot, optionGroup, selectedOptionValue);
+                if (opener.isPresent()) {
+                    log.info("[AgentStepPlannerService] Smartstore 옵션 opener 클릭 - group={}, selectedOption={}, nodeId={}, label={}",
+                            optionGroup.groupName(), selectedOptionValue, opener.get().nodeId(), opener.get().labelText());
+                    return ActionInstructionResponse.click(stepIndex, actionId, opener.get());
+                }
+            }
+
+            log.info("[AgentStepPlannerService] Smartstore 옵션 DOM 미발견 → Vision fallback 요청 - group={}, selectedOption={}",
+                    optionGroup.groupName(), selectedOptionValue);
+            return ActionInstructionResponse.useTool(
+                    stepIndex,
+                    actionId,
+                    "CAPTURE_VISIBLE_TAB",
+                    java.util.Map.of(
+                            "format", "png",
+                            "mode", "SMARTSTORE_OPTION_SELECTION",
+                            "selectedOptionValue", selectedOptionValue,
+                            "optionGroup", optionGroup.groupName()
+                    )
+            );
+        }
+
+        return ActionInstructionResponse.useTool(
+                stepIndex,
+                actionId,
+                "CAPTURE_VISIBLE_TAB",
+                java.util.Map.of(
+                        "format", "png",
+                        "mode", "SMARTSTORE_OPTION_SELECTION",
+                        "selectedOptionValue", selectedOptionValue
+                )
+        );
+    }
+
+    private boolean isRelevantSmartstoreOptionGroup(OptionGroupRequest optionGroup, String normalizedSelected) {
+        if (optionGroup == null || normalizedSelected == null || normalizedSelected.isBlank()) {
+            return false;
+        }
+
+        if (optionGroup.options() == null || optionGroup.options().isEmpty()) {
+            return false;
+        }
+
+        return optionGroup.options().stream()
+                .filter(option -> option != null && !option.isBlank())
+                .map(this::normalize)
+                .anyMatch(normalizedOption -> normalizedOption.contains(normalizedSelected)
+                        || normalizedSelected.contains(normalizedOption));
+    }
+
+    private Optional<InteractiveElementRequest> findVisibleSmartstoreOptionElement(
+            PageSnapshotRequest snapshot,
+            OptionGroupRequest optionGroup,
+            String selectedOptionValue
+    ) {
+        if (snapshot == null || snapshot.interactiveElements() == null || selectedOptionValue == null || selectedOptionValue.isBlank()) {
+            return Optional.empty();
+        }
+
+        String normalizedSelected = normalize(selectedOptionValue);
+        String normalizedGroupName = normalize(optionGroup.groupName());
+
+        return snapshot.interactiveElements().stream()
+                .filter(InteractiveElementRequest::isEnabled)
+                .filter(InteractiveElementRequest::isVisible)
+                .filter(element -> {
+                    String label = normalize(element.labelText());
+                    if (label == null || label.isBlank()) {
+                        return false;
+                    }
+
+                    boolean roleMatch = element.role() == null
+                            || element.role().isBlank()
+                            || List.of("button", "a", "option", "radio", "link").contains(element.role().toLowerCase());
+                    boolean labelMatch = label.equals(normalizedSelected)
+                            || label.startsWith(normalizedSelected)
+                            || label.endsWith(normalizedSelected)
+                            || (label.contains(normalizedSelected)
+                                && (normalizedGroupName == null || normalizedGroupName.isBlank() || !label.contains(normalizedGroupName)));
+                    return roleMatch && labelMatch;
+                })
+                .findFirst();
+    }
+
+    private Optional<InteractiveElementRequest> findSmartstoreOptionOpener(
+            PageSnapshotRequest snapshot,
+            OptionGroupRequest optionGroup,
+            String selectedOptionValue
+    ) {
+        if (snapshot == null || snapshot.interactiveElements() == null || optionGroup == null) {
+            return Optional.empty();
+        }
+
+        String normalizedGroupName = normalize(optionGroup.groupName());
+        String normalizedSelected = normalize(selectedOptionValue);
+
+        if (normalizedGroupName == null || normalizedGroupName.isBlank()) {
+            return Optional.empty();
+        }
+
+        return snapshot.interactiveElements().stream()
+                .filter(InteractiveElementRequest::isEnabled)
+                .filter(InteractiveElementRequest::isVisible)
+                .filter(element -> {
+                    String role = element.role() == null ? "" : element.role().toLowerCase();
+                    if (!(role.equals("button") || role.equals("a") || role.equals("link"))) {
+                        return false;
+                    }
+                    String label = normalize(element.labelText());
+                    if (label == null || label.isBlank()) {
+                        return false;
+                    }
+                    return label.contains(normalizedGroupName)
+                            && (normalizedSelected == null || normalizedSelected.isBlank() || !label.contains(normalizedSelected));
+                })
+                .findFirst();
     }
 
     private Optional<ActionInstructionResponse> buildOptionSelectionInstruction(

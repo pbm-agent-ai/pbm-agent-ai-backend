@@ -3,6 +3,9 @@ package com.pbm.payment.controller;
 import com.pbm.payment.domain.UserWallet;
 import com.pbm.payment.dto.response.WalletProvisioningResponse;
 import com.pbm.payment.service.BlockchainService;
+import com.pbm.payment.service.ChargeProgressService;
+import com.pbm.payment.service.TokenChargeService;
+import com.pbm.payment.service.WalletProvisioningProgressService;
 import com.pbm.payment.service.WalletService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -42,6 +45,15 @@ class WalletControllerTest {
 
     @MockBean
     private BlockchainService blockchainService;
+
+    @MockBean
+    private TokenChargeService tokenChargeService;
+
+    @MockBean
+    private ChargeProgressService chargeProgressService;
+
+    @MockBean
+    private WalletProvisioningProgressService walletProgressService;
 
     // ──────────────── 지갑 생성 API 테스트 ────────────────
 

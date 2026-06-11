@@ -17,13 +17,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class CommandScopeTest {
 
     @Test
-    @DisplayName("명령 intent 범위는 AUTO_PURCHASE, PRICE_TRACK, PRICE_CHECK만 허용한다")
+    @DisplayName("명령 intent 범위는 AUTO_PURCHASE, PRICE_TRACK, PRICE_CHECK, URL_MONITOR를 지원한다")
     void commandIntent_containsOnlySupportedValues() {
         assertThat(CommandIntent.values())
-                .containsExactly(
+                .containsExactlyInAnyOrder(
                         CommandIntent.AUTO_PURCHASE,
                         CommandIntent.PRICE_TRACK,
-                        CommandIntent.PRICE_CHECK
+                        CommandIntent.PRICE_CHECK,
+                        CommandIntent.URL_MONITOR
                 );
     }
 

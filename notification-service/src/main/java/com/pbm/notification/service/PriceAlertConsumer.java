@@ -41,7 +41,10 @@ public class PriceAlertConsumer {
      * 2. NotificationService.handlePriceAlert()에 이벤트를 전달해 알림 처리를 위임한다.
      * 3. 컨슈머 자체는 수신만 담당하며, 메시지 생성/발송 로직은 포함하지 않는다.
      */
-    @KafkaListener(topics = "${app.kafka.topics.price-alert}")
+    @KafkaListener(
+            topics = "${app.kafka.topics.price-alert}",
+            properties = {"spring.json.value.default.type=com.pbm.notification.dto.event.PriceAlertEvent"}
+    )
     public void consume(PriceAlertEvent event) {
         // Kafka 리스너 메서드 진입 자체를 로그로 남겨 역직렬화 성공 여부를 빠르게 확인한다.
         log.info("[price-alert 리스너 진입] eventId={}, eventType={}", event.eventId(), event.eventType());

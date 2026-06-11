@@ -9,17 +9,19 @@ package com.pbm.notification.dto.event;
  * 연관: PriceAlertEvent, PriceAlertConsumer.
  *
  * 필드 설명:
- * - userId:       알림을 받을 사용자 ID (누구의 목표 가격인가?)
- * - productName:  상품명 (예: "아이폰 16 Pro 256GB")
- * - currentPrice: 현재 가격 (단위: 원, 정수)
- * - targetPrice:  사용자가 설정한 목표 가격 (단위: 원, 정수)
- * - productUrl:   상품 페이지 URL (알림에서 바로 이동할 수 있도록)
+ * - userId:        알림을 받을 사용자 ID (누구의 목표 가격인가?)
+ * - productName:   상품명 (예: "아이폰 16 Pro 256GB")
+ * - currentPrice:  현재 가격 (단위: 원, 정수)
+ * - targetPrice:   사용자가 설정한 목표 가격 (단위: 원, 정수)
+ * - productUrl:    상품 페이지 URL (알림에서 바로 이동할 수 있도록)
+ * - searchKeyword: 검색 키워드 (모니터링 조건 식별용)
  */
 public record PriceAlertEventPayload(
         Long userId,
         String productName,
         Integer currentPrice,
         Integer targetPrice,
-        String productUrl
+        String productUrl,
+        String searchKeyword
 ) {
 }

@@ -54,6 +54,15 @@ class DomPlannerRequest(BaseModel):
         None,
         description="전체 페이지 HTML (전처리 없이 AI에게 직접 전달, 최대 80KB). 제공 시 모든 agent_type에서 interactiveElements/optionGroups 대신 rawHtml을 우선 분석한다."
     )
+    trigger_price: Optional[int] = Field(
+        None,
+        description=(
+            "모니터링 트리거 시점의 실제 KRW 가격. "
+            "즉시 결제 시 null(lprice를 기준가로 사용). "
+            "모니터링 후 결제 시 이 값을 CATALOG_NAVIGATOR의 기준가로 사용해야 "
+            "선택 당시 가격(lprice)이 아닌 실제 조건 충족 가격으로 판매처를 탐색한다."
+        ),
+    )
 
 
 class DomPlannerResponse(BaseModel):

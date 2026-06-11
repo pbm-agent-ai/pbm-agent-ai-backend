@@ -1,0 +1,22 @@
+{
+  "runId": "773b8e5a-f4f4-4402-b63c-993992f4a470",
+  "stepIndex": 2,
+  "currentUrl": "https://search.shopping.naver.com/search/all?query=%EC%82%BC%EC%84%B1%EC%A0%84%EC%9E%90%20%EA%B0%A4%EB%9F%AD%EC%8B%9C%20%EB%B2%84%EC%A6%88%204%20SM-R540N&vertical=search",
+  "action": "WAIT",
+  "imageWidth": null,
+  "imageHeight": null,
+  "rawX": null,
+  "rawY": null,
+  "normalizedX": null,
+  "normalizedY": null,
+  "pixelInterpretation": null,
+  "grid1000Interpretation": null,
+  "targetLabel": null,
+  "confidence": 1.0,
+  "reason": "목표 상품명 '삼성전자 갤럭시 버즈 4 SM-R540N'과 목표 가격 '231400'에 정확히 일치하는 상품을 찾을 수 없습니다. 첫 번째 상품은 광고 상품이며, '버즈4 프로 SM-R640'으로 모델명이 다르고 가격도 더 높습니다. 두 번째 상품은 가격과 정확한 모델명이 보이지 않아 확인이 어렵습니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "savedAtUtc": "20260610T051651",
+  "rawPath": "/app/vision-debug/20260610T051651_773b8e5a-f4f4-4402-b63c-993992f4a470_step2_raw.png",
+  "annotatedPath": "/app/vision-debug/20260610T051651_773b8e5a-f4f4-4402-b63c-993992f4a470_step2_annotated.png"
+}

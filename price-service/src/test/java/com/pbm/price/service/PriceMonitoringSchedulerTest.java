@@ -49,6 +49,9 @@ class PriceMonitoringSchedulerTest {
     @Mock
     private ProductPersistenceService productPersistenceService;
 
+    @Mock
+    private SubscriptionMonitoringService subscriptionMonitoringService;
+
     @InjectMocks
     private PriceMonitoringScheduler scheduler;
 
@@ -58,7 +61,6 @@ class PriceMonitoringSchedulerTest {
     void setUp() {
         baseTime = Instant.now();
         // @Value 필드는 @InjectMocks로 주입되지 않으므로 ReflectionTestUtils로 직접 설정
-        ReflectionTestUtils.setField(scheduler, "defaultDisplay", 10);
         ReflectionTestUtils.setField(scheduler, "aliExpressDefaultPageSize", 10);
     }
 

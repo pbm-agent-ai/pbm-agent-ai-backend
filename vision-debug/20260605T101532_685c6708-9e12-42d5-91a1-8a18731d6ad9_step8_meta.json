@@ -1,0 +1,28 @@
+{
+  "runId": "685c6708-9e12-42d5-91a1-8a18731d6ad9",
+  "stepIndex": 8,
+  "currentUrl": "https://smartstore.naver.com/glstoreshop/products/12487456679?NaPm=ct%3Dmq0rpgao%7Cci%3D4217926a28536ab23966854ed3e84562caf2eb9b%7Ctr%3Dbrcf%7Csn%3D2841189%7Chk%3D524939bcd4ca0a7ed4a854c20489e05d785f1bb5&nl-query=%EB%A1%9C%EC%A7%80%ED%85%8D+MX+MASTER+3S+bluetooth+edition%2C+%EB%B8%94%EB%9E%99",
+  "action": "CLICK",
+  "imageWidth": 1426,
+  "imageHeight": 848,
+  "rawX": 841.0,
+  "rawY": 643.0,
+  "normalizedX": 0.841,
+  "normalizedY": 0.643,
+  "pixelInterpretation": {
+    "x": 841,
+    "y": 643
+  },
+  "grid1000Interpretation": {
+    "x": 1199,
+    "y": 545
+  },
+  "targetLabel": "구매하기",
+  "confidence": 1.0,
+  "reason": "현재 상품이 사용자가 제시한 조건(20만원 이하)을 만족하며, 네이버 구매 페이지이므로 구매하기 버튼을 클릭하여 결제 절차를 시작합니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "savedAtUtc": "20260605T101532",
+  "rawPath": "/app/vision-debug/20260605T101532_685c6708-9e12-42d5-91a1-8a18731d6ad9_step8_raw.png",
+  "annotatedPath": "/app/vision-debug/20260605T101532_685c6708-9e12-42d5-91a1-8a18731d6ad9_step8_annotated.png"
+}

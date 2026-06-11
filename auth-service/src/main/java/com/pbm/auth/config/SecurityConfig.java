@@ -41,7 +41,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/auth/signup", "/api/v1/auth/login", "/api/v1/auth/refresh",
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
-                                "/v3/api-docs/**"
+                                "/v3/api-docs/**",
+                                "/actuator/**"  // Prometheus 메트릭 수집용 허용
                         ).permitAll()
                         .anyRequest().authenticated()
                 )

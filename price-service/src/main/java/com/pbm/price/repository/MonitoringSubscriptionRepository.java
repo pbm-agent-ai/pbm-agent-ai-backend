@@ -4,6 +4,8 @@ import com.pbm.price.domain.MonitoringSubscription;
 import com.pbm.price.domain.MonitoringSubscriptionStatus;
 import com.pbm.price.domain.Platform;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
@@ -53,13 +55,15 @@ public interface MonitoringSubscriptionRepository extends JpaRepository<Monitori
     List<MonitoringSubscription> findAllByCommandId(String commandId);
 
     /**
-     * 수집 예정 시각이 도래한 ACTIVE 상태의 구독 목록을 조회한다.
-     * 스케줄러가 주기적으로 이 메서드를 호출하여 만료된 모니터링 대상을 찾는다.
+     * 특정 상품(platform + productId)에 대한 특정 상태의 구독 목록을 조회한다.
+     * 가격 수집 후 인라인 조건 평가 시 해당 상품의 ACTIVE 구독을 찾아 목표가를 비교한다.
      *
-     * @param threshold 기준 시각 (보통 now)
-     * @return 수집해야 할 MonitoringSubscription 목록
+     * @param platform  플랫폼 구분
+     * @param productId 플랫폼 내 상품 식별자
+     * @param status    조회할 구독 상태
+     * @return 조건에 맞는 구독 목록
      */
-    List<MonitoringSubscription> findByStatusAndNextCheckAtBefore(MonitoringSubscriptionStatus status, Instant threshold);
+    List<MonitoringSubscription> findByPlatformAndProductIdAndStatus(Platform platform, String productId, MonitoringSubscriptionStatus status);
 
     /**
      * 종료 예정 시각이 지난 ACTIVE 구독 목록을 조회한다.
@@ -70,4 +74,28 @@ public interface MonitoringSubscriptionRepository extends JpaRepository<Monitori
      * @return 종료 예정 시각이 지난 MonitoringSubscription 목록
      */
     List<MonitoringSubscription> findByStatusAndScheduledEndAtBefore(MonitoringSubscriptionStatus status, Instant threshold);
+
+    /**
+     * 특정 상품(platform + productId)에 대한 특정 상태의 구독 수를 반환한다.
+     * 구독 종료 시 남은 ACTIVE 구독이 있는지 확인하여 MonitorTarget 비활성화 여부를 판단한다.
+     *
+     * @param platform  플랫폼 구분
+     * @param productId 플랫폼 내 상품 식별자
+     * @param status    조회할 구독 상태
+     * @return 조건에 맞는 구독 수
+     */
+    long countByPlatformAndProductIdAndStatus(Platform platform, String productId, MonitoringSubscriptionStatus status);
+
+    /**
+     * 사용자의 ACTIVE URL 모니터링 구독을 모두 조회한다.
+     * 스케줄링 판단은 monitor_targets.next_fetch_at에서 하므로 시각 필터 없음.
+     *
+     * @param userId 사용자 식별자
+     * @return ACTIVE 상태인 URL 모니터링 구독 목록
+     */
+    @Query("SELECT s FROM MonitoringSubscription s " +
+           "WHERE s.userId = :userId " +
+           "AND s.monitorType = 'URL' " +
+           "AND s.status = 'ACTIVE'")
+    List<MonitoringSubscription> findActiveUrlSubscriptionsByUserId(@Param("userId") Long userId);
 }

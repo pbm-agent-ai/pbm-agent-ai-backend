@@ -103,6 +103,22 @@ public class MonitoringSubscription {
     @Column(name = "currency", nullable = false, length = 10)
     private CurrencyType currency;
 
+    /**
+     * 모니터링 방식 구분.
+     * PLATFORM: 기존 방식 (Naver/AliExpress API로 가격 수집)
+     * URL:      익스텐션이 직접 URL을 열어 가격을 수집하는 방식
+     */
+    @Column(name = "monitor_type", nullable = false, length = 20)
+    private String monitorType;
+
+    /**
+     * URL 모니터링 조건 (monitor_type = URL 인 경우만 사용).
+     * ALL: 등록된 URL 전부가 목표가에 도달해야 처리
+     * ANY: 먼저 도달하는 URL 하나가 처리되면 나머지 취소
+     */
+    @Column(name = "url_condition", length = 10)
+    private String urlCondition;
+
     /** 사용자 의도 (예: "AUTO_PURCHASE", "PRICE_TRACK") */
     @Column(name = "intent", length = 30)
     private String intent;
@@ -178,7 +194,9 @@ public class MonitoringSubscription {
                                    MonitoringSubscriptionStatus status,
                                    Integer consecutiveMissCount,
                                    Integer checkIntervalMinutes,
-                                   Instant scheduledEndAt) {
+                                   Instant scheduledEndAt,
+                                   String monitorType,
+                                   String urlCondition) {
         this.userId = userId;
         this.commandId = commandId;
         this.platform = platform;
@@ -195,6 +213,8 @@ public class MonitoringSubscription {
         this.consecutiveMissCount = consecutiveMissCount;
         this.checkIntervalMinutes = checkIntervalMinutes;
         this.scheduledEndAt = scheduledEndAt;
+        this.monitorType = monitorType != null ? monitorType : "PLATFORM";
+        this.urlCondition = urlCondition;
     }
 
     /**
@@ -237,8 +257,64 @@ public class MonitoringSubscription {
                 userId, commandId, platform, productId, productUrl,
                 snapshotTitle, snapshotPrice, snapshotImageUrl, searchKeyword, targetPrice,
                 currency, intent, status, consecutiveMissCount, checkIntervalMinutes,
-                scheduledEndAt
+                scheduledEndAt, "PLATFORM", null
         );
+    }
+
+    /**
+     * URL 기반 모니터링 구독을 생성한다.
+     *
+     * @param monitorType  "URL"
+     * @param urlCondition "ALL" | "ANY"
+     */
+    public static MonitoringSubscription createUrl(Long userId,
+                                                    String commandId,
+                                                    String productUrl,
+                                                    BigDecimal targetPrice,
+                                                    CurrencyType currency,
+                                                    String intent,
+                                                    MonitoringSubscriptionStatus status,
+                                                    Integer checkIntervalMinutes,
+                                                    Instant scheduledEndAt,
+                                                    String urlCondition) {
+        // URL을 product_id로 직접 사용하면 VARCHAR(255) 초과 → MD5 해시(32자)로 저장
+        String productId = hashUrl(productUrl);
+        return new MonitoringSubscription(
+                userId, commandId,
+                Platform.URL,
+                productId,              // productId = URL의 MD5 해시 (32자)
+                productUrl,             // productUrl = 원본 URL 전체
+                null,                   // snapshotTitle - 초기에는 없음
+                null,                   // snapshotPrice
+                null,                   // snapshotImageUrl
+                null,                   // searchKeyword
+                targetPrice,
+                currency,
+                intent, status, 0, checkIntervalMinutes,
+                scheduledEndAt, "URL", urlCondition
+        );
+    }
+
+    /**
+     * URL을 MD5 해시로 변환하여 product_id용 32자 식별자를 생성한다.
+     * VARCHAR(255) 컬럼 한도를 초과하는 긴 URL (쿼리파라미터 포함) 대응용.
+     *
+     * @param url 원본 URL
+     * @return 32자 MD5 hex 문자열
+     */
+    public static String hashUrl(String url) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
+            byte[] hash = md.digest(url.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(32);
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            // MD5는 JVM 표준 보장 → 사실상 도달 불가, fallback으로 앞 32자만 사용
+            return url.length() <= 32 ? url : url.substring(0, 32);
+        }
     }
 
     /**
@@ -349,6 +425,39 @@ public class MonitoringSubscription {
      */
     public void updateScheduledEndAt(Instant newScheduledEndAt) {
         this.scheduledEndAt = newScheduledEndAt;
+    }
+
+    /**
+     * URL 크롤링으로 수집한 상품명/이미지를 스냅샷에 반영한다.
+     * <p>
+     * 이미 값이 있으면 덮어쓰지 않는다 (최초 크롤링 결과만 보존).
+     *
+     * @param title    og:title 또는 h1에서 추출한 상품명
+     * @param imageUrl og:image에서 추출한 대표 이미지 URL
+     */
+    public void updateSnapshotFromUrl(String title, String imageUrl) {
+        if (this.snapshotTitle == null && title != null && !title.isBlank()) {
+            this.snapshotTitle = title;
+        }
+        if (this.snapshotImageUrl == null && imageUrl != null && !imageUrl.isBlank()) {
+            this.snapshotImageUrl = imageUrl;
+        }
+    }
+
+    /**
+     * URL 모니터링 최초 가격 보고 시 등록 시점 가격을 스냅샷에 저장한다.
+     * 이미 값이 있으면 덮어쓰지 않는다 (등록 시점 기준가 보존).
+     * 가격 이력은 price_history 테이블에서 시계열로 관리한다.
+     *
+     * @param currentPrice 익스텐션이 크롤링한 현재 판매가 (KRW 기준)
+     */
+    public void updateSnapshotPrice(BigDecimal currentPrice) {
+        if (this.snapshotPrice != null) {
+            return;
+        }
+        if (currentPrice != null && currentPrice.compareTo(BigDecimal.ZERO) > 0) {
+            this.snapshotPrice = currentPrice;
+        }
     }
 
     /**

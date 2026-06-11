@@ -1,5 +1,6 @@
 package com.pbm.command.service;
 
+import com.pbm.command.client.PriceServiceClient;
 import com.pbm.command.config.BrowserAgentTokenUtil;
 import com.pbm.command.domain.BrowserDevice;
 import com.pbm.command.domain.BrowserDeviceStatus;
@@ -61,6 +62,9 @@ class BrowserDeviceServiceTest {
 
     @Mock
     private SetOperations<String, String> setOperations;
+
+    @Mock
+    private PriceServiceClient priceServiceClient;
 
     @InjectMocks
     private BrowserDeviceService browserDeviceService;
@@ -153,6 +157,7 @@ class BrowserDeviceServiceTest {
                 .willReturn(Optional.of(browserDevice));
         given(browserDeviceRepository.save(browserDevice)).willReturn(browserDevice);
         given(agentRunService.getPendingRunForDevice("device-123")).willReturn(assignedRunResponse);
+        given(priceServiceClient.getActiveUrlTasks(1L)).willReturn(List.of());
         given(stringRedisTemplate.opsForValue()).willReturn(valueOperations);
         given(stringRedisTemplate.opsForSet()).willReturn(setOperations);
 

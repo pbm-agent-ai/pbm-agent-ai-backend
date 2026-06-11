@@ -1,0 +1,28 @@
+{
+  "runId": "1ee5b645-4cbf-4e8e-a60f-f72f5e20157e",
+  "stepIndex": 18,
+  "currentUrl": "https://ko.aliexpress.com/item/1005009806949117.html?spm=a2g0o.home.pcJustForYou.15.617752d1p5401O&gps-id=pcJustForYou&scm=1007.13562.416251.0&scm_id=1007.13562.416251.0&scm-url=1007.13562.416251.0&pvid=3596c630-8dee-427e-9852-b3fd477fb667&_t=gps-id%3ApcJustForYou%2Cscm-url%3A1007.13562.416251.0%2Cpvid%3A3596c630-8dee-427e-9852-b3fd477fb667%2Ctpp_buckets%3A668%232846%238110%231995&pdp_ext_f=%7B%22order%22%3A%22620%22%2C%22eval%22%3A%221%22%2C%22orig_sl_item_id%22%3A%221005009806949117%22%2C%22orig_item_id%22%3A%221005009495467201%22%2C%22sceneId%22%3A%223562%22%2C%22fromPage%22%3A%22recommend%22%7D&pdp_npi=6%40dis%21KRW%21202197%2184589%21%21%21873.46%21365.41%21%402102f0cc17810627297863175ee39d%2112000050236843009%21rec%21KR%212670358201%21XZ%211%210%21n_tag%3A-29919%3Bd%3A9ef3e404%3Bm03_new_user%3A-29895%3BpisId%3A5000000208326906&utparam-url=scene%3ApcJustForYou%7Cquery_from%3A%7Cx_object_id%3A1005009806949117%7C_p_origin_prod%3A1005009495467201",
+  "action": "CLICK",
+  "imageWidth": 1205,
+  "imageHeight": 797,
+  "rawX": 825.0,
+  "rawY": 770.0,
+  "normalizedX": 0.825,
+  "normalizedY": 0.77,
+  "pixelInterpretation": {
+    "x": 825,
+    "y": 770
+  },
+  "grid1000Interpretation": {
+    "x": 994,
+    "y": 613
+  },
+  "targetLabel": "바로 구매",
+  "confidence": 0.9,
+  "reason": "\"바로 구매\" 버튼 확인",
+  "errorCode": null,
+  "errorMessage": null,
+  "savedAtUtc": "20260610T042614",
+  "rawPath": "/app/vision-debug/20260610T042614_1ee5b645-4cbf-4e8e-a60f-f72f5e20157e_step18_raw.png",
+  "annotatedPath": "/app/vision-debug/20260610T042614_1ee5b645-4cbf-4e8e-a60f-f72f5e20157e_step18_annotated.png"
+}

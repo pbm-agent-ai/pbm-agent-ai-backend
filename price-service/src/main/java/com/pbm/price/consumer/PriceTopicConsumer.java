@@ -12,6 +12,7 @@ import com.pbm.price.service.AliExpressProductUrlService;
 import com.pbm.price.service.AliExpressShoppingService;
 import com.pbm.price.service.NaverProductUrlService;
 import com.pbm.price.service.NaverShoppingService;
+import com.pbm.price.service.UrlMonitoringService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -46,19 +47,22 @@ public class PriceTopicConsumer {
     private final AliExpressProductUrlService aliExpressProductUrlService;
     private final NaverProductUrlService naverProductUrlService;
     private final ProductSelectionRequiredEventPublisher productSelectionRequiredEventPublisher;
+    private final UrlMonitoringService urlMonitoringService;
 
     public PriceTopicConsumer(NaverShoppingService naverShoppingService,
                               AliExpressShoppingService aliExpressShoppingService,
                               AliExpressCategoryIdResolver aliExpressCategoryIdResolver,
                               AliExpressProductUrlService aliExpressProductUrlService,
                               NaverProductUrlService naverProductUrlService,
-                              ProductSelectionRequiredEventPublisher productSelectionRequiredEventPublisher) {
+                              ProductSelectionRequiredEventPublisher productSelectionRequiredEventPublisher,
+                              UrlMonitoringService urlMonitoringService) {
         this.naverShoppingService = naverShoppingService;
         this.aliExpressShoppingService = aliExpressShoppingService;
         this.aliExpressCategoryIdResolver = aliExpressCategoryIdResolver;
         this.aliExpressProductUrlService = aliExpressProductUrlService;
         this.naverProductUrlService = naverProductUrlService;
         this.productSelectionRequiredEventPublisher = productSelectionRequiredEventPublisher;
+        this.urlMonitoringService = urlMonitoringService;
     }
 
     /**
@@ -73,6 +77,12 @@ public class PriceTopicConsumer {
         log.info("price-topic 메시지 수신 - eventId: {}, keyword: {}, targetPrice: {}, platform: {}, currency: {}",
                 event.eventId(), event.payload().keyword(), event.payload().targetPrice(),
                 event.payload().platform(), event.payload().currency());
+
+        // URL_MONITOR_REQUEST: URL 기반 MonitoringSubscription 생성
+        if ("URL_MONITOR_REQUEST".equals(event.eventType())) {
+            handleUrlMonitorRequest(event);
+            return;
+        }
 
         // 플랫폼별 쇼핑 API로 상품 검색 (최대 30건 저장)
         List<SearchResponse> results = searchProductsByPlatform(event);
@@ -235,6 +245,41 @@ public class PriceTopicConsumer {
         return event.payload().productUrls() != null
                 && !event.payload().productUrls().isEmpty()
                 && "ALIEXPRESS".equalsIgnoreCase(event.payload().platform());
+    }
+
+    /**
+     * URL_MONITOR_REQUEST 이벤트를 처리하여 URL 기반 MonitoringSubscription을 생성한다.
+     * payload.productUrl에 단건 URL이 담겨 있다.
+     */
+    private void handleUrlMonitorRequest(PriceRequestEvent event) {
+        try {
+            String productUrl = event.payload().productUrl();
+            if (productUrl == null || productUrl.isBlank()) {
+                log.warn("URL_MONITOR_REQUEST에 productUrl이 없습니다. eventId: {}", event.eventId());
+                return;
+            }
+
+            // Kafka 이벤트에서 urlCondition 추출 (없으면 기본값 ALL)
+            String urlCondition = (event.payload().urlCondition() != null && !event.payload().urlCondition().isBlank())
+                    ? event.payload().urlCondition()
+                    : "ALL";
+
+            urlMonitoringService.createSubscription(
+                    event.payload().userId(),
+                    event.payload().commandId(),
+                    productUrl,
+                    event.payload().targetPrice(),
+                    event.payload().currency(),
+                    urlCondition,
+                    event.payload().intent()
+            );
+
+            log.info("URL 모니터링 구독 생성 완료 - commandId: {}, url: {}",
+                    event.payload().commandId(), productUrl);
+        } catch (Exception e) {
+            log.error("URL_MONITOR_REQUEST 처리 실패 - eventId: {}, 원인: {}",
+                    event.eventId(), e.getMessage(), e);
+        }
     }
 
     private boolean hasDirectNaverUrls(PriceRequestEvent event) {

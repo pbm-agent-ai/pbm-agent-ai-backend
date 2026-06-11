@@ -1,11 +1,13 @@
 package com.pbm.payment.service;
 
 import com.pbm.payment.domain.UserWallet;
+import com.pbm.payment.domain.SessionKeyStatus;
 import com.pbm.payment.domain.WalletProvisioningStatus;
 import com.pbm.payment.dto.response.WalletProvisioningResponse;
 import com.pbm.payment.repository.UserWalletRepository;
-import lombok.RequiredArgsConstructor;
+import com.pbm.payment.repository.SessionKeyRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.web3j.crypto.Credentials;
@@ -28,14 +30,33 @@ import java.util.Optional;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class WalletService {
 
     private final UserWalletRepository userWalletRepository;
+    private final SessionKeyRepository sessionKeyRepository;
     private final BlockchainService blockchainService;
     private final WalletProvisioningTracker provisioningTracker;
+    // WalletProvisioningRunner → WalletService 순환 의존성 방지를 위해 지연 주입
     private final WalletProvisioningRunner provisioningRunner;
+
+    private final WalletProvisioningProgressService walletProgressService;
+
+    public WalletService(
+            UserWalletRepository userWalletRepository,
+            SessionKeyRepository sessionKeyRepository,
+            BlockchainService blockchainService,
+            WalletProvisioningTracker provisioningTracker,
+            WalletProvisioningProgressService walletProgressService,
+            @Lazy WalletProvisioningRunner provisioningRunner
+    ) {
+        this.userWalletRepository = userWalletRepository;
+        this.sessionKeyRepository = sessionKeyRepository;
+        this.blockchainService = blockchainService;
+        this.provisioningTracker = provisioningTracker;
+        this.walletProgressService = walletProgressService;
+        this.provisioningRunner = provisioningRunner;
+    }
 
     /**
      * 사용자의 PBM 스마트 지갑을 반환한다. (동기, 기존 지갑만)
@@ -125,6 +146,47 @@ public class WalletService {
     }
 
     /**
+     * 지갑 엔티티를 저장한다.
+     */
+    public UserWallet save(UserWallet wallet) {
+        return userWalletRepository.save(wallet);
+    }
+
+    /**
+     * 기존 지갑의 한도를 수정한다.
+     *
+     * @param userId 사용자 식별자
+     * @param newLimitKrw 새 지갑 한도 (KRW)
+     * @return 수정된 UserWallet
+     */
+    @Transactional
+    public UserWallet updateWalletLimit(Long userId, long newLimitKrw) {
+        if (newLimitKrw < 1) {
+            throw new IllegalArgumentException("지갑 한도는 1 KRW 이상이어야 합니다.");
+        }
+
+        UserWallet wallet = userWalletRepository.findByUserId(userId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "PBM 지갑이 존재하지 않습니다. 먼저 지갑을 생성해주세요. userId=" + userId));
+
+        long activeSessionLimitSum = sessionKeyRepository.findByUserIdAndStatus(userId, SessionKeyStatus.ACTIVE)
+                .stream()
+                .mapToLong(sessionKey -> sessionKey.getLimitKrw() == null ? 0L : sessionKey.getLimitKrw())
+                .sum();
+
+        if (newLimitKrw < activeSessionLimitSum) {
+            throw new IllegalArgumentException(String.format(
+                    "지갑 한도(%d KRW)는 활성 세션키 한도 합계(%d KRW)보다 작을 수 없습니다.",
+                    newLimitKrw, activeSessionLimitSum));
+        }
+
+        wallet.updateWalletLimit(newLimitKrw);
+        UserWallet saved = userWalletRepository.save(wallet);
+        log.info("지갑 한도 변경 완료 - userId: {}, newLimit: {} KRW", userId, newLimitKrw);
+        return saved;
+    }
+
+    /**
      * userId에 해당하는 Credentials를 반환한다.
      * 저장된 개인키로 Credentials를 복원한다.
      *
@@ -149,6 +211,12 @@ public class WalletService {
      * @param walletLimitKrw 지갑 전체 PBM 한도 (KRW 기준)
      * @return 저장된 UserWallet 엔티티
      */
+    /** provisioningTracker 갱신 + SSE 이벤트 발송을 동시에 처리하는 헬퍼. */
+    private void progress(Long userId, WalletProvisioningStatus status, String message) {
+        provisioningTracker.update(userId, status, message);
+        walletProgressService.emit(userId, status, message);
+    }
+
     @Transactional
     public UserWallet executeDeployAndSave(Long userId, long walletLimitKrw) {
         return deployAndSaveWallet(userId, walletLimitKrw);
@@ -166,7 +234,7 @@ public class WalletService {
      */
     private UserWallet deployAndSaveWallet(Long userId, long walletLimitKrw) {
         log.info("신규 PBM 지갑 배포 시작 - userId: {}, walletLimit: {} KRW", userId, walletLimitKrw);
-        provisioningTracker.update(userId, WalletProvisioningStatus.NOT_STARTED, "지갑 생성 준비 중...");
+        progress(userId, WalletProvisioningStatus.NOT_STARTED, "지갑 생성 준비 중...");
 
         try {
             // 1. 사용자 고유 키쌍 생성
@@ -181,18 +249,18 @@ public class WalletService {
             // 64자리 hex 문자열 (0x 접두사 없음) — Credentials.create(hex)로 복원 가능
             String userPrivateKey = Numeric.toHexStringNoPrefixZeroPadded(ecKeyPair.getPrivateKey(), 64);
             log.info("사용자 키쌍 생성 완료 - userId: {}, userAddress: {}", userId, userAddress);
-            provisioningTracker.update(userId, WalletProvisioningStatus.KEYPAIR_CREATED, "사용자 지갑 주소를 생성했습니다.");
+            progress(userId, WalletProvisioningStatus.KEYPAIR_CREATED, "사용자 지갑 주소를 생성했습니다.");
 
             // 2. 사용자 EOA에 가스비 ETH 지원 (addSessionKey 등 트랜잭션 서명용)
-            provisioningTracker.update(userId, WalletProvisioningStatus.FUNDING_USER_EOA, "마스터 지갑에서 ETH를 지급하고 있습니다.");
+            progress(userId, WalletProvisioningStatus.FUNDING_USER_EOA, "마스터 지갑에서 ETH를 지급하고 있습니다.");
             blockchainService.fundUserAddress(userAddress);
             log.info("사용자 EOA ETH 지원 완료 - userId: {}, userAddress: {}", userId, userAddress);
-            provisioningTracker.update(userId, WalletProvisioningStatus.USER_EOA_FUNDED, "마스터 지갑에서 ETH 지급이 완료되었습니다.");
+            progress(userId, WalletProvisioningStatus.USER_EOA_FUNDED, "마스터 지갑에서 ETH 지급이 완료되었습니다.");
 
             // 3. PBMSmartAccount 배포 (사용자 주소를 owner로)
-            provisioningTracker.update(userId, WalletProvisioningStatus.CREATING_SMART_WALLET, "스마트 지갑을 블록체인에 배포하고 있습니다.");
+            progress(userId, WalletProvisioningStatus.CREATING_SMART_WALLET, "스마트 지갑을 블록체인에 배포하고 있습니다.");
             String walletAddress = blockchainService.createWallet(walletLimitKrw, userCredentials);
-            provisioningTracker.update(userId, WalletProvisioningStatus.SMART_WALLET_CREATED, "스마트 지갑 배포가 완료되었습니다.");
+            progress(userId, WalletProvisioningStatus.SMART_WALLET_CREATED, "스마트 지갑 배포가 완료되었습니다.");
 
             // 4. DB 저장 (개인키 포함)
             // ⚠️ TODO: 운영 환경에서는 userPrivateKey를 AES-256으로 암호화 후 저장
@@ -204,7 +272,8 @@ public class WalletService {
                     BigDecimal.valueOf(walletLimitKrw)
             );
             UserWallet saved = userWalletRepository.save(userWallet);
-            provisioningTracker.update(userId, WalletProvisioningStatus.SAVED, "지갑 정보 저장까지 모두 완료되었습니다.");
+            progress(userId, WalletProvisioningStatus.SAVED, "지갑 정보 저장까지 모두 완료되었습니다.");
+            walletProgressService.complete(userId); // SSE 스트림 종료
             log.info("신규 PBM 지갑 저장 완료 - userId: {}, userAddress: {}, walletAddress: {}",
                     userId, userAddress, walletAddress);
             return saved;
@@ -212,6 +281,7 @@ public class WalletService {
         } catch (Exception e) {
             // 실패 시 FAILED 상태 기록 후 예외 재전파
             provisioningTracker.updateError(userId, e.getMessage());
+            walletProgressService.error(userId, e.getMessage()); // SSE 실패 이벤트
             log.error("PBM 지갑 배포 실패 - userId: {}, 원인: {}", userId, e.getMessage(), e);
             throw e;
         }

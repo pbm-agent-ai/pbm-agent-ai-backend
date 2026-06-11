@@ -12,9 +12,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 누락 필드/모호 필드 계산 서비스 테스트.
  *
- * 역할: 모든 카테고리 공통 필수 필드(PRODUCT_NAME, MAX_PRICE, PLATFORM) 규칙이
+ * 역할: 공통 필수 필드(PRODUCT_NAME, MAX_PRICE) 규칙이
  *       실제 ParsedCommand 입력에 대해 기대한 결과를 내는지 검증한다.
- * 동작: 공통 필수 필드 누락 검사와 자동 결제/상품명 모호성에 따른 추가 확인 필드를 테스트한다.
+ * 동작: PLATFORM은 선택 필드 — 누락돼도 needsClarification이 false가 되어 실행을 계속한다.
  *       카테고리별 size/color/model 의존 로직은 제거되었다.
  * 연관: CommandFieldEvaluationService, FieldEvaluationResult.
  */
@@ -24,8 +24,8 @@ class CommandFieldEvaluationServiceTest {
             new CommandFieldEvaluationService(new CommandFieldPolicyService());
 
     @Test
-    @DisplayName("PLATFORM이 누락된 자동 결제 명령은 platform을 필수 누락으로 계산한다 (카테고리 무관)")
-    void evaluate_autoPurchaseMissingPlatform_returnsPlatformAsMissing() {
+    @DisplayName("PLATFORM이 없어도 platform이 필수 누락으로 표시되지 않는다 — 실행을 계속한다")
+    void evaluate_autoPurchaseMissingPlatform_doesNotReturnPlatformAsMissing() {
         ParsedCommand parsedCommand = new ParsedCommand(
                 ProductCategory.SHOES,
                 "나이키 조던",
@@ -34,7 +34,7 @@ class CommandFieldEvaluationServiceTest {
                 null,
                 null,
                 null,
-                null,   // platforms=null: PLATFORM은 공통 필수 필드이므로 누락으로 감지
+                null,   // platforms=null: 선택 필드이므로 누락으로 처리하지 않음
                 200000,
                 null,
                 "KRW"
@@ -42,15 +42,15 @@ class CommandFieldEvaluationServiceTest {
 
         FieldEvaluationResult result = commandFieldEvaluationService.evaluate(CommandIntent.AUTO_PURCHASE, parsedCommand);
 
-        // 공통 필수 필드: PRODUCT_NAME(있음), MAX_PRICE(있음), PLATFORM(없음)
-        assertThat(result.missingRequiredFields()).containsExactly("platform");
-        // autoPurchaseClarificationFields와 broadProductClarificationFields는 빈 리스트 → 모호 필드 없음
+        // PLATFORM은 선택 필드 → missing에 포함되지 않아야 함
+        assertThat(result.missingRequiredFields()).doesNotContain("platform");
         assertThat(result.ambiguousFields()).isEmpty();
-        assertThat(result.needsClarification()).isTrue();
+        // platform 누락만으로는 clarification 요청 안 함
+        assertThat(result.needsClarification()).isFalse();
     }
 
     @Test
-    @DisplayName("전자기기 가격 확인 명령은 모든 공통 필수 필드(productName/maxPrice/platform)가 있으면 추가 확인 없이 진행한다")
+    @DisplayName("전자기기 가격 확인 명령은 PRODUCT_NAME/MAX_PRICE가 있으면 추가 확인 없이 진행한다")
     void evaluate_priceCheckElectronicsWithAllFields_proceedsWithoutClarification() {
         ParsedCommand parsedCommand = new ParsedCommand(
                 ProductCategory.ELECTRONICS,
@@ -68,15 +68,15 @@ class CommandFieldEvaluationServiceTest {
 
         FieldEvaluationResult result = commandFieldEvaluationService.evaluate(CommandIntent.PRICE_CHECK, parsedCommand);
 
-        // 공통 필수 필드: PRODUCT_NAME(있음), MAX_PRICE(PRICE_CHECK이므로 skip), PLATFORM(NAVER있음)
+        // 공통 필수 필드: PRODUCT_NAME(있음), MAX_PRICE(PRICE_CHECK이므로 skip)
         assertThat(result.missingRequiredFields()).isEmpty();
         assertThat(result.ambiguousFields()).isEmpty();
         assertThat(result.needsClarification()).isFalse();
     }
 
     @Test
-    @DisplayName("카테고리가 UNKNOWN이고 PLATFORM이 누락되면 필수 누락으로 처리한다")
-    void evaluate_unknownCategoryMissingPlatform_returnsPlatformMissing() {
+    @DisplayName("카테고리가 UNKNOWN이어도 PLATFORM이 없으면 필수 누락으로 처리하지 않는다")
+    void evaluate_unknownCategoryMissingPlatform_doesNotReturnPlatformMissing() {
         ParsedCommand parsedCommand = new ParsedCommand(
                 ProductCategory.UNKNOWN,
                 "에어팟 프로",
@@ -85,7 +85,7 @@ class CommandFieldEvaluationServiceTest {
                 null,
                 null,
                 null,
-                null,   // platforms=null: 공통 필수 필드이므로 누락
+                null,   // platforms=null: 선택 필드 — 누락 처리 안 함
                 300000,
                 null,
                 "KRW"
@@ -93,15 +93,15 @@ class CommandFieldEvaluationServiceTest {
 
         FieldEvaluationResult result = commandFieldEvaluationService.evaluate(CommandIntent.PRICE_TRACK, parsedCommand);
 
-        // 공통 필수 필드: PRODUCT_NAME(있음), MAX_PRICE(있음), PLATFORM(없음)
-        assertThat(result.missingRequiredFields()).containsExactly("platform");
+        // PLATFORM은 선택 필드 → missing에 포함되지 않아야 함
+        assertThat(result.missingRequiredFields()).doesNotContain("platform");
         assertThat(result.ambiguousFields()).isEmpty();
-        assertThat(result.needsClarification()).isTrue();
+        assertThat(result.needsClarification()).isFalse();
     }
 
     @Test
-    @DisplayName("PRICE_CHECK에서도 PLATFORM이 없으면 필수 누락으로 처리한다")
-    void evaluate_priceCheckMissingPlatform_returnsPlatformMissing() {
+    @DisplayName("PRICE_CHECK에서 PLATFORM이 없어도 필수 누락으로 처리하지 않는다")
+    void evaluate_priceCheckMissingPlatform_doesNotReturnPlatformMissing() {
         ParsedCommand parsedCommand = new ParsedCommand(
                 ProductCategory.SHOES,
                 "나이키 에어맥스",
@@ -110,7 +110,7 @@ class CommandFieldEvaluationServiceTest {
                 null,
                 null,
                 "270",
-                null,  // platforms=null: PRICE_CHECK이어도 PLATFORM은 공통 필수 필드
+                null,  // platforms=null: 선택 필드
                 150000,
                 null,
                 "KRW"
@@ -118,10 +118,11 @@ class CommandFieldEvaluationServiceTest {
 
         FieldEvaluationResult result = commandFieldEvaluationService.evaluate(CommandIntent.PRICE_CHECK, parsedCommand);
 
-        // 공통 필수 필드: PRODUCT_NAME(있음), MAX_PRICE(PRICE_CHECK이므로 skip), PLATFORM(없음)
-        assertThat(result.missingRequiredFields()).containsExactly("platform");
+        // 공통 필수 필드: PRODUCT_NAME(있음), MAX_PRICE(PRICE_CHECK이므로 skip)
+        // PLATFORM은 선택 필드 → missing 없음
+        assertThat(result.missingRequiredFields()).isEmpty();
         assertThat(result.ambiguousFields()).isEmpty();
-        assertThat(result.needsClarification()).isTrue();
+        assertThat(result.needsClarification()).isFalse();
     }
 
     @Test
@@ -143,7 +144,7 @@ class CommandFieldEvaluationServiceTest {
 
         FieldEvaluationResult result = commandFieldEvaluationService.evaluate(CommandIntent.AUTO_PURCHASE, parsedCommand);
 
-        // 공통 필수 필드 3개 모두 있음
+        // 공통 필수 필드 2개(PRODUCT_NAME, MAX_PRICE) 모두 있음
         assertThat(result.missingRequiredFields()).isEmpty();
         assertThat(result.ambiguousFields()).isEmpty();
         assertThat(result.needsClarification()).isFalse();
@@ -177,7 +178,7 @@ class CommandFieldEvaluationServiceTest {
 
         FieldEvaluationResult result = commandFieldEvaluationService.evaluate(CommandIntent.PRICE_CHECK, parsedCommand);
 
-        // PRICE_CHECK이므로 maxPrice는 skip, PLATFORM은 있음, PRODUCT_NAME 있음 → 누락 없음
+        // PRICE_CHECK이므로 maxPrice는 skip, PRODUCT_NAME 있음 → 누락 없음
         assertThat(result.missingRequiredFields()).isEmpty();
         assertThat(result.needsClarification()).isFalse();
     }

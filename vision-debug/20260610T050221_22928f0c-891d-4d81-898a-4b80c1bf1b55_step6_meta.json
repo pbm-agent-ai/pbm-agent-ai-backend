@@ -1,0 +1,28 @@
+{
+  "runId": "22928f0c-891d-4d81-898a-4b80c1bf1b55",
+  "stepIndex": 6,
+  "currentUrl": "https://search.shopping.naver.com/search/all?query=%EC%82%BC%EC%84%B1%EC%A0%84%EC%9E%90%20%EA%B0%A4%EB%9F%AD%EC%8B%9C%20%EB%B2%84%EC%A6%88%204%20SM-R540N&vertical=search",
+  "action": "CLICK",
+  "imageWidth": 1541,
+  "imageHeight": 853,
+  "rawX": 520.0,
+  "rawY": 452.0,
+  "normalizedX": 0.52,
+  "normalizedY": 0.452,
+  "pixelInterpretation": {
+    "x": 520,
+    "y": 452
+  },
+  "grid1000Interpretation": {
+    "x": 801,
+    "y": 385
+  },
+  "targetLabel": "삼성전자 갤럭시 버즈 4 SM-R540N",
+  "confidence": 1.0,
+  "reason": "목표 상품명 '삼성전자 갤럭시 버즈 4 SM-R540N'과 목표 가격 '231400'이 정확히 일치하는 상품 카드입니다. 광고/추천 상품이 아닙니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "savedAtUtc": "20260610T050221",
+  "rawPath": "/app/vision-debug/20260610T050221_22928f0c-891d-4d81-898a-4b80c1bf1b55_step6_raw.png",
+  "annotatedPath": "/app/vision-debug/20260610T050221_22928f0c-891d-4d81-898a-4b80c1bf1b55_step6_annotated.png"
+}

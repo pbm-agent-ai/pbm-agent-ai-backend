@@ -37,7 +37,9 @@ public class AiVisionPlannerClient {
             String commandText,
             String currentUrl,
             AgentRunActionResultRequest previousActionResult,
-            ScreenshotArtifactRequest screenshotArtifact
+            ScreenshotArtifactRequest screenshotArtifact,
+            String mode,
+            String targetOption
     ) {
         VisionPlannerRequest request = new VisionPlannerRequest(
                 runId,
@@ -46,7 +48,9 @@ public class AiVisionPlannerClient {
                 currentUrl,
                 screenshotArtifact.dataUrl(),
                 previousActionResult.errorCode() == null ? null : previousActionResult.errorCode().name(),
-                previousActionResult.errorMessage()
+                previousActionResult.errorMessage(),
+                mode,
+                targetOption
         );
 
         try {
@@ -73,6 +77,8 @@ public class AiVisionPlannerClient {
             String currentUrl,
             AgentRunActionResultRequest previousActionResult,
             ScreenshotArtifactRequest screenshotArtifact,
+            String mode,
+            String targetOption,
             Throwable t
     ) {
         throw new ExternalApiProxyException("external-api-service vision planner를 사용할 수 없습니다.", t);
@@ -90,7 +96,9 @@ public class AiVisionPlannerClient {
             @JsonProperty("current_url") String currentUrl,
             @JsonProperty("screenshot_data_url") String screenshotDataUrl,
             @JsonProperty("error_code") String errorCode,
-            @JsonProperty("error_message") String errorMessage
+            @JsonProperty("error_message") String errorMessage,
+            @JsonProperty("mode") String mode,
+            @JsonProperty("target_option") String targetOption
     ) {
     }
 }

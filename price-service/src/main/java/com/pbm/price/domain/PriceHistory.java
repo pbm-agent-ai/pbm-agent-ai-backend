@@ -23,7 +23,7 @@ import java.time.Instant;
  *
  * 역할: 같은 상품이 여러 번 조회되었을 때 시점별 가격 스냅샷을 누적 저장한다.
  * 동작: 조회할 때마다 1건씩 insert되며, 나중에 가격 변동 추적과 알림 판단의 근거 데이터가 된다.
- * 연관: Product.
+ * 연관: MonitorTarget (Product 테이블 통합으로 FK 변경).
  */
 @Getter
 @Entity
@@ -35,9 +35,10 @@ public class PriceHistory {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // Product 테이블 제거로 MonitorTarget을 직접 참조한다.
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "product_id", nullable = false)
-    private Product product;
+    @JoinColumn(name = "monitor_target_id", nullable = false)
+    private MonitorTarget monitorTarget;
 
     @Column(name = "current_price", precision = 19, scale = 4)
     private BigDecimal currentPrice;
@@ -52,12 +53,12 @@ public class PriceHistory {
     @Column(name = "checked_at", nullable = false)
     private Instant checkedAt;
 
-    private PriceHistory(Product product,
+    private PriceHistory(MonitorTarget monitorTarget,
                          BigDecimal currentPrice,
                          BigDecimal originalPrice,
                          CurrencyType currency,
                          Instant checkedAt) {
-        this.product = product;
+        this.monitorTarget = monitorTarget;
         this.currentPrice = currentPrice;
         this.originalPrice = originalPrice;
         this.currency = currency;
@@ -67,11 +68,11 @@ public class PriceHistory {
     /**
      * 가격 스냅샷 1건을 생성한다.
      */
-    public static PriceHistory create(Product product,
+    public static PriceHistory create(MonitorTarget monitorTarget,
                                       BigDecimal currentPrice,
                                       BigDecimal originalPrice,
                                       CurrencyType currency,
                                       Instant checkedAt) {
-        return new PriceHistory(product, currentPrice, originalPrice, currency, checkedAt);
+        return new PriceHistory(monitorTarget, currentPrice, originalPrice, currency, checkedAt);
     }
 }

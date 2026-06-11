@@ -81,15 +81,23 @@ public class PriceValidationResultConsumer {
 
         // 브라우저 구매 실행이 필요한 경우 AgentRun을 자동 생성한다.
         if (nextStatus == CommandSessionStatus.BROWSER_PURCHASE_IN_PROGRESS) {
-            log.info("BROWSER_PURCHASE_IN_PROGRESS - AgentRun 생성 시작 - commandId: {}, userId: {}",
-                    event.payload().commandId(), sessionResponse.userId());
+            // triggerPrice: 모니터링 트리거 시점의 실제 KRW 가격 (즉시 결제 시 null)
+            // 모니터링 후 결제면 CATALOG_NAVIGATOR가 이 가격을 기준가로 사용한다.
+            Integer triggerPrice = event.payload().triggerPrice();
+            // aiAgentPrivateKey: 결제 페이지 도달 시 payment-topic 이벤트 발행에 사용
+            String aiAgentPrivateKey = event.payload().aiAgentPrivateKey();
+            log.info("BROWSER_PURCHASE_IN_PROGRESS - AgentRun 생성 시작 - commandId: {}, userId: {}, triggerPrice: {}",
+                    event.payload().commandId(), sessionResponse.userId(), triggerPrice);
             try {
                 var agentRunResponse = agentRunService.createRun(
                         sessionResponse.userId(),
-                        event.payload().commandId()
+                        event.payload().subscriptionId(),
+                        event.payload().commandId(),
+                        triggerPrice,
+                        aiAgentPrivateKey
                 );
-                log.info("AgentRun 생성 완료 - runId: {}, status: {}, commandId: {}",
-                        agentRunResponse.runId(), agentRunResponse.status(), agentRunResponse.commandId());
+                log.info("AgentRun 생성 완료 - runId: {}, status: {}, commandId: {}, triggerPrice: {}",
+                        agentRunResponse.runId(), agentRunResponse.status(), agentRunResponse.commandId(), triggerPrice);
             } catch (Exception e) {
                 log.error("AgentRun 생성 실패 - commandId: {}, userId: {}, error: {}",
                         event.payload().commandId(), sessionResponse.userId(), e.getMessage(), e);

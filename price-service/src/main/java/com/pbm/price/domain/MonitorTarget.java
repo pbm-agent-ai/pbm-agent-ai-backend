@@ -22,12 +22,13 @@ import java.time.Instant;
  *
  * 역할: 여러 사용자가 같은 상품(플랫폼 + productId)을 모니터링하더라도
  *       하나의 수집 대상만 유지하기 위한 공유 기준 테이블이다.
- *       과거에는 키워드 단위(normalized_keyword)로 그루핑했으나
- *       productId 단위로 변경되어, 각 상품별로 공유 폴링 주기를 관리한다.
+ *       상품 메타데이터(title, imageUrl 등)와 폴링 스케줄(nextFetchAt 등)을 함께 관리한다.
+ *       기존 Product 엔티티를 흡수하여 단일 테이블로 통합되었다.
  * 동작: 모니터링 구독 생성/갱신 시 activate 되어 nextFetchAt이 설정되고,
  *       일반 검색 결과 저장 시에는 nextFetchAt = null 로 비활성 상태로 생성된다.
  *       PriceMonitoringScheduler가 nextFetchAt 도래한 대상만 수집한다.
- * 연관: Product (1:1 관계에 가깝게 동작).
+ *       구독이 모두 종료되면 deactivate()로 nextFetchAt을 null로 초기화한다.
+ * 연관: PriceHistory (1:N), MonitoringSubscription (참조).
  */
 @Getter
 @Entity
@@ -62,7 +63,7 @@ public class MonitorTarget {
      * NAVER 재검색 또는 ALIEXPRESS 검색 fallback에 사용할 키워드.
      * 검색 결과 저장 시 각 product가 발견된 검색어로 설정된다.
      */
-    @Column(name = "search_keyword", nullable = false, length = 255)
+    @Column(name = "search_keyword", nullable = false, length = 3000)
     private String searchKeyword;
 
     /**
@@ -71,6 +72,30 @@ public class MonitorTarget {
      */
     @Column(name = "product_url", length = 1000)
     private String productUrl;
+
+    // ── 상품 메타데이터 (구 Product 테이블에서 흡수) ──────────────────────────
+
+    /** 상품 제목 (검색 결과 또는 상품 상세 API에서 수집) */
+    @Column(name = "title", length = 255)
+    private String title;
+
+    /** 상품 대표 이미지 URL */
+    @Column(name = "image_url", length = 500)
+    private String imageUrl;
+
+    /** 판매처명 (네이버: mallName, 알리: shop_name) */
+    @Column(name = "mall_name", length = 120)
+    private String mallName;
+
+    /** 카테고리 경로 (정규화된 문자열) */
+    @Column(name = "category_path", length = 255)
+    private String categoryPath;
+
+    /** 마지막으로 검색 결과에 노출된 시각 */
+    @Column(name = "last_seen_at")
+    private Instant lastSeenAt;
+
+    // ── 폴링 스케줄 ─────────────────────────────────────────────────────────
 
     @Column(name = "fetch_interval_minutes", nullable = false)
     private Integer fetchIntervalMinutes;
@@ -95,6 +120,21 @@ public class MonitorTarget {
         this.fetchIntervalMinutes = fetchIntervalMinutes;
     }
 
+    private MonitorTarget(Platform platform, String productId, String searchKeyword, String productUrl,
+                          String title, String imageUrl, String mallName, String categoryPath,
+                          Instant lastSeenAt, Integer fetchIntervalMinutes) {
+        this.platform = platform;
+        this.productId = productId;
+        this.searchKeyword = searchKeyword;
+        this.productUrl = productUrl;
+        this.title = title;
+        this.imageUrl = imageUrl;
+        this.mallName = mallName;
+        this.categoryPath = categoryPath;
+        this.lastSeenAt = lastSeenAt;
+        this.fetchIntervalMinutes = fetchIntervalMinutes;
+    }
+
     /**
      * 새 공통 수집 대상을 생성한다.
      *
@@ -107,6 +147,17 @@ public class MonitorTarget {
      */
     public static MonitorTarget create(Platform platform, String productId, String searchKeyword, String productUrl, Integer fetchIntervalMinutes) {
         return new MonitorTarget(platform, productId, searchKeyword, productUrl, fetchIntervalMinutes);
+    }
+
+    /**
+     * 상품 메타데이터를 포함하여 새 수집 대상을 생성한다.
+     */
+    public static MonitorTarget createWithMetadata(Platform platform, String productId, String searchKeyword,
+                                                    String productUrl, String title, String imageUrl,
+                                                    String mallName, String categoryPath,
+                                                    Instant lastSeenAt, Integer fetchIntervalMinutes) {
+        return new MonitorTarget(platform, productId, searchKeyword, productUrl,
+                title, imageUrl, mallName, categoryPath, lastSeenAt, fetchIntervalMinutes);
     }
 
     /**
@@ -132,6 +183,34 @@ public class MonitorTarget {
         if (productUrl != null && !productUrl.isBlank()) {
             this.productUrl = productUrl;
         }
+    }
+
+    /**
+     * 상품 메타데이터를 갱신한다.
+     * 검색 결과 또는 상품 상세 API 응답을 받아 title, 이미지, 판매처 등을 최신화한다.
+     *
+     * @param title        상품 제목
+     * @param imageUrl     상품 이미지 URL
+     * @param mallName     판매처명
+     * @param categoryPath 카테고리 경로
+     * @param lastSeenAt   마지막 노출 시각
+     */
+    public void updateProductMetadata(String title, String imageUrl, String mallName,
+                                      String categoryPath, Instant lastSeenAt) {
+        this.title = title;
+        this.imageUrl = imageUrl;
+        this.mallName = mallName;
+        this.categoryPath = categoryPath;
+        this.lastSeenAt = lastSeenAt;
+    }
+
+    /**
+     * 폴링 스케줄을 비활성화한다.
+     * 해당 상품을 구독하는 ACTIVE 구독이 0건이 되었을 때 호출된다.
+     * nextFetchAt = null 로 설정하면 PriceMonitoringScheduler가 이 대상을 건너뛴다.
+     */
+    public void deactivate() {
+        this.nextFetchAt = null;
     }
 
     @PrePersist

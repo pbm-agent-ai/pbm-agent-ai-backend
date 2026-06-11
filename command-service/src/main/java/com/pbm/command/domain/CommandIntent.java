@@ -11,5 +11,7 @@ package com.pbm.command.domain;
 public enum CommandIntent {
     AUTO_PURCHASE,
     PRICE_TRACK,
-    PRICE_CHECK
+    PRICE_CHECK,
+    /** 사용자가 직접 URL을 제공하여 해당 상품을 모니터링/구매하는 경우 */
+    URL_MONITOR
 }

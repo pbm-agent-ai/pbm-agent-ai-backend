@@ -4,11 +4,16 @@ import com.pbm.command.config.BrowserAgentTokenUtil;
 import com.pbm.command.domain.AgentRun;
 import com.pbm.command.domain.AgentRunStatus;
 import com.pbm.command.domain.BrowserDevice;
+import com.pbm.command.domain.CommandSessionStatus;
+import com.pbm.command.domain.ExternalStoreVisionStage;
+import com.pbm.command.dto.event.CheckoutPaymentEvent;
+import com.pbm.command.dto.event.CheckoutPaymentEventPayload;
 import com.pbm.command.dto.response.AgentRunCreatedResponse;
 import com.pbm.command.dto.response.AssignedRunResponse;
 import com.pbm.command.dto.response.AgentRunResponse;
 import com.pbm.command.dto.request.AgentRunActionResultRequest;
 import com.pbm.command.dto.request.AgentRunStepRequest;
+import com.pbm.command.dto.request.PageSnapshotRequest;
 import com.pbm.command.dto.response.AgentRunStepResponse;
 import com.pbm.command.exception.AgentRunAccessDeniedException;
 import com.pbm.command.exception.AgentRunConflictException;
@@ -19,6 +24,16 @@ import com.pbm.command.domain.ActionExecutionStatus;
 import com.pbm.command.domain.BrowserActionType;
 import com.pbm.command.domain.BrowserDeviceStatus;
 import com.pbm.command.domain.CommandSession;
+import com.pbm.command.dto.event.OptionSelectionRequestEvent;
+import com.pbm.command.dto.event.OptionSelectionRequestPayload;
+import com.pbm.command.dto.event.OptionSelectionRequestPayload.OptionGroupPayload;
+import com.pbm.command.dto.request.OptionGroupRequest;
+import com.pbm.command.dto.response.ActionInstructionResponse;
+import com.pbm.command.publisher.CheckoutPaymentEventPublisher;
+import com.pbm.command.publisher.OptionSelectionEventPublisher;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pbm.command.repository.AgentRunRepository;
 import com.pbm.command.repository.BrowserDeviceRepository;
 import com.pbm.command.repository.CommandSessionRepository;
@@ -30,10 +45,12 @@ import org.springframework.transaction.annotation.Transactional;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * AgentRun 관리 서비스.
@@ -56,7 +73,8 @@ public class AgentRunService {
             AgentRunStatus.RUNNING,
             AgentRunStatus.AWAITING_APPROVAL,
             AgentRunStatus.INTERRUPTED,
-            AgentRunStatus.RECOVERING
+            AgentRunStatus.RECOVERING,
+            AgentRunStatus.AWAITING_OPTION_SELECTION
     );
 
     private static final Set<AgentRunStatus> INTERRUPTIBLE_STATUSES = Set.of(
@@ -71,6 +89,9 @@ public class AgentRunService {
     private final BrowserAgentTokenUtil browserAgentTokenUtil;
     private final StringRedisTemplate stringRedisTemplate;
     private final AgentStepPlannerService agentStepPlannerService;
+    private final CheckoutPaymentEventPublisher checkoutPaymentEventPublisher;
+    private final OptionSelectionEventPublisher optionSelectionEventPublisher;
+    private final ObjectMapper objectMapper;
 
     public AgentRunService(
             AgentRunRepository agentRunRepository,
@@ -78,7 +99,10 @@ public class AgentRunService {
             CommandSessionRepository commandSessionRepository,
             BrowserAgentTokenUtil browserAgentTokenUtil,
             StringRedisTemplate stringRedisTemplate,
-            AgentStepPlannerService agentStepPlannerService
+            AgentStepPlannerService agentStepPlannerService,
+            CheckoutPaymentEventPublisher checkoutPaymentEventPublisher,
+            OptionSelectionEventPublisher optionSelectionEventPublisher,
+            ObjectMapper objectMapper
     ) {
         this.agentRunRepository = agentRunRepository;
         this.browserDeviceRepository = browserDeviceRepository;
@@ -86,6 +110,9 @@ public class AgentRunService {
         this.browserAgentTokenUtil = browserAgentTokenUtil;
         this.stringRedisTemplate = stringRedisTemplate;
         this.agentStepPlannerService = agentStepPlannerService;
+        this.checkoutPaymentEventPublisher = checkoutPaymentEventPublisher;
+        this.optionSelectionEventPublisher = optionSelectionEventPublisher;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -96,6 +123,48 @@ public class AgentRunService {
      */
     @Transactional
     public AgentRunCreatedResponse createRun(Long userId, String commandId) {
+        return createRun(userId, null, commandId, null, null);
+    }
+
+    /**
+     * 모니터링 트리거 후 결제용 AgentRun을 생성한다.
+     * <p>
+     * triggerPrice를 저장해 CATALOG_NAVIGATOR가 lprice(선택 당시 가격) 대신
+     * 실제 조건 충족 가격을 기준가로 사용할 수 있게 한다.
+     *
+     * @param userId       사용자 ID
+     * @param commandId    연결된 CommandSession ID
+     * @param triggerPrice 모니터링 조건 충족 시점의 실제 KRW 가격 (즉시 결제 시 null)
+     */
+    @Transactional
+    public AgentRunCreatedResponse createRun(Long userId, String commandId, Integer triggerPrice) {
+        return createRun(userId, null, commandId, triggerPrice, null);
+    }
+
+    @Transactional
+    public AgentRunCreatedResponse createRun(Long userId, Long subscriptionId, String commandId, Integer triggerPrice) {
+        return createRun(userId, subscriptionId, commandId, triggerPrice, null);
+    }
+
+    /**
+     * 모니터링 트리거 후 결제용 AgentRun을 생성한다 (AI 에이전트 개인키 포함).
+     * <p>
+     * triggerPrice를 저장해 CATALOG_NAVIGATOR가 lprice(선택 당시 가격) 대신
+     * 실제 조건 충족 가격을 기준가로 사용할 수 있게 한다.
+     * aiAgentPrivateKey는 결제 페이지 도달 시 payment-topic 이벤트 발행에 사용된다.
+     *
+     * @param userId              사용자 ID
+     * @param commandId           연결된 CommandSession ID
+     * @param triggerPrice        모니터링 조건 충족 시점의 실제 KRW 가격 (즉시 결제 시 null)
+     * @param aiAgentPrivateKey   자동결제용 AI 에이전트 개인키
+     */
+    @Transactional
+    public AgentRunCreatedResponse createRun(Long userId, String commandId, Integer triggerPrice, String aiAgentPrivateKey) {
+        return createRun(userId, null, commandId, triggerPrice, aiAgentPrivateKey);
+    }
+
+    @Transactional
+    public AgentRunCreatedResponse createRun(Long userId, Long subscriptionId, String commandId, Integer triggerPrice, String aiAgentPrivateKey) {
         commandSessionRepository.findByCommandId(commandId)
                 .orElseThrow(() -> new CommandSessionNotFoundException("세션을 찾을 수 없습니다. commandId: " + commandId));
 
@@ -124,12 +193,15 @@ public class AgentRunService {
             activeRuns.forEach(run -> run.abort("SUPERSEDED_BY_NEW_RUN"));
         }
 
-        AgentRun agentRun = AgentRun.createQueued(userId, commandId);
+        // triggerPrice가 있으면 모니터링 트리거 후 결제용 AgentRun 생성 (CATALOG_NAVIGATOR에 triggerPrice 전달됨)
+        AgentRun agentRun = triggerPrice != null
+                ? AgentRun.createQueuedWithTriggerPrice(userId, subscriptionId, commandId, triggerPrice, aiAgentPrivateKey)
+                : AgentRun.createQueued(userId, subscriptionId, commandId);
         assignLatestOnlineDeviceIfPossible(agentRun);   // 온라인 디바이스가 있으면 바로 할당, 없으면 그냥 패스함
 
         AgentRun saved = agentRunRepository.save(agentRun);
-        log.info("AgentRun 생성 완료 - runId: {}, status: {}, assignedDevice: {}",
-                saved.getRunId(), saved.getStatus(), saved.getAssignedDeviceId());
+        log.info("AgentRun 생성 완료 - runId: {}, status: {}, assignedDevice: {}, subscriptionId: {}, triggerPrice: {}",
+                saved.getRunId(), saved.getStatus(), saved.getAssignedDeviceId(), subscriptionId, triggerPrice);
         return new AgentRunCreatedResponse(
                 saved.getRunId(),
                 saved.getCommandId(),
@@ -275,6 +347,22 @@ public class AgentRunService {
     }
 
     /**
+     * 옵션 선택 대기 시간이 초과된 run을 ABORTED로 전환한다.
+     *
+     * @param threshold 이 시각 이전에 요청된 옵션 선택은 만료 처리
+     * @return 만료 처리된 run 개수
+     */
+    @Transactional
+    public int expireOptionSelectionBefore(LocalDateTime threshold) {
+        List<AgentRun> targets = agentRunRepository.findAllByStatusAndApprovalRequestedAtBefore(
+                AgentRunStatus.AWAITING_OPTION_SELECTION,
+                threshold
+        );
+        targets.forEach(AgentRun::expireOptionSelection);
+        return targets.size();
+    }
+
+    /**
      * 오프라인 디바이스에 할당된 run을 INTERRUPTED로 전환한다.
      *
      * @param deviceIds 오프라인으로 판정된 디바이스 ID 목록
@@ -323,16 +411,61 @@ public class AgentRunService {
             return new AgentRunStepResponse(run.getRunId(), run.getStatus(), run.getCurrentStepIndex(), null);
         }
 
+        // 사용자가 텔레그램으로 선택한 옵션이 현재 화면에서 실제로 선택된 것이 확인되면
+        // selectedOptionValue를 초기화한다. 아직 보이지 않으면 유지해서 다음 step에서도
+        // Smartstore 옵션 선택/vision fallback이 이어지도록 한다.
+        clearSelectedOptionValueIfResolved(run, request.snapshot(), request.previousActionResult());
+
+        // 옵션 선택 대기 상태: 텔레그램 응답이 아직 안 왔으면 WAIT 반환
+        if (run.getStatus() == AgentRunStatus.AWAITING_OPTION_SELECTION) {
+            if (run.getSelectedOptionValue() == null) {
+                log.info("[AgentRunService] 옵션 선택 대기 중 - runId={}", run.getRunId());
+                return new AgentRunStepResponse(run.getRunId(), run.getStatus(), run.getCurrentStepIndex(), null);
+            }
+            // 텔레그램 응답이 도착함 → RUNNING으로 이미 전환됨 (OptionSelectionResponseConsumer에서 처리)
+            // 여기에 올 수 없지만 방어 코드
+            log.info("[AgentRunService] 옵션 선택 완료, 실행 재개 - runId={}, selected={}", run.getRunId(), run.getSelectedOptionValue());
+        }
+
         CommandSession commandSession = commandSessionRepository.findByCommandId(run.getCommandId())
                 .orElseThrow(() -> new CommandSessionNotFoundException("세션을 찾을 수 없습니다. commandId: " + run.getCommandId()));
 
+        // triggerPrice: 모니터링 트리거 후 결제 시 실제 조건 충족 가격 (즉시 결제 시 null)
+        // CATALOG_NAVIGATOR가 lprice(선택 당시 가격) 대신 이 가격을 기준가로 사용한다.
         var instruction = agentStepPlannerService.planNextAction(
                 run.getRunId(),
                 run.getCurrentStepIndex(),
                 commandSession,
                 request.snapshot(),     // 현재 브라우저 화면 상태
-                request.previousActionResult()
+                request.previousActionResult(),
+                run.getTriggerPrice(),
+                run.getSelectedOptionValue(),
+                run.getExternalStoreVisionStage(),
+                run.getOptionPresenceScrollCount()
         );
+
+        instruction = handleExternalStoreVisionTransitions(run, commandSession, instruction);
+
+        // 옵션 매칭 실패: 텔레그램 옵션 요청 Kafka 발행 + 상태 전환
+        // planNextAction이 null을 반환하거나, 옵션이 존재하는데 매칭이 안 된 경우
+        // (내부 스토어: hasUnmatchedOptions 체크, 외부 스토어: buildExternalStoreInstruction이 null 반환)
+        if (run.getStatus() == AgentRunStatus.RUNNING
+                && request.snapshot() != null
+                && request.snapshot().optionGroups() != null
+                && !request.snapshot().optionGroups().isEmpty()
+                && run.getSelectedOptionValue() == null
+                && (instruction == null || agentStepPlannerService.hasUnmatchedOptions(commandSession, request.snapshot(), run.getSelectedOptionValue()))) {
+
+            log.info("[AgentRunService] 옵션 매칭 실패 → 텔레그램 옵션 요청 발행 - runId={}", run.getRunId());
+            publishOptionSelectionRequest(run, commandSession, request.snapshot().optionGroups());
+            return new AgentRunStepResponse(run.getRunId(), run.getStatus(), run.getCurrentStepIndex(), null);
+        }
+
+        // planNextAction이 null을 반환했지만 옵션 요청 조건에도 해당하지 않는 경우 (방어 코드)
+        if (instruction == null) {
+            log.warn("[AgentRunService] planNextAction이 null 반환, 옵션 요청 조건 미해당 → WAIT - runId={}", run.getRunId());
+            return new AgentRunStepResponse(run.getRunId(), run.getStatus(), run.getCurrentStepIndex(), null);
+        }
 
         // 승인이 필요한 액션일 경우
         if (instruction.action() == BrowserActionType.AWAIT_APPROVAL && run.getStatus() == AgentRunStatus.RUNNING) {
@@ -341,6 +474,14 @@ public class AgentRunService {
 
         // 모든 작업 완료일 경우
         if (instruction.action() == BrowserActionType.COMPLETE && run.getStatus() == AgentRunStatus.RUNNING) {
+            // 결제 페이지에서 COMPLETE가 반환된 경우 → PBM 토큰 차감 이벤트 발행
+            String currentUrl = request.snapshot() != null ? request.snapshot().currentUrl() : null;
+            if (isCheckoutUrl(currentUrl)) {
+                log.info("[AgentRunService] 결제 페이지 도달 감지 → 토큰 차감 이벤트 발행 - runId={}, url={}", run.getRunId(), currentUrl);
+                commandSession.toCheckoutReached();
+                commandSessionRepository.save(commandSession);
+                publishCheckoutPaymentEvent(run, commandSession, currentUrl);
+            }
             run.complete();
         }
 
@@ -397,6 +538,44 @@ public class AgentRunService {
         ).contains(previousActionResult.errorCode())) {
             run.fail(previousActionResult.errorCode().name());
         }
+    }
+
+    private void clearSelectedOptionValueIfResolved(
+            AgentRun run,
+            PageSnapshotRequest snapshot,
+            AgentRunActionResultRequest previousActionResult
+    ) {
+        String selectedOptionValue = run.getSelectedOptionValue();
+        if (selectedOptionValue == null || selectedOptionValue.isBlank()) {
+            return;
+        }
+
+        boolean resolved = false;
+        String normalizedSelected = normalize(selectedOptionValue);
+
+        if (snapshot != null && snapshot.optionGroups() != null && !snapshot.optionGroups().isEmpty()) {
+            resolved = snapshot.optionGroups().stream()
+                    .filter(optionGroup -> optionGroup.selectedOption() != null && !optionGroup.selectedOption().isBlank())
+                    .anyMatch(optionGroup -> normalize(optionGroup.selectedOption()).contains(normalizedSelected)
+                            || normalizedSelected.contains(normalize(optionGroup.selectedOption())));
+        } else if (previousActionResult != null
+                && previousActionResult.status() == ActionExecutionStatus.SUCCESS
+                && previousActionResult.action() == BrowserActionType.CLICK) {
+            resolved = true;
+        }
+
+        if (resolved) {
+            run.clearSelectedOptionValue();
+            log.info("[AgentRunService] 텔레그램 옵션이 화면에서 확인되어 selectedOptionValue 초기화 - runId={}, selectedOptionValue={}",
+                    run.getRunId(), selectedOptionValue);
+        }
+    }
+
+    private String normalize(String value) {
+        if (value == null) {
+            return null;
+        }
+        return value.replaceAll("\\s+", "").toLowerCase();
     }
 
     private void assignLatestOnlineDeviceIfPossible(AgentRun agentRun) {
@@ -466,5 +645,176 @@ public class AgentRunService {
 
     private String buildAssignedAgentTokenKey(String runId) {
         return ASSIGNED_AGENT_TOKEN_KEY_PREFIX + runId;
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // 결제 페이지 감지 + PBM 토큰 차감 이벤트 발행
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /**
+     * URL이 최종 결제 페이지인지 확인한다.
+     * 네이버: orders.pay.naver.com/ordersheet/
+     * 알리익스프레스: aliexpress.com/p/trade/confirm
+     */
+    private boolean isCheckoutUrl(String url) {
+        if (url == null || url.isBlank()) {
+            return false;
+        }
+        String lower = url.toLowerCase();
+        return lower.contains("orders.pay.naver.com/ordersheet")
+                || lower.contains("aliexpress.com/p/trade/confirm")
+                || lower.contains("checkout.coupang.com")
+                || lower.contains("cart.coupang.com")
+                || lower.contains("order.auction.co.kr")
+                || lower.contains("order.gmarket.co.kr")
+                || lower.contains("order.11st.co.kr");
+    }
+
+    /**
+     * 결제 페이지 도달 시 payment-topic으로 PBM 토큰 차감 요청 이벤트를 발행한다.
+     * triggerPrice가 있으면 해당 가격으로, 없으면 0으로 발행한다.
+     * (금액이 0인 경우 payment-service에서 별도 처리 필요)
+     * aiAgentPrivateKey는 AgentRun에 저장된 값을 사용한다.
+     */
+    private void publishCheckoutPaymentEvent(AgentRun run, CommandSession commandSession, String checkoutUrl) {
+        // 결제 금액: triggerPrice(모니터링 조건 충족가) 우선, 없으면 0
+        int amount = run.getTriggerPrice() != null ? run.getTriggerPrice() : 0;
+
+        // 상품명: 세션의 원본 명령어를 사용 (상품명 추출 로직은 추후 개선 가능)
+        String productName = commandSession.getOriginalCommand();
+
+        // AI 에이전트 개인키: AgentRun에 저장된 값 사용 (모니터링 조건 충족 시 price-service에서 전달받음)
+        String aiAgentPrivateKey = run.getAiAgentPrivateKey();
+        Long subscriptionId = run.getSubscriptionId();
+
+        CheckoutPaymentEventPayload payload = new CheckoutPaymentEventPayload(
+                run.getUserId(),
+                subscriptionId,
+                productName,
+                checkoutUrl,
+                amount,
+                "KRW",
+                aiAgentPrivateKey,  // AgentRun에 저장된 AI 에이전트 개인키
+                null                // recipientAddress: 기본값 사용
+        );
+
+        CheckoutPaymentEvent event = new CheckoutPaymentEvent(
+                UUID.randomUUID().toString(),
+                "CHECKOUT_PAYMENT_REQUESTED",
+                Instant.now(),
+                "command-service",
+                payload
+        );
+
+        checkoutPaymentEventPublisher.publish(event);
+        log.info("결제 이벤트 발행 완료 - runId={}, userId={}, subscriptionId={}, amount={}, aiAgentPrivateKey={}",
+                run.getRunId(), run.getUserId(), subscriptionId, amount, aiAgentPrivateKey != null ? "있음" : "없음");
+    }
+
+    /**
+     * 옵션 매칭 실패 시 텔레그램 옵션 선택 요청 Kafka 이벤트를 발행하고,
+     * AgentRun 상태를 AWAITING_OPTION_SELECTION으로 전환한다.
+     */
+    private void publishOptionSelectionRequest(AgentRun run, CommandSession commandSession,
+                                                List<OptionGroupRequest> optionGroups) {
+        // optionGroups → JSON 저장 (AgentRun에 보관)
+        String optionGroupsJson;
+        try {
+            optionGroupsJson = objectMapper.writeValueAsString(optionGroups);
+        } catch (JsonProcessingException e) {
+            log.error("옵션 그룹 JSON 직렬화 실패 - runId={}", run.getRunId(), e);
+            return;
+        }
+
+        // AgentRun 상태 전환
+        run.awaitOptionSelection(LocalDateTime.now(), optionGroupsJson);
+
+        // Kafka 이벤트 구성
+        List<OptionGroupPayload> payloadGroups = optionGroups.stream()
+                .map(og -> new OptionGroupPayload(og.groupName(), og.options()))
+                .toList();
+
+        OptionSelectionRequestPayload payload = new OptionSelectionRequestPayload(
+                run.getUserId(),
+                run.getRunId(),
+                commandSession.getOriginalCommand(),
+                payloadGroups
+        );
+
+        OptionSelectionRequestEvent event = new OptionSelectionRequestEvent(
+                UUID.randomUUID().toString(),
+                "OPTION_SELECTION_REQUESTED",
+                Instant.now(),
+                "command-service",
+                payload
+        );
+
+        optionSelectionEventPublisher.publish(event);
+        log.info("옵션 선택 요청 이벤트 발행 완료 - runId={}, userId={}, groups={}",
+                run.getRunId(), run.getUserId(), optionGroups.size());
+    }
+
+    /** 외부 스토어 스크린샷 기반 vision 단계 전이를 처리한다. */
+    @SuppressWarnings("unchecked")
+    private ActionInstructionResponse handleExternalStoreVisionTransitions(
+            AgentRun run,
+            CommandSession commandSession,
+            ActionInstructionResponse instruction
+    ) {
+        if (instruction == null) {
+            return null;
+        }
+
+        ExternalStoreVisionStage stage = run.getExternalStoreVisionStage() == null
+                ? ExternalStoreVisionStage.NONE
+                : run.getExternalStoreVisionStage();
+
+        if (instruction.action() == BrowserActionType.USE_TOOL
+                && instruction.toolRequest() != null
+                && "CAPTURE_VISIBLE_TAB".equals(instruction.toolRequest().name())) {
+            Object nextStage = instruction.toolRequest().input().get(AgentStepPlannerService.NEXT_EXTERNAL_VISION_STAGE_KEY);
+            if (nextStage instanceof String nextStageName) {
+                run.updateExternalStoreVisionStage(ExternalStoreVisionStage.valueOf(nextStageName));
+            } else if (stage == ExternalStoreVisionStage.NONE) {
+                run.updateExternalStoreVisionStage(ExternalStoreVisionStage.OPTION_PRESENCE);
+            }
+            return instruction;
+        }
+
+        // OPTION_PRESENCE에서 옵션 미발견 → SCROLL: 스크롤 횟수 증가 + stage를 NONE으로 리셋
+        // → 다음 step에서 다시 OPTION_PRESENCE 캡처를 수행하여 옵션 존재 여부를 재확인한다.
+        if (stage == ExternalStoreVisionStage.OPTION_PRESENCE && instruction.action() == BrowserActionType.SCROLL) {
+            run.incrementOptionPresenceScrollCount();
+            run.updateExternalStoreVisionStage(ExternalStoreVisionStage.NONE);
+            log.info("[AgentRunService] OPTION_PRESENCE 스크롤 재확인 - runId={}, scrollCount={}",
+                    run.getRunId(), run.getOptionPresenceScrollCount());
+            return instruction;
+        }
+
+        if (stage == ExternalStoreVisionStage.OPTION_PRESENCE && instruction.action() == BrowserActionType.CLICK) {
+            run.updateExternalStoreVisionStage(ExternalStoreVisionStage.OPTION_SELECTION);
+            return instruction;
+        }
+
+        if (stage == ExternalStoreVisionStage.OPTION_SELECTION
+                && instruction.action() == BrowserActionType.USE_TOOL
+                && instruction.toolRequest() != null
+                && AgentStepPlannerService.INTERNAL_REQUEST_OPTION_SELECTION_TOOL.equals(instruction.toolRequest().name())) {
+            List<OptionGroupRequest> optionGroups = (List<OptionGroupRequest>) instruction.toolRequest().input().get("optionGroups");
+            optionGroups = optionGroups == null ? List.of() : optionGroups;
+            publishOptionSelectionRequest(run, commandSession, optionGroups);
+            return null;
+        }
+
+        if (stage == ExternalStoreVisionStage.OPTION_SELECTION && instruction.action() == BrowserActionType.CLICK) {
+            run.updateExternalStoreVisionStage(ExternalStoreVisionStage.PURCHASE);
+            return instruction;
+        }
+
+        if (instruction.action() == BrowserActionType.COMPLETE) {
+            run.updateExternalStoreVisionStage(ExternalStoreVisionStage.NONE);
+        }
+
+        return instruction;
     }
 }

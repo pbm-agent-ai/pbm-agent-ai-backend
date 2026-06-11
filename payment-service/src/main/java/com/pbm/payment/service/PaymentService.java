@@ -64,6 +64,7 @@ public class PaymentService {
         Payment payment = Payment.create(
                 paymentId,
                 payload.userId(),
+                payload.subscriptionId(),
                 payload.productName(),
                 payload.productUrl(),
                 payload.amount(),
@@ -71,8 +72,8 @@ public class PaymentService {
                 payload.aiAgentPrivateKey()
         );
         paymentRepository.save(payment);
-        log.info("결제 엔티티 생성 완료: paymentId={}, userId={}, amount={} {}",
-                paymentId, payload.userId(), payload.amount(), payload.currency());
+        log.info("결제 엔티티 생성 완료: paymentId={}, userId={}, subscriptionId={}, amount={} {}",
+                paymentId, payload.userId(), payload.subscriptionId(), payload.amount(), payload.currency());
 
         // 3. 블록체인 결제 처리 호출
         PaymentProcessResult result;
@@ -81,7 +82,7 @@ public class PaymentService {
         } catch (Exception e) {
             // PaymentProcessor 내부에서 예기치 못한 예외가 발생한 경우 결제 실패로 처리한다.
             log.error("결제 처리 중 예외 발생: paymentId={}, 원인={}", paymentId, e.getMessage(), e);
-            payment.markFailed("결제 처리 중 서버 오류: " + e.getMessage());
+            payment.markFailed("AI 오작동으로 인한 결제 실패 (관리자 문의)");
             paymentRepository.save(payment);
 
             // 결제 실패 결과를 payment-result 토픽으로 발행
@@ -92,8 +93,8 @@ public class PaymentService {
 
         // 4. 결과에 따라 결제 상태 갱신
         if (result.success()) {
-            payment.markSuccess(result.transactionHash());
-            log.info("결제 성공: paymentId={}, txHash={}", paymentId, result.transactionHash());
+            payment.markSuccess(result.transactionHash(), result.gasFeeKrw());
+            log.info("결제 성공: paymentId={}, txHash={}, gasFeeKrw={}", paymentId, result.transactionHash(), result.gasFeeKrw());
         } else {
             payment.markFailed(result.failureReason());
             log.warn("결제 실패: paymentId={}, 사유={}", paymentId, result.failureReason());

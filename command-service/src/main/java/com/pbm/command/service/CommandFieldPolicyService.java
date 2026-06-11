@@ -10,30 +10,32 @@ import java.util.List;
  * 공통 필드 정책 서비스.
  *
  * 역할: 모든 카테고리에 공통으로 적용할 필수 필드와 확인 필드를 정의한다.
- *       카테고리별 구분은 제거되고, 아래 3개 필드가 모든 상황에서 필수로 사용된다.
+ *       카테고리별 구분은 제거되고, 아래 2개 필드가 모든 상황에서 필수로 사용된다.
  *       - PRODUCT_NAME (상품명)
  *       - MAX_PRICE    (최대 가격)
- *       - PLATFORM     (구매/비교 플랫폼)
  * 동작: API 응답에서 missingRequiredFields/ambiguousFields 계산 시 호출된다.
- *       getRequiredFields는 항상 동일한 3개 필드를 반환하며,
+ *       getRequiredFields는 항상 동일한 2개 필드를 반환하며,
  *       추가 확인 필드는 현재 사용하지 않는다(빈 리스트).
+ * 참고: PLATFORM은 선택 필드 — AI가 파싱하지 못하면 null로 두고 실행을 계속한다
+ *       (전 플랫폼 검색 또는 기본 플랫폼으로 처리).
  * 연관: CommandFieldType, CommandFieldEvaluationService.
  */
 @Service
 public class CommandFieldPolicyService {
 
-    // 모든 카테고리 공통 필수 필드: PRODUCT_NAME, MAX_PRICE, PLATFORM
+    // 모든 카테고리 공통 필수 필드: PRODUCT_NAME, MAX_PRICE
+    // PLATFORM은 선택 필드 - 미지정 시 null로 두고 실행 계속 (플랫폼 지정 없이 검색)
     private static final List<CommandFieldType> COMMON_REQUIRED_FIELDS = List.of(
             CommandFieldType.PRODUCT_NAME,
-            CommandFieldType.MAX_PRICE,
-            CommandFieldType.PLATFORM
+            CommandFieldType.MAX_PRICE
     );
 
     /**
      * 공통 필수 필드 목록을 반환한다 (카테고리 무관).
+     * PLATFORM은 선택 필드이므로 포함하지 않는다.
      *
      * @param category 상품 카테고리 (무시됨, 모든 카테고리 동일)
-     * @return 공통 필수 필드 목록
+     * @return 공통 필수 필드 목록 (PRODUCT_NAME, MAX_PRICE)
      */
     public List<CommandFieldType> getRequiredFields(ProductCategory category) {
         return COMMON_REQUIRED_FIELDS;

@@ -543,6 +543,24 @@ public class MonitoringSubscriptionService {
             MonitoringSubscription subscription,
             Instant scheduledEndAt
     ) {
+        registerSessionKeyForSubscription(subscription, scheduledEndAt, true);
+    }
+
+    /**
+     * 외부에서 생성된 URL 구독에 대해 세션키를 등록한다.
+     * <p>
+     * publishKafkaEvent=true: 키페어 생성 + DB 저장 + Kafka 비동기 이벤트 발행 (모니터링 시나리오)
+     * publishKafkaEvent=false: 키페어 생성 + DB 저장만 수행 (즉시 충족 시나리오 — 동기 REST로 별도 등록)
+     *
+     * @param subscription     세션키를 등록할 구독
+     * @param scheduledEndAt   모니터링 종료 예정 시각 (null이면 기본 7일)
+     * @param publishKafkaEvent Kafka 세션키 등록 이벤트 발행 여부
+     */
+    public void registerSessionKeyForSubscription(
+            MonitoringSubscription subscription,
+            Instant scheduledEndAt,
+            boolean publishKafkaEvent
+    ) {
         Instant now = Instant.now();
         Instant resolvedEndAt = (scheduledEndAt != null && scheduledEndAt.isAfter(now))
                 ? scheduledEndAt
@@ -556,7 +574,7 @@ public class MonitoringSubscriptionService {
                 now,
                 resolvedEndAt
         );
-        registerSessionKey(subscription, context, true);  // Kafka 이벤트 발행
+        registerSessionKey(subscription, context, publishKafkaEvent);
     }
 
     /**

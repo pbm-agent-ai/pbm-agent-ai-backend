@@ -461,6 +461,7 @@ public class CommandExecutionService {
 
         // Kafka → price-service: URL별 MonitoringSubscription 생성 요청
         // url_monitoring_tasks 테이블 제거 후, price-service의 monitoring_subscriptions가 단일 진실 공급원이다.
+        // currentPrice: 익스텐션이 현재 페이지 DOM에서 추출한 가격 (즉시 충족 판단용)
         priceRequestService.publishUrlMonitoringRequest(
                 userId,
                 commandId,
@@ -468,7 +469,8 @@ public class CommandExecutionService {
                 parsed.maxPrice(),
                 parsed.currency() != null ? parsed.currency() : "KRW",
                 condition,
-                effectiveIntent
+                effectiveIntent,
+                request.currentPrice()
         );
 
         log.info("URL_MONITOR 등록 완료 - commandId: {}, urlCount: {}, condition: {}, targetPrice: {}",

@@ -60,6 +60,7 @@ public class PriceRequestService {
      * @param currency     통화
      * @param condition    ALL | ANY
      * @param intent       AUTO_PURCHASE | PRICE_TRACK
+     * @param currentPrice 익스텐션이 DOM에서 추출한 현재 가격 (즉시 충족 판단용, null 가능)
      */
     public void publishUrlMonitoringRequest(
             Long userId,
@@ -68,7 +69,8 @@ public class PriceRequestService {
             Integer targetPrice,
             String currency,
             String condition,
-            String intent
+            String intent,
+            Integer currentPrice
     ) {
         for (String productUrl : productUrls) {
             String eventId = UUID.randomUUID().toString();
@@ -89,13 +91,14 @@ public class PriceRequestService {
                             productUrl,     // productUrl — 단건 URL
                             null,           // searchKeyword
                             null,           // productUrls
-                            condition       // urlCondition — ALL | ANY
+                            condition,      // urlCondition — ALL | ANY
+                            currentPrice    // 익스텐션 현재 가격 (즉시 충족 판단용)
                     )
             );
             kafkaTemplate.send(priceTopic, String.valueOf(userId), event);
         }
-        log.info("URL 모니터링 구독 등록 이벤트 발행 - commandId: {}, urlCount: {}, condition: {}",
-                commandId, productUrls.size(), condition);
+        log.info("URL 모니터링 구독 등록 이벤트 발행 - commandId: {}, urlCount: {}, condition: {}, currentPrice: {}",
+                commandId, productUrls.size(), condition, currentPrice);
     }
 
     /**

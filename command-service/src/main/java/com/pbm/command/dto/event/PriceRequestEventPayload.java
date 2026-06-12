@@ -36,7 +36,9 @@ public record PriceRequestEventPayload(
         /** 사용자가 직접 입력한 상품 URL 목록 */
         List<String> productUrls,
         /** URL_MONITOR 전용: "ALL" | "ANY" 모니터링 조건 */
-        String urlCondition
+        String urlCondition,
+        /** URL_MONITOR 전용: 익스텐션이 DOM에서 추출한 현재 가격 (즉시 충족 판단용, KRW 기준) */
+        Integer currentPrice
 ) {
 
     /**
@@ -55,11 +57,11 @@ public record PriceRequestEventPayload(
             String searchKeyword
     ) {
         this(userId, keyword, targetPrice, platform, currency, commandId, intent,
-                parsedCommandSnapshot, productUrl, searchKeyword, null, null);
+                parsedCommandSnapshot, productUrl, searchKeyword, null, null, null);
     }
 
     /**
-     * productUrls는 있고 urlCondition은 없는 호출부와의 호환성을 위한 보조 생성자.
+     * productUrls는 있고 urlCondition/currentPrice는 없는 호출부와의 호환성을 위한 보조 생성자.
      */
     public PriceRequestEventPayload(
             Long userId,
@@ -75,6 +77,27 @@ public record PriceRequestEventPayload(
             List<String> productUrls
     ) {
         this(userId, keyword, targetPrice, platform, currency, commandId, intent,
-                parsedCommandSnapshot, productUrl, searchKeyword, productUrls, null);
+                parsedCommandSnapshot, productUrl, searchKeyword, productUrls, null, null);
+    }
+
+    /**
+     * currentPrice 없는 12개 필드 호출부와의 호환성을 위한 보조 생성자.
+     */
+    public PriceRequestEventPayload(
+            Long userId,
+            String keyword,
+            Integer targetPrice,
+            String platform,
+            String currency,
+            String commandId,
+            String intent,
+            ParsedCommandSnapshot parsedCommandSnapshot,
+            String productUrl,
+            String searchKeyword,
+            List<String> productUrls,
+            String urlCondition
+    ) {
+        this(userId, keyword, targetPrice, platform, currency, commandId, intent,
+                parsedCommandSnapshot, productUrl, searchKeyword, productUrls, urlCondition, null);
     }
 }

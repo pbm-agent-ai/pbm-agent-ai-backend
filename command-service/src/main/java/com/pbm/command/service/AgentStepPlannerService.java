@@ -216,6 +216,16 @@ public class AgentStepPlannerService {
         }
 
         if (selectedOptionValue != null && !selectedOptionValue.isBlank()) {
+            ActionInstructionResponse aliExpressSelectedOptionInstruction = buildExplicitAliExpressOptionInstruction(
+                    runId,
+                    stepIndex,
+                    snapshot,
+                    selectedOptionValue
+            );
+            if (aliExpressSelectedOptionInstruction != null) {
+                return aliExpressSelectedOptionInstruction;
+            }
+
             ActionInstructionResponse selectedOptionInstruction = buildExplicitSmartstoreOptionInstruction(
                     runId,
                     stepIndex,
@@ -406,6 +416,9 @@ public class AgentStepPlannerService {
             int optionPresenceScrollCount
     ) {
         if (currentPageType != PageType.PRODUCT_DETAIL) {
+            return null;
+        }
+        if (!isSmartstoreProductDetailSnapshot(snapshot)) {
             return null;
         }
         if (selectedOptionValue != null && !selectedOptionValue.isBlank()) {
@@ -773,6 +786,17 @@ public class AgentStepPlannerService {
                         runId, matchedProduct.get().selector(), matchedProduct.get().href());
                 return ActionInstructionResponse.click(stepIndex, buildActionId(runId, stepIndex), matchedProduct.get());
             }
+            // 검색 결과에서 상품을 찾지 못함 (lazy-load 미렌더링, 개인화 검색 결과 등)
+            // AI fallback은 할루시네이션 위험이 있으므로 productUrl로 직접 이동한다.
+            if (!platformConfig.isPreferSearchNavigation()
+                    && targetProduct.productUrl() != null
+                    && !targetProduct.productUrl().isBlank()) {
+                log.info("[AgentStepPlannerService] productId href 매칭 실패 → 상품 상세페이지 직접 이동 - runId={}, url={}",
+                        runId, targetProduct.productUrl());
+                return ActionInstructionResponse.navigate(
+                        stepIndex, buildActionId(runId, stepIndex),
+                        targetProduct.productUrl(), DEFAULT_NAVIGATION_TIMEOUT_MS);
+            }
             log.info("[AgentStepPlannerService] productId href 매칭 실패 → AI fallback - runId={}", runId);
         }
 
@@ -811,9 +835,14 @@ public class AgentStepPlannerService {
                     return ActionInstructionResponse.abort(stepIndex, actionId,
                             "플랫폼 이동 " + MAX_DOMAIN_REDIRECT_ATTEMPTS + "회 초과 실패 - 브라우저 상태를 확인해주세요.");
                 }
-                String targetUrl = platformConfig.isPreferSearchNavigation()
-                        ? platformConfig.buildMainPageUrl()  // 네이버: 항상 메인 페이지로
-                        : buildSearchUrl(platformConfig, commandSession, targetProduct); // 알리: 검색 URL
+                String targetUrl;
+                if (platformConfig.isPreferSearchNavigation()) {
+                    targetUrl = platformConfig.buildMainPageUrl();  // 네이버: 항상 메인 페이지로
+                } else if (targetProduct != null && targetProduct.productUrl() != null && !targetProduct.productUrl().isBlank()) {
+                    targetUrl = targetProduct.productUrl();  // 알리: 상품 URL 직접 이동
+                } else {
+                    targetUrl = buildSearchUrl(platformConfig, commandSession, targetProduct); // 알리: 검색 URL fallback
+                }
                 log.warn("[AgentStepPlannerService] 잘못된 도메인에서 MAIN_PAGE 감지 → 플랫폼 이동 - runId={}, from={}, to={}",
                         runId, currentUrlLower, targetUrl);
                 return ActionInstructionResponse.navigate(stepIndex, actionId, targetUrl, DEFAULT_NAVIGATION_TIMEOUT_MS);
@@ -833,7 +862,15 @@ public class AgentStepPlannerService {
                 log.warn("[AgentStepPlannerService] 검색창 미발견 → 메인 페이지 재진입 - runId={}, url={}", runId, mainPageUrl);
                 return ActionInstructionResponse.navigate(stepIndex, actionId, mainPageUrl, DEFAULT_NAVIGATION_TIMEOUT_MS);
             } else {
-                // 알리익스프레스 등: 검색 URL로 직접 이동
+                // 알리익스프레스 등: targetProduct URL이 있으면 상품 상세페이지로 직접 이동
+                // 검색 결과 페이지에서 해당 상품이 노출되지 않을 수 있으므로 (lazy-load, 개인화 검색 결과 등)
+                // 상품 URL을 알고 있다면 검색 우회하여 바로 이동한다.
+                if (targetProduct != null && targetProduct.productUrl() != null && !targetProduct.productUrl().isBlank()) {
+                    String productUrl = targetProduct.productUrl();
+                    log.info("[AgentStepPlannerService] 메인 페이지 → 상품 상세페이지 직접 이동 - runId={}, url={}", runId, productUrl);
+                    return ActionInstructionResponse.navigate(stepIndex, actionId, productUrl, DEFAULT_NAVIGATION_TIMEOUT_MS);
+                }
+                // targetProduct URL이 없으면 검색 URL로 이동
                 String searchUrl = buildSearchUrl(platformConfig, commandSession, targetProduct);
                 log.info("[AgentStepPlannerService] 메인 페이지 → 검색 URL 직접 이동 - runId={}, url={}", runId, searchUrl);
                 return ActionInstructionResponse.navigate(stepIndex, actionId, searchUrl, DEFAULT_NAVIGATION_TIMEOUT_MS);
@@ -1262,6 +1299,9 @@ public class AgentStepPlannerService {
                 "a[href*=\"/item/" + productId + "\"]",
                 "a[href*=\"/i/" + productId + ".html\"]",
                 "a[href*=\"/i/" + productId + "\"]",
+                "a.search-card-item[href*=\"productIds=" + productId + "\"]",
+                "a[href*=\"/ssr/\"][href*=\"productIds=" + productId + "\"]",
+                "a[href*=\"/ssr/\"][href*=\"x_object_id%3A" + productId + "\"]",
                 "a[href*=\"productId=" + productId + "\"]",
                 "a[href*=\"id=" + productId + "\"]");
     }
@@ -1350,6 +1390,7 @@ public class AgentStepPlannerService {
             int optionPresenceScrollCount
     ) {
         if (snapshot == null
+                || !isSmartstoreProductDetailSnapshot(snapshot)
                 || selectedOptionValue == null
                 || selectedOptionValue.isBlank()) {
             return null;
@@ -1409,7 +1450,7 @@ public class AgentStepPlannerService {
                 && previousActionResult.action() == BrowserActionType.CLICK;
 
         for (OptionGroupRequest optionGroup : snapshot.optionGroups()) {
-            if (!isRelevantSmartstoreOptionGroup(optionGroup, normalizedSelected)) {
+            if (!isRelevantOptionGroup(optionGroup, normalizedSelected)) {
                 continue;
             }
 
@@ -1421,7 +1462,7 @@ public class AgentStepPlannerService {
                 return null;
             }
 
-            Optional<InteractiveElementRequest> visibleOption = findVisibleSmartstoreOptionElement(snapshot, optionGroup, selectedOptionValue);
+            Optional<InteractiveElementRequest> visibleOption = findVisibleOptionElement(snapshot, optionGroup, selectedOptionValue);
             if (visibleOption.isPresent()) {
                 log.info("[AgentStepPlannerService] Smartstore 옵션 DOM 클릭 - group={}, selectedOption={}, nodeId={}, label={}",
                         optionGroup.groupName(), selectedOptionValue, visibleOption.get().nodeId(), visibleOption.get().labelText());
@@ -1518,6 +1559,54 @@ public class AgentStepPlannerService {
         return null;
     }
 
+    private ActionInstructionResponse buildExplicitAliExpressOptionInstruction(
+            String runId,
+            int stepIndex,
+            PageSnapshotRequest snapshot,
+            String selectedOptionValue
+    ) {
+        if (snapshot == null
+                || !isAliExpressProductDetailSnapshot(snapshot)
+                || selectedOptionValue == null
+                || selectedOptionValue.isBlank()
+                || snapshot.optionGroups() == null
+                || snapshot.optionGroups().isEmpty()) {
+            return null;
+        }
+
+        String normalizedSelected = normalize(selectedOptionValue);
+        String actionId = buildActionId(runId, stepIndex);
+
+        for (OptionGroupRequest optionGroup : snapshot.optionGroups()) {
+            if (!isRelevantOptionGroup(optionGroup, normalizedSelected)) {
+                continue;
+            }
+
+            if (optionGroup.selectedOption() != null
+                    && normalize(optionGroup.selectedOption()).contains(normalizedSelected)) {
+                log.info("[AgentStepPlannerService] AliExpress 옵션이 이미 선택된 상태 확인 - group={}, selectedOption={}",
+                        optionGroup.groupName(), selectedOptionValue);
+                return null;
+            }
+
+            Optional<InteractiveElementRequest> visibleOption = findVisibleOptionElement(snapshot, optionGroup, selectedOptionValue);
+            if (visibleOption.isPresent()) {
+                log.info("[AgentStepPlannerService] AliExpress 옵션 DOM 클릭 - group={}, selectedOption={}, nodeId={}, selector={}, label={}",
+                        optionGroup.groupName(),
+                        selectedOptionValue,
+                        visibleOption.get().nodeId(),
+                        visibleOption.get().selector(),
+                        visibleOption.get().labelText());
+                return ActionInstructionResponse.click(stepIndex, actionId, visibleOption.get());
+            }
+
+            log.warn("[AgentStepPlannerService] AliExpress 옵션 DOM 미발견 - group={}, selectedOption={}",
+                    optionGroup.groupName(), selectedOptionValue);
+        }
+
+        return null;
+    }
+
     private ActionInstructionResponse analyzeSmartstoreOptionSelectionVision(
             String runId,
             int stepIndex,
@@ -1590,12 +1679,12 @@ public class AgentStepPlannerService {
         }
         String normalizedSelected = normalize(selectedOptionValue);
         return snapshot.optionGroups().stream()
-                .filter(group -> isRelevantSmartstoreOptionGroup(group, normalizedSelected))
+                .filter(group -> isRelevantOptionGroup(group, normalizedSelected))
                 .anyMatch(group -> group.selectedOption() != null
                         && normalize(group.selectedOption()).contains(normalizedSelected));
     }
 
-    private boolean isRelevantSmartstoreOptionGroup(OptionGroupRequest optionGroup, String normalizedSelected) {
+    private boolean isRelevantOptionGroup(OptionGroupRequest optionGroup, String normalizedSelected) {
         if (optionGroup == null || normalizedSelected == null || normalizedSelected.isBlank()) {
             return false;
         }
@@ -1611,7 +1700,7 @@ public class AgentStepPlannerService {
                         || normalizedSelected.contains(normalizedOption));
     }
 
-    private Optional<InteractiveElementRequest> findVisibleSmartstoreOptionElement(
+    private Optional<InteractiveElementRequest> findVisibleOptionElement(
             PageSnapshotRequest snapshot,
             OptionGroupRequest optionGroup,
             String selectedOptionValue
@@ -1997,6 +2086,23 @@ public class AgentStepPlannerService {
         }
 
         return value.replaceAll("\\s+", "").toLowerCase();
+    }
+
+    private boolean isSmartstoreProductDetailSnapshot(PageSnapshotRequest snapshot) {
+        if (snapshot == null || snapshot.currentUrl() == null) {
+            return false;
+        }
+        String lower = snapshot.currentUrl().toLowerCase();
+        return lower.contains("smartstore.naver.com")
+                && (lower.contains("/products/") || lower.contains("/p/") || lower.contains("/products?") || lower.contains("/products#"));
+    }
+
+    private boolean isAliExpressProductDetailSnapshot(PageSnapshotRequest snapshot) {
+        if (snapshot == null || snapshot.currentUrl() == null) {
+            return false;
+        }
+        String lower = snapshot.currentUrl().toLowerCase();
+        return lower.contains("aliexpress.com") && (lower.contains("/item/") || lower.contains("/i/"));
     }
 
     /**

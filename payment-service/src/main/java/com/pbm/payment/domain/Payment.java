@@ -59,7 +59,8 @@ public class Payment {
     @Column(name = "subscription_id")
     private Long subscriptionId;
 
-    @Column(name = "product_name", nullable = false, length = 255)
+    // 상품명 또는 원본 명령어 (URL 포함 명령어는 255자를 초과할 수 있으므로 TEXT 타입)
+    @Column(name = "product_name", nullable = false, columnDefinition = "TEXT")
     private String productName;
 
     @Column(name = "product_url", columnDefinition = "TEXT")

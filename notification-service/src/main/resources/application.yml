@@ -67,6 +67,8 @@ app:
       payment-result: payment-result
       option-selection-request: option-selection-request
       option-selection-response: option-selection-response
+      login-credential-request: login-credential-request
+      login-credential-response: login-credential-response
   # 텔레그램 봇 설정
   telegram:
     bot-token: ${TELEGRAM_BOT_TOKEN:}

@@ -25,7 +25,9 @@ public record BrowserHeartbeatResponse(
         @Schema(description = "현재 디바이스에 할당된 pending run 정보. 없으면 null")
         AssignedRunResponse assignedRun,
         @Schema(description = "익스텐션이 가격을 수집해야 하는 URL 모니터링 태스크 목록")
-        List<UrlMonitoringTaskResponse> urlMonitoringTasks
+        List<UrlMonitoringTaskResponse> urlMonitoringTasks,
+        @Schema(description = "익스텐션이 브라우저 검색을 수행해야 하는 태스크 목록")
+        List<BrowserSearchTaskResponse> browserSearchTasks
 ) {
     /** 기존 호출부 호환용 팩토리 (urlMonitoringTasks 없음) */
     public static BrowserHeartbeatResponse from(BrowserDevice browserDevice, AssignedRunResponse assignedRun) {
@@ -34,6 +36,7 @@ public record BrowserHeartbeatResponse(
                 browserDevice.getStatus(),
                 browserDevice.getLastSeenAt(),
                 assignedRun,
+                List.of(),
                 List.of()
         );
     }
@@ -42,14 +45,16 @@ public record BrowserHeartbeatResponse(
     public static BrowserHeartbeatResponse from(
             BrowserDevice browserDevice,
             AssignedRunResponse assignedRun,
-            List<UrlMonitoringTaskResponse> urlMonitoringTasks
+            List<UrlMonitoringTaskResponse> urlMonitoringTasks,
+            List<BrowserSearchTaskResponse> browserSearchTasks
     ) {
         return new BrowserHeartbeatResponse(
                 browserDevice.getDeviceId(),
                 browserDevice.getStatus(),
                 browserDevice.getLastSeenAt(),
                 assignedRun,
-                urlMonitoringTasks != null ? urlMonitoringTasks : List.of()
+                urlMonitoringTasks != null ? urlMonitoringTasks : List.of(),
+                browserSearchTasks != null ? browserSearchTasks : List.of()
         );
     }
 }

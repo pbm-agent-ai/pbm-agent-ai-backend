@@ -10,6 +10,7 @@ import com.pbm.price.publisher.ProductSelectionRequiredEventPublisher;
 import com.pbm.price.service.AliExpressCategoryIdResolver;
 import com.pbm.price.service.AliExpressProductUrlService;
 import com.pbm.price.service.AliExpressShoppingService;
+import com.pbm.price.service.BrowserSearchTaskService;
 import com.pbm.price.service.NaverProductUrlService;
 import com.pbm.price.service.NaverShoppingService;
 import com.pbm.price.service.UrlMonitoringService;
@@ -45,6 +46,7 @@ public class PriceTopicConsumer {
     private final AliExpressShoppingService aliExpressShoppingService;
     private final AliExpressCategoryIdResolver aliExpressCategoryIdResolver;
     private final AliExpressProductUrlService aliExpressProductUrlService;
+    private final BrowserSearchTaskService browserSearchTaskService;
     private final NaverProductUrlService naverProductUrlService;
     private final ProductSelectionRequiredEventPublisher productSelectionRequiredEventPublisher;
     private final UrlMonitoringService urlMonitoringService;
@@ -53,6 +55,7 @@ public class PriceTopicConsumer {
                               AliExpressShoppingService aliExpressShoppingService,
                               AliExpressCategoryIdResolver aliExpressCategoryIdResolver,
                               AliExpressProductUrlService aliExpressProductUrlService,
+                              BrowserSearchTaskService browserSearchTaskService,
                               NaverProductUrlService naverProductUrlService,
                               ProductSelectionRequiredEventPublisher productSelectionRequiredEventPublisher,
                               UrlMonitoringService urlMonitoringService) {
@@ -60,6 +63,7 @@ public class PriceTopicConsumer {
         this.aliExpressShoppingService = aliExpressShoppingService;
         this.aliExpressCategoryIdResolver = aliExpressCategoryIdResolver;
         this.aliExpressProductUrlService = aliExpressProductUrlService;
+        this.browserSearchTaskService = browserSearchTaskService;
         this.naverProductUrlService = naverProductUrlService;
         this.productSelectionRequiredEventPublisher = productSelectionRequiredEventPublisher;
         this.urlMonitoringService = urlMonitoringService;
@@ -81,6 +85,11 @@ public class PriceTopicConsumer {
         // URL_MONITOR_REQUEST: URL 기반 MonitoringSubscription 생성
         if ("URL_MONITOR_REQUEST".equals(event.eventType())) {
             handleUrlMonitorRequest(event);
+            return;
+        }
+
+        if (shouldUseAliExpressBrowserSearch(event)) {
+            browserSearchTaskService.enqueueAliExpressSearchTask(event);
             return;
         }
 
@@ -245,6 +254,11 @@ public class PriceTopicConsumer {
         return event.payload().productUrls() != null
                 && !event.payload().productUrls().isEmpty()
                 && "ALIEXPRESS".equalsIgnoreCase(event.payload().platform());
+    }
+
+    private boolean shouldUseAliExpressBrowserSearch(PriceRequestEvent event) {
+        return "ALIEXPRESS".equalsIgnoreCase(event.payload().platform())
+                && !hasDirectAliExpressUrls(event);
     }
 
     /**

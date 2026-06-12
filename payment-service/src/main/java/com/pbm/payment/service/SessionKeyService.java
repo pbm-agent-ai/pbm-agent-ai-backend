@@ -91,7 +91,6 @@ public class SessionKeyService {
         BigInteger requiredGasForAiAgent = BlockchainService.GAS_LIMIT.multiply(currentGasPrice)
                 .multiply(BigInteger.TWO);  // 2배 buffer
         blockchainService.ensureAiAgentFunded(aiAgentAddress, requiredGasForAiAgent);
-        log.info("AI 에이전트 ETH 지원 완료 - aiAgent: {}", aiAgentAddress);
 
         // 4. 사용자 EOA ETH 지원 (부족분만)
         //    addSessionKey()는 사용자 EOA 키로 서명해야 하므로,
@@ -100,7 +99,6 @@ public class SessionKeyService {
         BigInteger requiredGasForUserEoa = BlockchainService.GAS_LIMIT.multiply(currentGasPrice)
                 .multiply(BigInteger.TWO);  // 2배 buffer
         blockchainService.ensureUserEoaFunded(wallet.getUserAddress(), requiredGasForUserEoa);
-        log.info("사용자 EOA ETH 지원 완료 - userAddress: {}", wallet.getUserAddress());
 
         // 5. addSessionKey() 호출 — 블록체인에 세션키 등록
         //    PBMSmartAccount.addSessionKey()는 require(msg.sender == owner) 조건이 있으므로

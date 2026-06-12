@@ -14,7 +14,9 @@ public record OptionGroupRequest(
         String nodeId,
         String selector,
         List<String> options,
-        String selectedOption
+        String selectedOption,
+        /** 비활성 상태 여부 (이전 옵션 선택 필요한 종속 옵션) */
+        Boolean disabled
 ) {
     public OptionGroupRequest {
         options = options == null ? List.of() : List.copyOf(options);

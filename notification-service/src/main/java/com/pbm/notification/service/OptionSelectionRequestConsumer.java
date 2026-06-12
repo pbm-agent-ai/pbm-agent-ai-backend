@@ -43,6 +43,8 @@ public class OptionSelectionRequestConsumer {
         var payload = event.payload();
         log.info("옵션 선택 요청 수신 - userId: {}, runId: {}, groups: {}",
                 payload.userId(), payload.runId(), payload.optionGroups().size());
+        log.info("[OptionSelectionRequestConsumer] 텔레그램 옵션 요청 payload 디버그 - runId={}, groups={}",
+                payload.runId(), summarizeOptionGroups(payload.optionGroups()));
 
         // userId → chatId 조회
         NotificationPreference pref = preferenceRepository.findByUserId(payload.userId()).orElse(null);
@@ -85,8 +87,12 @@ public class OptionSelectionRequestConsumer {
         sb.append("\n");
 
         for (var group : optionGroups) {
-            sb.append("📋 <b>").append(group.groupName()).append("</b>\n");
+            // 옵션이 없는 그룹은 표시하지 않음 (종속 옵션에서 아직 비활성인 경우)
             List<String> options = group.options();
+            if (options == null || options.isEmpty()) {
+                continue;
+            }
+            sb.append("📋 <b>").append(group.groupName()).append("</b>\n");
             for (int i = 0; i < options.size(); i++) {
                 sb.append(i + 1).append(". ").append(options.get(i)).append("\n");
             }
@@ -95,5 +101,19 @@ public class OptionSelectionRequestConsumer {
 
         sb.append("번호 또는 옵션명을 입력해주세요. (3분 이내)");
         return sb.toString();
+    }
+
+    private List<String> summarizeOptionGroups(List<OptionSelectionRequestEvent.OptionGroup> optionGroups) {
+        if (optionGroups == null) {
+            return List.of();
+        }
+        return optionGroups.stream()
+                .map(group -> String.format(
+                        "group=%s options=%d values=%s",
+                        group.groupName(),
+                        group.options() == null ? 0 : group.options().size(),
+                        group.options()
+                ))
+                .toList();
     }
 }

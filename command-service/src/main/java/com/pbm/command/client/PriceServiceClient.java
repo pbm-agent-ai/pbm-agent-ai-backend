@@ -2,6 +2,7 @@ package com.pbm.command.client;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pbm.command.dto.response.BrowserSearchTaskResponse;
 import com.pbm.command.dto.response.UrlMonitoringTaskResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -30,6 +31,7 @@ public class PriceServiceClient {
 
     private static final String PRICE_SERVICE_BASE = "http://price-service";
     private static final String ACTIVE_TASKS_PATH = "/api/v1/url-monitoring/active-tasks";
+    private static final String ACTIVE_BROWSER_SEARCH_TASKS_PATH = "/api/v1/browser-search/active-tasks";
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
@@ -93,6 +95,52 @@ public class PriceServiceClient {
         } catch (Exception e) {
             // price-service 일시 다운이나 네트워크 오류 시 heartbeat는 정상 진행
             log.warn("price-service active-tasks 조회 실패 (heartbeat 계속 진행) - userId: {}, 원인: {}",
+                    userId, e.getMessage());
+            return List.of();
+        }
+    }
+
+    /**
+     * 크롤링 기한이 도래한 브라우저 검색 태스크 목록을 price-service에서 조회한다.
+     *
+     * @param userId heartbeat 디바이스 소유자 ID
+     * @return 브라우저 검색 태스크 목록 (오류 시 빈 리스트)
+     */
+    public List<BrowserSearchTaskResponse> getActiveBrowserSearchTasks(Long userId) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-User-Id", String.valueOf(userId));
+            HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+            ResponseEntity<Map> responseEntity = restTemplate.exchange(
+                    PRICE_SERVICE_BASE + ACTIVE_BROWSER_SEARCH_TASKS_PATH,
+                    HttpMethod.GET,
+                    entity,
+                    Map.class
+            );
+
+            Map<?, ?> body = responseEntity.getBody();
+            if (body == null || !Boolean.TRUE.equals(body.get("success"))) {
+                log.warn("price-service browser-search active-tasks 응답 실패 - userId: {}", userId);
+                return List.of();
+            }
+
+            Object data = body.get("data");
+            if (data == null) return List.of();
+
+            List<Map<String, Object>> taskMaps = objectMapper.convertValue(data, new TypeReference<>() {});
+            return taskMaps.stream()
+                    .map(map -> new BrowserSearchTaskResponse(
+                            toLong(map.get("taskId")),
+                            (String) map.get("commandId"),
+                            (String) map.get("platform"),
+                            (String) map.get("keyword"),
+                            (String) map.get("searchUrl"),
+                            toInteger(map.get("maxResults"))
+                    ))
+                    .toList();
+        } catch (Exception e) {
+            log.warn("price-service browser-search active-tasks 조회 실패 (heartbeat 계속 진행) - userId: {}, 원인: {}",
                     userId, e.getMessage());
             return List.of();
         }

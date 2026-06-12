@@ -61,6 +61,9 @@ class PriceTopicConsumerTest {
     private AliExpressProductUrlService aliExpressProductUrlService;
 
     @Mock
+    private com.pbm.price.service.BrowserSearchTaskService browserSearchTaskService;
+
+    @Mock
     private NaverProductUrlService naverProductUrlService;
 
     @Mock
@@ -75,6 +78,7 @@ class PriceTopicConsumerTest {
                 aliExpressShoppingService,
                 aliExpressCategoryIdResolver,
                 aliExpressProductUrlService,
+                browserSearchTaskService,
                 naverProductUrlService,
                 productSelectionRequiredEventPublisher,
                 urlMonitoringService
@@ -160,34 +164,20 @@ class PriceTopicConsumerTest {
     }
 
     @Test
-    @DisplayName("ALIEXPRESS - 알리 검색 결과도 후보 선택 이벤트로 발행한다")
-    void consume_aliExpressResults_publishCandidateSelectionEvent() {
+    @DisplayName("ALIEXPRESS - 브라우저 검색 태스크로 위임한다 (API 대신 사용자 브라우저 크롤링)")
+    void consume_aliExpressResults_enqueuesBrowserSearchTask() {
         // given
         PriceRequestEvent event = createRequestEvent(1L, "무선 이어폰", 50000, "ALIEXPRESS", "USD");
-        List<SearchResponse> results = List.of(
-                new SearchResponse("무선 이어폰", "90000", "120000", "AliStore", "https://aliexpress.com/item/1", "https://img.example.com/ae-1.jpg", "USD", "ae-1")
-        );
-        when(aliExpressShoppingService.searchProducts(
-                eq("무선 이어폰"), eq(1), eq(20), eq(null), eq("USD"), eq("KO"), eq("KR"), eq(null), eq(null)
-        )).thenReturn(results);
 
         // when
         priceTopicConsumer.consume(event);
 
-        // then
-        verify(aliExpressShoppingService, times(1)).searchProducts(
-                eq("무선 이어폰"), eq(1), eq(20), eq(null), eq("USD"), eq("KO"), eq("KR"), eq(null), eq(null)
+        // then: API 검색 대신 브라우저 검색 태스크가 생성됨
+        verify(browserSearchTaskService, times(1)).enqueueAliExpressSearchTask(event);
+        verify(aliExpressShoppingService, never()).searchProducts(
+                anyString(), anyInt(), anyInt(), any(), any(), any(), any(), any(), any()
         );
         verify(naverShoppingService, never()).searchProducts(anyString(), anyInt());
-
-        ArgumentCaptor<ProductSelectionRequiredEvent> captor =
-                ArgumentCaptor.forClass(ProductSelectionRequiredEvent.class);
-        verify(productSelectionRequiredEventPublisher, times(1)).publish(captor.capture());
-
-        ProductSelectionRequiredEvent published = captor.getValue();
-        assertThat(published.payload().candidates()).hasSize(1);
-        assertThat(published.payload().candidates().get(0).productId()).isEqualTo("ae-1");
-        assertThat(published.payload().candidates().get(0).platform()).isEqualTo("ALIEXPRESS");
     }
 
     @Test
@@ -208,8 +198,8 @@ class PriceTopicConsumerTest {
     }
 
     @Test
-    @DisplayName("ALIEXPRESS - searchCategoryHint가 있으면 category_ids를 함께 전달한다")
-    void consume_aliExpressWithCategoryHint_passesResolvedCategoryIds() {
+    @DisplayName("ALIEXPRESS - searchCategoryHint가 있어도 브라우저 검색으로 위임한다")
+    void consume_aliExpressWithCategoryHint_enqueuesBrowserSearchTask() {
         ParsedCommandSnapshot snapshot = new ParsedCommandSnapshot(
                 "ELECTRONICS",
                 "mx master 3s",
@@ -227,15 +217,13 @@ class PriceTopicConsumerTest {
                 "MOUSE"
         );
         PriceRequestEvent event = createRequestEvent(1L, "로지텍 mx master 3s black", 100000, "ALIEXPRESS", "KRW", "AUTO_PURCHASE", snapshot);
-        when(aliExpressCategoryIdResolver.resolveCategoryIds("MOUSE")).thenReturn(java.util.Optional.of("30"));
-        when(aliExpressShoppingService.searchProducts(
-                eq("로지텍 mx master 3s black"), eq(1), eq(20), eq(null), eq("KRW"), eq("KO"), eq("KR"), eq("30"), eq(null)
-        )).thenReturn(List.of());
 
         priceTopicConsumer.consume(event);
 
-        verify(aliExpressShoppingService).searchProducts(
-                eq("로지텍 mx master 3s black"), eq(1), eq(20), eq(null), eq("KRW"), eq("KO"), eq("KR"), eq("30"), eq(null)
+        // AliExpress는 항상 브라우저 검색으로 위임 (API 대신)
+        verify(browserSearchTaskService, times(1)).enqueueAliExpressSearchTask(event);
+        verify(aliExpressShoppingService, never()).searchProducts(
+                anyString(), anyInt(), anyInt(), any(), any(), any(), any(), any(), any()
         );
     }
 

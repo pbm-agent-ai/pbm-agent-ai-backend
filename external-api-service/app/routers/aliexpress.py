@@ -1,4 +1,4 @@
-"""AliExpress Affiliate API 라우터 - 카테고리 조회 및 상품 검색 엔드포인트"""
+"""AliExpress 라우터 - 카테고리 조회 및 상품 검색 엔드포인트"""
 
 from __future__ import annotations
 
@@ -44,9 +44,9 @@ async def search_products(
     category_ids: Optional[str] = Query(default=None, description="카테고리 ID 목록 (콤마 구분)"),
     tracking_id: Optional[str] = Query(default=None, description="트래킹 ID"),
 ) -> AliexpressSearchResponse:
-    """AliExpress Affiliate 상품 검색
+    """AliExpress 상품 검색
 
-    keyword는 AliExpress API 전송 시 'keywords'로 매핑됩니다.
+    검색 URL을 브라우저로 렌더링한 뒤 카드 DOM을 크롤링해서
     price-service 등 다른 서비스가 소비하기 쉬운 정규화된 형태로 응답합니다.
     """
     return await search_affiliate_products(
@@ -69,9 +69,8 @@ async def get_product_detail(
     target_language: str = "KO",
     ship_to_country: str = "KR"
 ) -> AliexpressProductDetailResponse:
-    """AliExpress Affiliate 상품 단건 상세 조회
+    """AliExpress 상품 단건 상세 조회
 
-    aliexpress.affiliate.productdetail.get 공식 메서드를 호출하여
     단일 상품의 상세 정보를 반환합니다.
     """
     return await get_affiliate_product_detail(

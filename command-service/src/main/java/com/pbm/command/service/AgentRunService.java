@@ -5,7 +5,6 @@ import com.pbm.command.domain.AgentRun;
 import com.pbm.command.domain.AgentRunStatus;
 import com.pbm.command.domain.BrowserDevice;
 import com.pbm.command.domain.CommandSessionStatus;
-import com.pbm.command.domain.ExternalStoreVisionStage;
 import com.pbm.command.dto.event.CheckoutPaymentEvent;
 import com.pbm.command.dto.event.CheckoutPaymentEventPayload;
 import com.pbm.command.dto.response.AgentRunCreatedResponse;
@@ -24,12 +23,18 @@ import com.pbm.command.domain.ActionExecutionStatus;
 import com.pbm.command.domain.BrowserActionType;
 import com.pbm.command.domain.BrowserDeviceStatus;
 import com.pbm.command.domain.CommandSession;
+import com.pbm.command.domain.ExternalStoreVisionStage;
 import com.pbm.command.dto.event.OptionSelectionRequestEvent;
 import com.pbm.command.dto.event.OptionSelectionRequestPayload;
 import com.pbm.command.dto.event.OptionSelectionRequestPayload.OptionGroupPayload;
+import com.pbm.command.dto.event.LoginCredentialRequestEvent;
+import com.pbm.command.dto.event.LoginCredentialRequestPayload;
+import com.pbm.command.dto.request.InteractiveElementRequest;
+import com.pbm.command.dto.request.LoginFormRequest;
 import com.pbm.command.dto.request.OptionGroupRequest;
 import com.pbm.command.dto.response.ActionInstructionResponse;
 import com.pbm.command.publisher.CheckoutPaymentEventPublisher;
+import com.pbm.command.publisher.LoginCredentialRequestEventPublisher;
 import com.pbm.command.publisher.OptionSelectionEventPublisher;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -74,13 +79,15 @@ public class AgentRunService {
             AgentRunStatus.AWAITING_APPROVAL,
             AgentRunStatus.INTERRUPTED,
             AgentRunStatus.RECOVERING,
-            AgentRunStatus.AWAITING_OPTION_SELECTION
+            AgentRunStatus.AWAITING_OPTION_SELECTION,
+            AgentRunStatus.AWAITING_LOGIN_CREDENTIALS
     );
 
     private static final Set<AgentRunStatus> INTERRUPTIBLE_STATUSES = Set.of(
             AgentRunStatus.ASSIGNED,
             AgentRunStatus.RUNNING,
-            AgentRunStatus.AWAITING_APPROVAL
+            AgentRunStatus.AWAITING_APPROVAL,
+            AgentRunStatus.AWAITING_LOGIN_CREDENTIALS
     );
 
     private final AgentRunRepository agentRunRepository;
@@ -91,6 +98,7 @@ public class AgentRunService {
     private final AgentStepPlannerService agentStepPlannerService;
     private final CheckoutPaymentEventPublisher checkoutPaymentEventPublisher;
     private final OptionSelectionEventPublisher optionSelectionEventPublisher;
+    private final LoginCredentialRequestEventPublisher loginCredentialRequestEventPublisher;
     private final ObjectMapper objectMapper;
 
     public AgentRunService(
@@ -102,6 +110,7 @@ public class AgentRunService {
             AgentStepPlannerService agentStepPlannerService,
             CheckoutPaymentEventPublisher checkoutPaymentEventPublisher,
             OptionSelectionEventPublisher optionSelectionEventPublisher,
+            LoginCredentialRequestEventPublisher loginCredentialRequestEventPublisher,
             ObjectMapper objectMapper
     ) {
         this.agentRunRepository = agentRunRepository;
@@ -112,6 +121,7 @@ public class AgentRunService {
         this.agentStepPlannerService = agentStepPlannerService;
         this.checkoutPaymentEventPublisher = checkoutPaymentEventPublisher;
         this.optionSelectionEventPublisher = optionSelectionEventPublisher;
+        this.loginCredentialRequestEventPublisher = loginCredentialRequestEventPublisher;
         this.objectMapper = objectMapper;
     }
 
@@ -362,6 +372,16 @@ public class AgentRunService {
         return targets.size();
     }
 
+    @Transactional
+    public int expireLoginCredentialBefore(LocalDateTime threshold) {
+        List<AgentRun> targets = agentRunRepository.findAllByStatusAndApprovalRequestedAtBefore(
+                AgentRunStatus.AWAITING_LOGIN_CREDENTIALS,
+                threshold
+        );
+        targets.forEach(AgentRun::expireLoginCredentials);
+        return targets.size();
+    }
+
     /**
      * 오프라인 디바이스에 할당된 run을 INTERRUPTED로 전환한다.
      *
@@ -411,10 +431,7 @@ public class AgentRunService {
             return new AgentRunStepResponse(run.getRunId(), run.getStatus(), run.getCurrentStepIndex(), null);
         }
 
-        // 사용자가 텔레그램으로 선택한 옵션이 현재 화면에서 실제로 선택된 것이 확인되면
-        // selectedOptionValue를 초기화한다. 아직 보이지 않으면 유지해서 다음 step에서도
-        // Smartstore 옵션 선택/vision fallback이 이어지도록 한다.
-        clearSelectedOptionValueIfResolved(run, request.snapshot(), request.previousActionResult());
+        // selectedOptionValue는 초기화하지 않는다 (무한루프 방지, 위 주석 참조)
 
         // 옵션 선택 대기 상태: 텔레그램 응답이 아직 안 왔으면 WAIT 반환
         if (run.getStatus() == AgentRunStatus.AWAITING_OPTION_SELECTION) {
@@ -427,8 +444,32 @@ public class AgentRunService {
             log.info("[AgentRunService] 옵션 선택 완료, 실행 재개 - runId={}, selected={}", run.getRunId(), run.getSelectedOptionValue());
         }
 
+        if (run.getStatus() == AgentRunStatus.AWAITING_LOGIN_CREDENTIALS) {
+            if (!run.hasPendingLoginCredentials()) {
+                log.info("[AgentRunService] 로그인 자격증명 대기 중 - runId={}", run.getRunId());
+                return new AgentRunStepResponse(run.getRunId(), run.getStatus(), run.getCurrentStepIndex(), null);
+            }
+            log.info("[AgentRunService] 로그인 자격증명 수신, 실행 재개 - runId={}, username={}",
+                    run.getRunId(), maskUsername(run.getPendingLoginUsername()));
+        }
+
         CommandSession commandSession = commandSessionRepository.findByCommandId(run.getCommandId())
                 .orElseThrow(() -> new CommandSessionNotFoundException("세션을 찾을 수 없습니다. commandId: " + run.getCommandId()));
+
+        if (run.hasPendingLoginCredentials() && !isLoginPage(request.snapshot())) {
+            log.info("[AgentRunService] 로그인 페이지 이탈 감지 → 저장된 로그인 자격증명 정리 - runId={}", run.getRunId());
+            run.clearPendingLoginCredentials();
+        }
+
+        ActionInstructionResponse loginInstruction = handleLoginPageAutomation(run, commandSession, request.snapshot());
+        if (loginInstruction != null) {
+            return new AgentRunStepResponse(run.getRunId(), run.getStatus(), run.getCurrentStepIndex(), loginInstruction);
+        }
+        if (run.getStatus() == AgentRunStatus.AWAITING_LOGIN_CREDENTIALS) {
+            return new AgentRunStepResponse(run.getRunId(), run.getStatus(), run.getCurrentStepIndex(), null);
+        }
+
+        syncSearchResultsVisionState(run, request.snapshot());
 
         // triggerPrice: 모니터링 트리거 후 결제 시 실제 조건 충족 가격 (즉시 결제 시 null)
         // CATALOG_NAVIGATOR가 lprice(선택 당시 가격) 대신 이 가격을 기준가로 사용한다.
@@ -438,25 +479,84 @@ public class AgentRunService {
                 commandSession,
                 request.snapshot(),     // 현재 브라우저 화면 상태
                 request.previousActionResult(),
-                run.getTriggerPrice(),
                 run.getSelectedOptionValue(),
+                null,
                 run.getExternalStoreVisionStage(),
                 run.getOptionPresenceScrollCount()
         );
 
-        instruction = handleExternalStoreVisionTransitions(run, commandSession, instruction);
+        boolean searchResultsPage = isSearchResultsPage(request.snapshot());
+        boolean optionGroupsVisible = request.snapshot() != null
+                && request.snapshot().optionGroups() != null
+                && !request.snapshot().optionGroups().isEmpty();
+        if (optionGroupsVisible
+                && run.getExternalStoreVisionStage() != ExternalStoreVisionStage.SEARCH_RESULTS_PRODUCT
+                && run.getOptionPresenceScrollCount() > 0) {
+            run.resetOptionPresenceScrollCount();
+        }
 
-        // 옵션 매칭 실패: 텔레그램 옵션 요청 Kafka 발행 + 상태 전환
-        // planNextAction이 null을 반환하거나, 옵션이 존재하는데 매칭이 안 된 경우
-        // (내부 스토어: hasUnmatchedOptions 체크, 외부 스토어: buildExternalStoreInstruction이 null 반환)
+        if (searchResultsPage && run.getExternalStoreVisionStage() == ExternalStoreVisionStage.NONE
+                && instruction != null
+                && instruction.action() == BrowserActionType.WAIT
+                && !optionGroupsVisible
+                && run.getSelectedOptionValue() == null) {
+            int updatedAttemptCount = run.incrementOptionPresenceScrollCount();
+            log.info("[AgentRunService] 검색결과 DOM 미탐지 카운트 증가 - runId={}, attemptCount={}",
+                    run.getRunId(), updatedAttemptCount);
+            if (updatedAttemptCount >= 2) {
+                run.updateExternalStoreVisionStage(ExternalStoreVisionStage.SEARCH_RESULTS_PRODUCT);
+                log.info("[AgentRunService] 검색결과 Vision 모드 전환 - runId={}, attemptCount={}",
+                        run.getRunId(), updatedAttemptCount);
+            }
+        } else if (searchResultsPage
+                && run.getExternalStoreVisionStage() == ExternalStoreVisionStage.SEARCH_RESULTS_PRODUCT
+                && instruction != null
+                && instruction.action() == BrowserActionType.SCROLL) {
+            int updatedAttemptCount = run.incrementOptionPresenceScrollCount();
+            log.info("[AgentRunService] 검색결과 Vision 스크롤 카운트 증가 - runId={}, attemptCount={}",
+                    run.getRunId(), updatedAttemptCount);
+        } else if (instruction != null
+                && instruction.action() == BrowserActionType.SCROLL
+                && !searchResultsPage
+                && !optionGroupsVisible
+                && run.getSelectedOptionValue() == null) {
+            int updatedScrollCount = run.incrementOptionPresenceScrollCount();
+            log.info("[AgentRunService] 옵션 영역 탐색 스크롤 카운트 증가 - runId={}, scrollCount={}",
+                    run.getRunId(), updatedScrollCount);
+        }
+
+        // 옵션 매칭 실패 또는 옵션 미지정: 텔레그램 옵션 요청 Kafka 발행 + 상태 전환
+        // 1) planNextAction이 null을 반환한 경우
+        // 2) 사용자가 옵션을 지정했지만 매칭되지 않은 경우 (hasUnmatchedOptions)
+        // 3) 사용자가 옵션을 아예 지정하지 않았는데 옵션 그룹이 존재하는 경우 (hasAnyUnspecifiedOptions)
+        //    → AI가 기본 선택값으로 구매 진행하는 것을 방지하고, 사용자에게 텔레그램으로 옵션 선택을 요구
         if (run.getStatus() == AgentRunStatus.RUNNING
                 && request.snapshot() != null
                 && request.snapshot().optionGroups() != null
                 && !request.snapshot().optionGroups().isEmpty()
                 && run.getSelectedOptionValue() == null
-                && (instruction == null || agentStepPlannerService.hasUnmatchedOptions(commandSession, request.snapshot(), run.getSelectedOptionValue()))) {
+                && (instruction == null
+                    || agentStepPlannerService.hasUnmatchedOptions(commandSession, request.snapshot(), run.getSelectedOptionValue())
+                    || agentStepPlannerService.hasAnyUnspecifiedOptions(commandSession, request.snapshot(), run.getSelectedOptionValue()))) {
 
-            log.info("[AgentRunService] 옵션 매칭 실패 → 텔레그램 옵션 요청 발행 - runId={}", run.getRunId());
+            log.info("[AgentRunService] 옵션 매칭 실패 또는 미지정 → 텔레그램 옵션 요청 발행 - runId={}", run.getRunId());
+            publishOptionSelectionRequest(run, commandSession, request.snapshot().optionGroups());
+            return new AgentRunStepResponse(run.getRunId(), run.getStatus(), run.getCurrentStepIndex(), null);
+        }
+
+        // 종속 옵션(cascading options) 처리:
+        // 이전 옵션 선택이 완료(selectedOptionValue != null)되었지만,
+        // 새로 활성화된 미선택 옵션 그룹이 존재하는 경우 텔레그램으로 다시 요청한다.
+        // 예: 색상 선택 → 성별 드롭다운 활성화 → 사이즈 드롭다운 활성화
+        if (run.getStatus() == AgentRunStatus.RUNNING
+                && request.snapshot() != null
+                && request.snapshot().optionGroups() != null
+                && run.getSelectedOptionValue() != null
+                && hasPendingCascadingOptions(request.snapshot().optionGroups())) {
+
+            log.info("[AgentRunService] 종속 옵션 감지 → selectedOptionValue 초기화 후 텔레그램 재요청 - runId={}, previousSelection={}",
+                    run.getRunId(), run.getSelectedOptionValue());
+            run.clearSelectedOptionValue();
             publishOptionSelectionRequest(run, commandSession, request.snapshot().optionGroups());
             return new AgentRunStepResponse(run.getRunId(), run.getStatus(), run.getCurrentStepIndex(), null);
         }
@@ -540,36 +640,52 @@ public class AgentRunService {
         }
     }
 
-    private void clearSelectedOptionValueIfResolved(
-            AgentRun run,
-            PageSnapshotRequest snapshot,
-            AgentRunActionResultRequest previousActionResult
-    ) {
-        String selectedOptionValue = run.getSelectedOptionValue();
-        if (selectedOptionValue == null || selectedOptionValue.isBlank()) {
-            return;
+    /**
+     * 종속 옵션(cascading options)에서 이전 선택이 반영된 후,
+     * 새로 활성화된 미선택 옵션 그룹이 있는지 확인한다.
+     *
+     * 스마트스토어의 종속 옵션 구조: 색상 → 성별 → 사이즈 순서로 이전 옵션을 선택해야
+     * 다음 옵션 드롭다운이 활성화(disabled=false)되고 옵션 목록이 채워진다.
+     *
+     * 핵심: 이전 선택이 페이지에 반영되었는지(= 하나 이상의 그룹에 selectedOption이 존재)를
+     * 먼저 확인한다. 반영 전이면 false를 반환하여 클릭이 먼저 실행되도록 한다.
+     * 반영 후에만 아직 미선택인 활성 그룹이 있는지 확인하여 다음 텔레그램 요청을 트리거한다.
+     */
+    private boolean hasPendingCascadingOptions(List<OptionGroupRequest> optionGroups) {
+        if (optionGroups == null || optionGroups.isEmpty()) {
+            return false;
         }
 
-        boolean resolved = false;
-        String normalizedSelected = normalize(selectedOptionValue);
-
-        if (snapshot != null && snapshot.optionGroups() != null && !snapshot.optionGroups().isEmpty()) {
-            resolved = snapshot.optionGroups().stream()
-                    .filter(optionGroup -> optionGroup.selectedOption() != null && !optionGroup.selectedOption().isBlank())
-                    .anyMatch(optionGroup -> normalize(optionGroup.selectedOption()).contains(normalizedSelected)
-                            || normalizedSelected.contains(normalize(optionGroup.selectedOption())));
-        } else if (previousActionResult != null
-                && previousActionResult.status() == ActionExecutionStatus.SUCCESS
-                && previousActionResult.action() == BrowserActionType.CLICK) {
-            resolved = true;
+        // 1) 이전 선택이 페이지에 반영되었는지 확인:
+        //    하나 이상의 활성 그룹에 selectedOption이 설정되어 있어야 함
+        boolean anyGroupAlreadySelected = optionGroups.stream().anyMatch(og ->
+                !Boolean.TRUE.equals(og.disabled())
+                        && og.selectedOption() != null && !og.selectedOption().isBlank()
+        );
+        if (!anyGroupAlreadySelected) {
+            // 아직 아무 옵션도 선택되지 않음 → 클릭이 먼저 실행되어야 함
+            return false;
         }
 
-        if (resolved) {
-            run.clearSelectedOptionValue();
-            log.info("[AgentRunService] 텔레그램 옵션이 화면에서 확인되어 selectedOptionValue 초기화 - runId={}, selectedOptionValue={}",
-                    run.getRunId(), selectedOptionValue);
-        }
+        // 2) 선택 반영 후, 새로 활성화된 미선택 그룹이 있는지 확인
+        return optionGroups.stream().anyMatch(og ->
+                !Boolean.TRUE.equals(og.disabled())
+                        && og.options() != null && !og.options().isEmpty()
+                        && (og.selectedOption() == null || og.selectedOption().isBlank())
+        );
     }
+
+    /**
+     * 텔레그램에서 선택된 옵션값(selectedOptionValue)은 초기화하지 않는다.
+     * 값을 유지해야 hasAnyUnspecifiedOptions()가 false를 반환하여
+     * 옵션 선택 후 "구매하기" 단계로 정상 진행된다.
+     *
+     * buildExplicitSmartstoreOptionInstruction()이 이미 페이지에서 선택 완료된 옵션은
+     * continue로 건너뛰므로 (line 1086-1088), 값을 유지해도 중복 클릭이 발생하지 않는다.
+     *
+     * 이전에 초기화하면 hasAnyUnspecifiedOptions()가 다시 true를 반환하여
+     * 텔레그램 옵션 요청이 무한루프로 발생하는 버그가 있었다.
+     */
 
     private String normalize(String value) {
         if (value == null) {
@@ -729,10 +845,26 @@ public class AgentRunService {
         // AgentRun 상태 전환
         run.awaitOptionSelection(LocalDateTime.now(), optionGroupsJson);
 
-        // Kafka 이벤트 구성
+        // Kafka 이벤트 구성 — 비활성(disabled) 그룹은 제외
+        // 종속 옵션(cascading) 구조에서 아직 활성화되지 않은 그룹을 텔레그램에 보내면
+        // 빈 옵션 목록이 표시되어 사용자가 혼란스러워함
+        //
+        // 주의: selectedOption 필터는 적용하지 않는다.
+        // 페이지가 기본 선택값(예: 색상=블랙)을 가지고 있어도 사용자가 직접 선택한 것이 아니므로
+        // 텔레그램에서 옵션 목록을 보여줘야 한다. selectedOption 필터를 적용하면
+        // 기본 선택된 그룹이 제외되어 빈 옵션 목록이 전송되는 문제가 발생한다.
         List<OptionGroupPayload> payloadGroups = optionGroups.stream()
+                .filter(og -> !Boolean.TRUE.equals(og.disabled()))
+                .filter(og -> og.options() != null && !og.options().isEmpty())
                 .map(og -> new OptionGroupPayload(og.groupName(), og.options()))
                 .toList();
+
+        log.info("[AgentRunService] 옵션 선택 요청 payload 디버그 - runId={}, originalGroups={}, filteredGroups={}, original={}, filtered={}",
+                run.getRunId(),
+                optionGroups.size(),
+                payloadGroups.size(),
+                summarizeOptionGroups(optionGroups),
+                summarizePayloadGroups(payloadGroups));
 
         OptionSelectionRequestPayload payload = new OptionSelectionRequestPayload(
                 run.getUserId(),
@@ -754,67 +886,207 @@ public class AgentRunService {
                 run.getRunId(), run.getUserId(), optionGroups.size());
     }
 
-    /** 외부 스토어 스크린샷 기반 vision 단계 전이를 처리한다. */
-    @SuppressWarnings("unchecked")
-    private ActionInstructionResponse handleExternalStoreVisionTransitions(
+    private List<String> summarizeOptionGroups(List<OptionGroupRequest> optionGroups) {
+        if (optionGroups == null) {
+            return List.of();
+        }
+        return optionGroups.stream()
+                .map(og -> String.format(
+                        "group=%s options=%d selected=%s disabled=%s values=%s",
+                        og.groupName(),
+                        og.options() == null ? 0 : og.options().size(),
+                        og.selectedOption(),
+                        og.disabled(),
+                        og.options()
+                ))
+                .toList();
+    }
+
+    private List<String> summarizePayloadGroups(List<OptionGroupPayload> payloadGroups) {
+        if (payloadGroups == null) {
+            return List.of();
+        }
+        return payloadGroups.stream()
+                .map(group -> String.format(
+                        "group=%s options=%d values=%s",
+                        group.groupName(),
+                        group.options() == null ? 0 : group.options().size(),
+                        group.options()
+                ))
+                .toList();
+    }
+
+    private ActionInstructionResponse handleLoginPageAutomation(
             AgentRun run,
             CommandSession commandSession,
-            ActionInstructionResponse instruction
+            PageSnapshotRequest snapshot
     ) {
-        if (instruction == null) {
+        if (!isLoginPage(snapshot)) {
             return null;
         }
 
-        ExternalStoreVisionStage stage = run.getExternalStoreVisionStage() == null
-                ? ExternalStoreVisionStage.NONE
-                : run.getExternalStoreVisionStage();
+        String actionId = "login-" + run.getRunId() + "-" + run.getCurrentStepIndex();
+        LoginFormRequest loginForm = snapshot != null ? snapshot.loginForm() : null;
 
-        if (instruction.action() == BrowserActionType.USE_TOOL
-                && instruction.toolRequest() != null
-                && "CAPTURE_VISIBLE_TAB".equals(instruction.toolRequest().name())) {
-            Object nextStage = instruction.toolRequest().input().get(AgentStepPlannerService.NEXT_EXTERNAL_VISION_STAGE_KEY);
-            if (nextStage instanceof String nextStageName) {
-                run.updateExternalStoreVisionStage(ExternalStoreVisionStage.valueOf(nextStageName));
-            } else if (stage == ExternalStoreVisionStage.NONE) {
-                run.updateExternalStoreVisionStage(ExternalStoreVisionStage.OPTION_PRESENCE);
+        if (loginForm != null && loginForm.detected()) {
+            boolean alreadyFilled = loginForm.usernameFilled() && loginForm.passwordFilled();
+            if (alreadyFilled) {
+                InteractiveElementRequest loginButton = buildLoginButtonTarget(loginForm, snapshot);
+                if (loginButton != null) {
+                    log.info("[AgentRunService] 로그인 페이지 - 아이디/비밀번호 입력 확인 → 로그인 버튼 클릭 - runId={}", run.getRunId());
+                    return ActionInstructionResponse.click(run.getCurrentStepIndex(), actionId, loginButton);
+                }
             }
-            return instruction;
+
+            if (run.hasPendingLoginCredentials()) {
+                if (!loginForm.usernameFilled() && loginForm.usernameSelector() != null && !loginForm.usernameSelector().isBlank()) {
+                    log.info("[AgentRunService] 로그인 페이지 - 아이디 자동 입력 - runId={}, username={}",
+                            run.getRunId(), maskUsername(run.getPendingLoginUsername()));
+                    return ActionInstructionResponse.input(
+                            run.getCurrentStepIndex(),
+                            actionId,
+                            buildInputTarget(loginForm.usernameSelector(), loginForm.usernameLabel(), "username"),
+                            run.getPendingLoginUsername()
+                    );
+                }
+
+                if (!loginForm.passwordFilled() && loginForm.passwordSelector() != null && !loginForm.passwordSelector().isBlank()) {
+                    log.info("[AgentRunService] 로그인 페이지 - 비밀번호 자동 입력 - runId={}, passwordLength={}",
+                            run.getRunId(), run.getPendingLoginPassword() == null ? 0 : run.getPendingLoginPassword().length());
+                    return ActionInstructionResponse.input(
+                            run.getCurrentStepIndex(),
+                            actionId,
+                            buildInputTarget(loginForm.passwordSelector(), loginForm.passwordLabel(), "password"),
+                            run.getPendingLoginPassword()
+                    );
+                }
+
+                InteractiveElementRequest loginButton = buildLoginButtonTarget(loginForm, snapshot);
+                if (loginButton != null) {
+                    log.info("[AgentRunService] 로그인 페이지 - 자격증명 입력 완료 → 로그인 버튼 클릭 - runId={}", run.getRunId());
+                    return ActionInstructionResponse.click(run.getCurrentStepIndex(), actionId, loginButton);
+                }
+            } else {
+                publishLoginCredentialRequest(run, commandSession);
+                return null;
+            }
         }
 
-        // OPTION_PRESENCE에서 옵션 미발견 → SCROLL: 스크롤 횟수 증가 + stage를 NONE으로 리셋
-        // → 다음 step에서 다시 OPTION_PRESENCE 캡처를 수행하여 옵션 존재 여부를 재확인한다.
-        if (stage == ExternalStoreVisionStage.OPTION_PRESENCE && instruction.action() == BrowserActionType.SCROLL) {
-            run.incrementOptionPresenceScrollCount();
-            run.updateExternalStoreVisionStage(ExternalStoreVisionStage.NONE);
-            log.info("[AgentRunService] OPTION_PRESENCE 스크롤 재확인 - runId={}, scrollCount={}",
-                    run.getRunId(), run.getOptionPresenceScrollCount());
-            return instruction;
+        InteractiveElementRequest loginButton = findLoginButtonInSnapshot(snapshot).orElse(null);
+        if (loginButton != null) {
+            log.info("[AgentRunService] 로그인 페이지 fallback - 로그인 버튼 클릭 - runId={}", run.getRunId());
+            return ActionInstructionResponse.click(run.getCurrentStepIndex(), actionId, loginButton);
         }
 
-        if (stage == ExternalStoreVisionStage.OPTION_PRESENCE && instruction.action() == BrowserActionType.CLICK) {
-            run.updateExternalStoreVisionStage(ExternalStoreVisionStage.OPTION_SELECTION);
-            return instruction;
-        }
-
-        if (stage == ExternalStoreVisionStage.OPTION_SELECTION
-                && instruction.action() == BrowserActionType.USE_TOOL
-                && instruction.toolRequest() != null
-                && AgentStepPlannerService.INTERNAL_REQUEST_OPTION_SELECTION_TOOL.equals(instruction.toolRequest().name())) {
-            List<OptionGroupRequest> optionGroups = (List<OptionGroupRequest>) instruction.toolRequest().input().get("optionGroups");
-            optionGroups = optionGroups == null ? List.of() : optionGroups;
-            publishOptionSelectionRequest(run, commandSession, optionGroups);
-            return null;
-        }
-
-        if (stage == ExternalStoreVisionStage.OPTION_SELECTION && instruction.action() == BrowserActionType.CLICK) {
-            run.updateExternalStoreVisionStage(ExternalStoreVisionStage.PURCHASE);
-            return instruction;
-        }
-
-        if (instruction.action() == BrowserActionType.COMPLETE) {
-            run.updateExternalStoreVisionStage(ExternalStoreVisionStage.NONE);
-        }
-
-        return instruction;
+        return ActionInstructionResponse.waitAction(run.getCurrentStepIndex(), actionId, 1000, 10000);
     }
+
+    private boolean isLoginPage(PageSnapshotRequest snapshot) {
+        if (snapshot == null || snapshot.currentUrl() == null) {
+            return false;
+        }
+        String lower = snapshot.currentUrl().toLowerCase();
+        return lower.contains("nid.naver.com/nidlogin")
+                || lower.contains("/login")
+                || lower.contains("signin")
+                || lower.contains("sign-in");
+    }
+
+    private InteractiveElementRequest buildInputTarget(String selector, String label, String fieldName) {
+        return new InteractiveElementRequest(
+                "login-" + fieldName,
+                "textbox",
+                label == null || label.isBlank() ? fieldName : label,
+                selector,
+                null,
+                true,
+                false
+        );
+    }
+
+    private InteractiveElementRequest buildLoginButtonTarget(LoginFormRequest loginForm, PageSnapshotRequest snapshot) {
+        if (loginForm.loginButtonSelector() != null && !loginForm.loginButtonSelector().isBlank()) {
+            return new InteractiveElementRequest(
+                    "login-button",
+                    "button",
+                    loginForm.loginButtonLabel() == null || loginForm.loginButtonLabel().isBlank() ? "로그인" : loginForm.loginButtonLabel(),
+                    loginForm.loginButtonSelector(),
+                    null,
+                    true,
+                    false
+            );
+        }
+        return findLoginButtonInSnapshot(snapshot).orElse(null);
+    }
+
+    private Optional<InteractiveElementRequest> findLoginButtonInSnapshot(PageSnapshotRequest snapshot) {
+        if (snapshot == null || snapshot.interactiveElements() == null) {
+            return Optional.empty();
+        }
+        return snapshot.interactiveElements().stream()
+                .filter(InteractiveElementRequest::isEnabled)
+                .filter(InteractiveElementRequest::isVisible)
+                .filter(el -> {
+                    String label = normalize(el.labelText());
+                    return label != null
+                            && (label.contains("로그인") || label.contains("login") || label.contains("sign in") || label.contains("signin"));
+                })
+                .findFirst();
+    }
+
+    private void publishLoginCredentialRequest(AgentRun run, CommandSession commandSession) {
+        run.awaitLoginCredentials(LocalDateTime.now());
+
+        LoginCredentialRequestPayload payload = new LoginCredentialRequestPayload(
+                run.getUserId(),
+                run.getRunId(),
+                commandSession.getOriginalCommand()
+        );
+        LoginCredentialRequestEvent event = new LoginCredentialRequestEvent(
+                UUID.randomUUID().toString(),
+                "LOGIN_CREDENTIAL_REQUESTED",
+                Instant.now(),
+                "command-service",
+                payload
+        );
+
+        loginCredentialRequestEventPublisher.publish(event);
+        log.info("[AgentRunService] 로그인 자격증명 요청 이벤트 발행 완료 - runId={}, userId={}",
+                run.getRunId(), run.getUserId());
+    }
+
+    private void syncSearchResultsVisionState(AgentRun run, PageSnapshotRequest snapshot) {
+        if (run.getExternalStoreVisionStage() != ExternalStoreVisionStage.SEARCH_RESULTS_PRODUCT) {
+            return;
+        }
+
+        if (isSearchResultsPage(snapshot)) {
+            return;
+        }
+
+        log.info("[AgentRunService] 검색결과 Vision 상태 초기화 - runId={}, previousAttemptCount={}",
+                run.getRunId(), run.getOptionPresenceScrollCount());
+        run.updateExternalStoreVisionStage(ExternalStoreVisionStage.NONE);
+        run.resetOptionPresenceScrollCount();
+    }
+
+    private boolean isSearchResultsPage(PageSnapshotRequest snapshot) {
+        if (snapshot == null || snapshot.currentUrl() == null) {
+            return false;
+        }
+        String currentUrl = snapshot.currentUrl().toLowerCase();
+        return currentUrl.contains("search.shopping.naver.com")
+                && currentUrl.contains("/search/");
+    }
+
+    private String maskUsername(String username) {
+        if (username == null || username.isBlank()) {
+            return "(empty)";
+        }
+        if (username.length() <= 2) {
+            return username.charAt(0) + "*";
+        }
+        return username.substring(0, 2) + "***";
+    }
+
 }

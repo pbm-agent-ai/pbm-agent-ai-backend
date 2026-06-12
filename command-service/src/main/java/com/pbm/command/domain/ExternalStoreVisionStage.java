@@ -9,6 +9,7 @@ package com.pbm.command.domain;
  */
 public enum ExternalStoreVisionStage {
     NONE,
+    SEARCH_RESULTS_PRODUCT,
     OPTION_PRESENCE,
     OPTION_SELECTION,
     PURCHASE

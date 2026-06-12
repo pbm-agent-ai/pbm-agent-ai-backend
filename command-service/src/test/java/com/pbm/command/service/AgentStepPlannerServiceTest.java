@@ -258,8 +258,8 @@ class AgentStepPlannerServiceTest {
                 "색상과 사이즈 선택 가능",
                 List.of(),
                 List.of(
-                        new com.pbm.command.dto.request.OptionGroupRequest("색상", "select-color", "#color", List.of("빨강", "검정색", "파랑"), null),
-                        new com.pbm.command.dto.request.OptionGroupRequest("사이즈", "select-size", "#size", List.of("260", "270", "280"), null)
+                        new com.pbm.command.dto.request.OptionGroupRequest("색상", "select-color", "#color", List.of("빨강", "검정색", "파랑"), null, null),
+                        new com.pbm.command.dto.request.OptionGroupRequest("사이즈", "select-size", "#size", List.of("260", "270", "280"), null, null)
                 ),
                 List.of(),
                 List.of(),
@@ -406,7 +406,7 @@ class AgentStepPlannerServiceTest {
                 new VisionPlannerInstructionPayload("CLICK", 0.45, 0.82, "지금 구매", true, List.of(), 0.88, "vision fallback 성공")
         );
 
-        ActionInstructionResponse response = agentStepPlannerService.planNextAction("run-1", 0, commandSession, snapshot, previousActionResult);
+        ActionInstructionResponse response = agentStepPlannerService.planNextAction("run-1", 0, commandSession, snapshot, previousActionResult, null);
 
         assertThat(response.action()).isEqualTo(BrowserActionType.CLICK);
         assertThat(response.target().viewportX()).isEqualTo(0.45);

@@ -376,7 +376,6 @@ public class BlockchainService {
                 log.info("AI 에이전트 ETH 부족 - 잔액: {} wei, 필요: {} wei, 부족분: {} wei 지원 시작",
                         balance, requiredEth, shortage);
                 fundAiAgent(aiAgentAddress, shortage);
-                log.info("AI 에이전트 ETH 지원 완료 - aiAgent: {}", aiAgentAddress);
             } else {
                 log.debug("AI 에이전트 ETH 잔액 충분 - aiAgent: {}, balance: {} wei",
                         aiAgentAddress, balance);
@@ -476,7 +475,6 @@ public class BlockchainService {
                 log.info("사용자 EOA ETH 부족 - 잔액: {} wei, 필요: {} wei, 부족분: {} wei 지원 시작",
                         balance, requiredGas, shortage);
                 fundUserAddress(userAddress, shortage);
-                log.info("사용자 EOA ETH 지원 완료 - userAddress: {}", userAddress);
             } else {
                 log.debug("사용자 EOA ETH 잔액 충분 - userAddress: {}, balance: {} wei",
                         userAddress, balance);
@@ -809,7 +807,26 @@ public class BlockchainService {
                                    Function function, BigInteger value, BigInteger gasLimit, BigInteger gasPrice) {
         try {
             String encoded = FunctionEncoder.encode(function);
-            BigInteger nonce = getNonce(credentials.getAddress());
+            String signerAddress = credentials.getAddress();
+
+            // nonce gap 감지: LATEST와 PENDING이 다르면 stuck tx가 있다는 의미
+            BigInteger latestNonce = getNonce(signerAddress, true);
+            BigInteger pendingNonce = getNonce(signerAddress, false);
+            BigInteger nonce;
+
+            if (!latestNonce.equals(pendingNonce)) {
+                // pending tx가 있지만 체인에 포함 안 됨 → LATEST nonce로 덮어쓴다.
+                // 같은 nonce + 더 높은 gasPrice로 보내면 기존 pending tx를 replacement한다.
+                log.warn("[BlockchainService] nonce gap 감지 → LATEST nonce 사용 (replacement tx) - "
+                        + "address={}, latest={}, pending={}, fn={}",
+                        signerAddress, latestNonce, pendingNonce, function.getName());
+                nonce = latestNonce;
+                // replacement tx는 기존 tx보다 gasPrice가 높아야 함 → 2배로 상향
+                gasPrice = gasPrice.multiply(BigInteger.TWO);
+                log.info("[BlockchainService] replacement gasPrice 상향 - {} wei", gasPrice);
+            } else {
+                nonce = pendingNonce;
+            }
 
             log.info("트랜잭션 전송 - fn: {}, nonce: {}, gasPrice: {} wei, gasLimit: {}, to: {}",
                     function.getName(), nonce, gasPrice, gasLimit, toAddress);
@@ -936,10 +953,103 @@ public class BlockchainService {
      * PENDING 기준으로 조회하여 멤풀에 대기 중인 트랜잭션의 nonce도 포함한다.
      * LATEST 기준이면 pending tx를 무시해 nonce 충돌("replacement transaction underpriced")이 발생한다.
      */
+    /**
+     * 주어진 주소의 nonce를 조회한다.
+     * <p>
+     * LATEST(체인 확정)와 PENDING(멤풀 포함)을 모두 조회하여 nonce gap을 감지한다.
+     * gap이 있으면 self-transfer(0 ETH)로 빈 nonce를 채운 뒤 정상 nonce를 반환한다.
+     *
+     * @param address 조회할 주소
+     * @return 사용할 nonce (gap이 없으면 PENDING 값, gap 복구 후에는 복구 완료된 다음 nonce)
+     */
     private BigInteger getNonce(String address) throws Exception {
-        EthGetTransactionCount response = web3j
+        BigInteger latestNonce = web3j
+                .ethGetTransactionCount(address, DefaultBlockParameterName.LATEST)
+                .send().getTransactionCount();
+        BigInteger pendingNonce = web3j
                 .ethGetTransactionCount(address, DefaultBlockParameterName.PENDING)
-                .send();
-        return response.getTransactionCount();
+                .send().getTransactionCount();
+
+        if (!latestNonce.equals(pendingNonce)) {
+            log.warn("[BlockchainService] nonce gap 감지 - address={}, latest={}, pending={}, gap={}",
+                    address, latestNonce, pendingNonce, pendingNonce.subtract(latestNonce));
+
+            // gap이 있으면 LATEST nonce부터 self-transfer로 빈 nonce를 채운다.
+            // 이 주소의 Credentials가 필요하므로, master/user 구분 없이 처리한다.
+            resolveNonceGap(address, latestNonce, pendingNonce);
+
+            // gap 복구 후 최신 nonce를 다시 조회한다.
+            BigInteger resolvedNonce = web3j
+                    .ethGetTransactionCount(address, DefaultBlockParameterName.PENDING)
+                    .send().getTransactionCount();
+            log.info("[BlockchainService] nonce gap 복구 완료 - address={}, resolvedNonce={}", address, resolvedNonce);
+            return resolvedNonce;
+        }
+
+        return pendingNonce;
+    }
+
+    /**
+     * nonce gap을 self-transfer(자기 자신에게 0 ETH 전송)로 메운다.
+     * <p>
+     * 체인이 기대하는 nonce(latest)부터 mempool에 걸린 nonce(pending) 직전까지
+     * 빈 트랜잭션을 전송하여 후속 트랜잭션이 처리될 수 있도록 한다.
+     *
+     * @param address      gap이 발생한 주소
+     * @param latestNonce  체인 확정 nonce (다음으로 기대하는 nonce)
+     * @param pendingNonce 멤풀 포함 nonce (이미 전송된 pending tx 이후 nonce)
+     */
+    private void resolveNonceGap(String address, BigInteger latestNonce, BigInteger pendingNonce) {
+        // 해당 주소의 Credentials 결정: master 주소면 masterCredentials, 아니면 user Credentials
+        Credentials credentials;
+        if (address.equalsIgnoreCase(masterCredentials.getAddress())) {
+            credentials = masterCredentials;
+        } else {
+            // 사용자 EOA의 경우 — 호출자가 이미 sendTransaction에서 credentials를 전달하므로
+            // getNonce 시점에서는 credentials를 알 수 없다.
+            // self-transfer 대신 LATEST nonce를 사용하도록 fallback한다.
+            log.warn("[BlockchainService] 사용자 EOA nonce gap - LATEST nonce({})로 fallback. "
+                    + "pending tx({})는 mempool에서 자동 만료될 때까지 대기", latestNonce, pendingNonce);
+            return;
+        }
+
+        BigInteger gasPrice = getGasPrice();
+        for (BigInteger nonce = latestNonce; nonce.compareTo(pendingNonce) < 0; nonce = nonce.add(BigInteger.ONE)) {
+            try {
+                log.info("[BlockchainService] nonce gap 복구 self-transfer - address={}, nonce={}", address, nonce);
+                RawTransaction rawTx = RawTransaction.createEtherTransaction(
+                        nonce, gasPrice, BigInteger.valueOf(21_000L), address, BigInteger.ZERO
+                );
+                byte[] signed = TransactionEncoder.signMessage(rawTx, CHAIN_ID, credentials);
+                EthSendTransaction sent = web3j.ethSendRawTransaction(Numeric.toHexString(signed)).send();
+                if (sent.hasError()) {
+                    log.error("[BlockchainService] nonce gap 복구 실패 - nonce={}, error={}", nonce, sent.getError().getMessage());
+                    break;
+                }
+                String txHash = sent.getTransactionHash();
+                log.info("[BlockchainService] nonce gap 복구 tx 전송 - nonce={}, txHash={}", nonce, txHash);
+                waitForReceipt(txHash);
+            } catch (Exception e) {
+                log.error("[BlockchainService] nonce gap 복구 중 예외 - nonce={}, error={}", nonce, e.getMessage());
+                break;
+            }
+        }
+    }
+
+    /**
+     * 주어진 주소의 nonce를 조회한다 (gap 복구 없이 단순 조회).
+     * <p>
+     * gap 복구가 불가능한 상황(사용자 EOA 등)에서 LATEST nonce를 반환하여
+     * pending에 걸린 실패 tx를 덮어쓰도록 한다.
+     *
+     * @param address 조회할 주소
+     * @param useLatest true면 LATEST(체인 확정) 기준, false면 PENDING 기준
+     * @return nonce 값
+     */
+    private BigInteger getNonce(String address, boolean useLatest) throws Exception {
+        DefaultBlockParameterName param = useLatest
+                ? DefaultBlockParameterName.LATEST
+                : DefaultBlockParameterName.PENDING;
+        return web3j.ethGetTransactionCount(address, param).send().getTransactionCount();
     }
 }

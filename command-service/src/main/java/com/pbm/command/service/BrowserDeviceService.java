@@ -6,6 +6,7 @@ import com.pbm.command.domain.BrowserDevice;
 import com.pbm.command.domain.BrowserDeviceStatus;
 import com.pbm.command.dto.request.BrowserDeviceRegisterRequest;
 import com.pbm.command.dto.response.AssignedRunResponse;
+import com.pbm.command.dto.response.BrowserSearchTaskResponse;
 import com.pbm.command.dto.response.BrowserDeviceRegisterResponse;
 import com.pbm.command.dto.response.BrowserHeartbeatResponse;
 import com.pbm.command.dto.response.MyDeviceResponse;
@@ -140,8 +141,10 @@ public class BrowserDeviceService {
         // price-service에서 크롤링 기한 도래한 URL 모니터링 태스크를 조회하여 heartbeat 응답에 포함한다.
         // next_check_at 필터링은 price-service DB 기준으로 수행되어 과도한 크롤링을 방지한다.
         List<UrlMonitoringTaskResponse> urlTasks = priceServiceClient.getActiveUrlTasks(saved.getUserId());
+        List<BrowserSearchTaskResponse> browserSearchTasks =
+                priceServiceClient.getActiveBrowserSearchTasks(saved.getUserId());
 
-        return BrowserHeartbeatResponse.from(saved, assignedRun, urlTasks);
+        return BrowserHeartbeatResponse.from(saved, assignedRun, urlTasks, browserSearchTasks);
     }
 
     /**

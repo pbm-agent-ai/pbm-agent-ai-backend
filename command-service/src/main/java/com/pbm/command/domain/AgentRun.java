@@ -41,6 +41,7 @@ public class AgentRun {
             AgentRunStatus.RUNNING,
             AgentRunStatus.AWAITING_APPROVAL,
             AgentRunStatus.AWAITING_OPTION_SELECTION,
+            AgentRunStatus.AWAITING_LOGIN_CREDENTIALS,
             AgentRunStatus.INTERRUPTED,
             AgentRunStatus.RECOVERING
     );
@@ -105,6 +106,14 @@ public class AgentRun {
     /** 텔레그램에서 사용자가 선택한 옵션 값 (예: "블랙") */
     @Column(name = "selected_option_value", length = 200)
     private String selectedOptionValue;
+
+    /** 텔레그램에서 수신한 로그인 아이디 */
+    @Column(name = "pending_login_username", length = 300)
+    private String pendingLoginUsername;
+
+    /** 텔레그램에서 수신한 로그인 비밀번호 */
+    @Column(name = "pending_login_password", length = 500)
+    private String pendingLoginPassword;
 
     /** 외부 스토어 상세페이지에서 현재 진행 중인 스크린샷 기반 vision 단계 */
     @Enumerated(EnumType.STRING)
@@ -275,6 +284,18 @@ public class AgentRun {
     }
 
     /**
+     * 로그인 아이디/비밀번호 입력 대기 상태로 전환한다.
+     * 텔레그램으로 자격증명을 요청한 뒤 사용자 응답을 기다린다.
+     */
+    public void awaitLoginCredentials(LocalDateTime now) {
+        requireStatus(AgentRunStatus.RUNNING, "로그인 자격증명 대기 전환");
+        this.status = AgentRunStatus.AWAITING_LOGIN_CREDENTIALS;
+        this.approvalRequestedAt = now;
+        this.pendingLoginUsername = null;
+        this.pendingLoginPassword = null;
+    }
+
+    /**
      * 텔레그램에서 사용자가 옵션을 선택한 후 실행을 재개한다.
      *
      * @param selectedValue 사용자가 선택한 옵션 값 (예: "블랙")
@@ -286,9 +307,30 @@ public class AgentRun {
         this.approvalRequestedAt = null;
     }
 
+    /**
+     * 텔레그램에서 사용자가 로그인 자격증명을 입력한 후 실행을 재개한다.
+     */
+    public void resolveLoginCredentials(String username, String password) {
+        requireStatus(AgentRunStatus.AWAITING_LOGIN_CREDENTIALS, "로그인 자격증명 입력 완료");
+        this.status = AgentRunStatus.RUNNING;
+        this.pendingLoginUsername = username;
+        this.pendingLoginPassword = password;
+        this.approvalRequestedAt = null;
+    }
+
     /** 텔레그램으로 받은 옵션 값이 실제 화면에서 소비되었을 때만 초기화한다. */
     public void clearSelectedOptionValue() {
         this.selectedOptionValue = null;
+    }
+
+    public boolean hasPendingLoginCredentials() {
+        return pendingLoginUsername != null && !pendingLoginUsername.isBlank()
+                && pendingLoginPassword != null && !pendingLoginPassword.isBlank();
+    }
+
+    public void clearPendingLoginCredentials() {
+        this.pendingLoginUsername = null;
+        this.pendingLoginPassword = null;
     }
 
     /** 외부 스토어 vision 단계를 갱신한다. */
@@ -305,6 +347,10 @@ public class AgentRun {
         return this.optionPresenceScrollCount;
     }
 
+    public void resetOptionPresenceScrollCount() {
+        this.optionPresenceScrollCount = 0;
+    }
+
     /** 옵션 선택 타임아웃 시 호출한다 (3분 초과). */
     public void expireOptionSelection() {
         requireStatus(AgentRunStatus.AWAITING_OPTION_SELECTION, "옵션 선택 만료 처리");
@@ -312,9 +358,16 @@ public class AgentRun {
         this.abortReason = "옵션 선택 시간 초과 (3분)";
     }
 
+    /** 로그인 자격증명 입력 타임아웃 시 호출한다 (3분 초과). */
+    public void expireLoginCredentials() {
+        requireStatus(AgentRunStatus.AWAITING_LOGIN_CREDENTIALS, "로그인 자격증명 만료 처리");
+        this.status = AgentRunStatus.ABORTED;
+        this.abortReason = "로그인 정보 입력 시간 초과 (3분)";
+    }
+
     public void interrupt() {
-        if (!Set.of(AgentRunStatus.ASSIGNED, AgentRunStatus.RUNNING, AgentRunStatus.AWAITING_APPROVAL, AgentRunStatus.AWAITING_OPTION_SELECTION).contains(this.status)) {
-            throw new IllegalStateException("중단 감지는 ASSIGNED/RUNNING/AWAITING_APPROVAL/AWAITING_OPTION_SELECTION 상태에서만 가능합니다. 현재: " + this.status);
+        if (!Set.of(AgentRunStatus.ASSIGNED, AgentRunStatus.RUNNING, AgentRunStatus.AWAITING_APPROVAL, AgentRunStatus.AWAITING_OPTION_SELECTION, AgentRunStatus.AWAITING_LOGIN_CREDENTIALS).contains(this.status)) {
+            throw new IllegalStateException("중단 감지는 ASSIGNED/RUNNING/AWAITING_APPROVAL/AWAITING_OPTION_SELECTION/AWAITING_LOGIN_CREDENTIALS 상태에서만 가능합니다. 현재: " + this.status);
         }
         this.status = AgentRunStatus.INTERRUPTED;
     }

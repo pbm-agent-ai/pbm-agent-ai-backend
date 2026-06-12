@@ -217,6 +217,39 @@ public class CommandSessionService {
     }
 
     /**
+     * 기존 후보를 덮어쓰며 PRODUCT_SELECTION_REQUIRED 상태를 갱신한다.
+     *
+     * 역할: 브라우저/익스텐션이 수집한 후보 목록을 세션에 직접 반영할 때 사용한다.
+     */
+    @Transactional
+    public CommandSessionResponse replaceProductSelectionCandidates(
+            String commandId,
+            List<String> missingFields,
+            String clarificationMessage,
+            String categoryPath,
+            List<ProductCandidateDto> candidates,
+            Integer targetPrice,
+            String intent
+    ) {
+        CommandSession session = commandSessionRepository.findByCommandId(commandId)
+                .orElseThrow(() -> new CommandSessionNotFoundException(
+                        "세션을 찾을 수 없습니다. commandId: " + commandId));
+
+        String missingFieldsJson = serializeMissingFields(missingFields);
+        String candidatesJson = serializeCandidates(candidates);
+        session.toProductSelectionRequired(
+                missingFieldsJson,
+                clarificationMessage,
+                categoryPath,
+                candidatesJson,
+                targetPrice,
+                intent
+        );
+
+        return CommandSessionResponse.from(session);
+    }
+
+    /**
      * 세션을 모니터링 시작 상태로 전환한다.
      * <p>
      * 역할: 모든 사전/사후 확인 과정이 끝나고 실제 가격 모니터링이 시작될 때 호출한다.

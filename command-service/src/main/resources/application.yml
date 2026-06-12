@@ -54,6 +54,8 @@ app:
       payment-topic: payment-topic  # 결제 페이지 도달 시 PBM 토큰 차감 요청
       option-selection-request-topic: option-selection-request  # 옵션 선택 요청 (→ notification)
       option-selection-response-topic: option-selection-response  # 옵션 선택 응답 (← notification)
+      login-credential-request-topic: login-credential-request  # 로그인 자격증명 요청 (→ notification)
+      login-credential-response-topic: login-credential-response  # 로그인 자격증명 응답 (← notification)
 
 proxy:
   base-url: ${EXTERNAL_API_SERVICE_URL:http://127.0.0.1:8090}

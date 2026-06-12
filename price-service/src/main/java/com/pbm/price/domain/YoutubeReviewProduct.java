@@ -5,7 +5,11 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -43,6 +47,11 @@ public class YoutubeReviewProduct {
     @Column(name = "product_name", nullable = false, length = 300)
     private String productName;
 
+    /** 상품 이미지 URL 배열 (PostgreSQL text[]) */
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "image_urls", columnDefinition = "text[]")
+    private String[] imageUrls = new String[0];
+
     /** 브랜드명 */
     @Column(name = "brand", length = 100)
     private String brand;
@@ -72,8 +81,16 @@ public class YoutubeReviewProduct {
     private YoutubeReviewProduct(Integer rank, String productName, String brand,
                                  List<String> pros, List<String> cons,
                                  String verdict, String recommendedFor) {
+        this(rank, productName, brand, pros, cons, verdict, recommendedFor, null);
+    }
+
+    private YoutubeReviewProduct(Integer rank, String productName, String brand,
+                                 List<String> pros, List<String> cons,
+                                 String verdict, String recommendedFor,
+                                 List<String> imageUrls) {
         this.rank = rank;
         this.productName = productName;
+        this.imageUrls = imageUrls != null ? imageUrls.toArray(new String[0]) : new String[0];
         this.brand = brand;
         this.pros = pros != null ? new ArrayList<>(pros) : new ArrayList<>();
         this.cons = cons != null ? new ArrayList<>(cons) : new ArrayList<>();
@@ -85,6 +102,13 @@ public class YoutubeReviewProduct {
                                               List<String> pros, List<String> cons,
                                               String verdict, String recommendedFor) {
         return new YoutubeReviewProduct(rank, productName, brand, pros, cons, verdict, recommendedFor);
+    }
+
+    public static YoutubeReviewProduct create(Integer rank, String productName, String brand,
+                                              List<String> pros, List<String> cons,
+                                              String verdict, String recommendedFor,
+                                              List<String> imageUrls) {
+        return new YoutubeReviewProduct(rank, productName, brand, pros, cons, verdict, recommendedFor, imageUrls);
     }
 
     /** 소속 리뷰를 설정한다 (YoutubeReview.addProduct()에서 호출). */

@@ -2,6 +2,7 @@ package com.pbm.notification.controller;
 
 import com.pbm.notification.common.ApiResponse;
 import com.pbm.notification.service.NotificationPreferenceService;
+import com.pbm.notification.service.TelegramLoginCredentialHandler;
 import com.pbm.notification.service.TelegramOptionSelectionHandler;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -34,6 +35,7 @@ public class TelegramWebhookController {
 
     private final NotificationPreferenceService preferenceService;
     private final TelegramOptionSelectionHandler optionSelectionHandler;
+    private final TelegramLoginCredentialHandler loginCredentialHandler;
 
     /**
      * 텔레그램 봇 Webhook으로 들어오는 Update를 처리한다.
@@ -97,9 +99,12 @@ public class TelegramWebhookController {
 
             // /start 명령이 아닌 일반 메시지 → 옵션 선택 응답인지 확인
             if (!text.startsWith("/start ")) {
-                boolean handled = optionSelectionHandler.handleReply(chatId, text.trim());
+                boolean handled = loginCredentialHandler.handleReply(chatId, text.trim());
                 if (!handled) {
-                    log.info("텔레그램 Webhook - 대기 중인 옵션 요청 없음, 메시지 무시. chatId: {}, text: {}", chatId, text);
+                    handled = optionSelectionHandler.handleReply(chatId, text.trim());
+                }
+                if (!handled) {
+                    log.info("텔레그램 Webhook - 대기 중인 옵션/로그인 요청 없음, 메시지 무시. chatId: {}, text: {}", chatId, text);
                 }
                 return ResponseEntity.ok("ok");
             }

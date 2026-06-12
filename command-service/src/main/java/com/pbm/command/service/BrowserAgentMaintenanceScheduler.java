@@ -89,4 +89,19 @@ public class BrowserAgentMaintenanceScheduler {
 
         log.info("옵션 선택 만료 점검 완료 - expiredRuns={}", expiredCount);
     }
+
+    /**
+     * 로그인 자격증명 입력 대기 시간(3분)이 초과된 run을 ABORTED로 전환한다.
+     */
+    @Scheduled(fixedDelay = 30000)
+    public void expireLoginCredentialRuns() {
+        LocalDateTime threshold = LocalDateTime.now().minusMinutes(3);
+        int expiredCount = agentRunService.expireLoginCredentialBefore(threshold);
+
+        if (expiredCount == 0) {
+            return;
+        }
+
+        log.info("로그인 자격증명 만료 점검 완료 - expiredRuns={}", expiredCount);
+    }
 }

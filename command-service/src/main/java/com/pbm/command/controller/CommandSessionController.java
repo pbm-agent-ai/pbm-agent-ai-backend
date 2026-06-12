@@ -2,10 +2,12 @@ package com.pbm.command.controller;
 
 import com.pbm.command.common.ApiResponse;
 import com.pbm.command.dto.request.CommandClarificationRequest;
+import com.pbm.command.dto.request.BrowserCandidateSubmitRequest;
 import com.pbm.command.dto.request.ProductUrlSubmitRequest;
 import com.pbm.command.dto.request.ProductSelectionRequest;
 import com.pbm.command.dto.response.CommandParseResponse;
 import com.pbm.command.dto.response.CommandSessionResponse;
+import com.pbm.command.service.BrowserCandidateService;
 import com.pbm.command.service.CommandExecutionService;
 import com.pbm.command.service.CommandSessionService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -41,13 +43,16 @@ public class CommandSessionController {
 
     private final CommandSessionService commandSessionService;
     private final CommandExecutionService commandExecutionService;
+    private final BrowserCandidateService browserCandidateService;
 
     public CommandSessionController(
             CommandSessionService commandSessionService,
-            CommandExecutionService commandExecutionService
+            CommandExecutionService commandExecutionService,
+            BrowserCandidateService browserCandidateService
     ) {
         this.commandSessionService = commandSessionService;
         this.commandExecutionService = commandExecutionService;
+        this.browserCandidateService = browserCandidateService;
     }
 
     /**
@@ -122,6 +127,17 @@ public class CommandSessionController {
             @RequestBody ProductSelectionRequest request
     ) {
         CommandSessionResponse response = commandExecutionService.handleProductSelection(commandId, request);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @SecurityRequirement(name = "bearerAuth")
+    @Operation(summary = "브라우저 후보 상품 제출", description = "익스텐션이 브라우저에서 수집한 후보 상품 목록을 세션에 저장합니다.")
+    @PostMapping("/{commandId}/browser-candidates")
+    public ResponseEntity<ApiResponse<CommandSessionResponse>> submitBrowserCandidates(
+            @PathVariable String commandId,
+            @RequestBody BrowserCandidateSubmitRequest request
+    ) {
+        CommandSessionResponse response = browserCandidateService.submitAliExpressCandidates(commandId, request);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 

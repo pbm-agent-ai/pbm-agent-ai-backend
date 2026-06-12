@@ -20,7 +20,9 @@ from app.schemas.aliexpress import (
 )
 from app.services.aliexpress_service import (
     _build_signed_params,
+    _build_aliexpress_search_url,
     _extract_error,
+    _extract_product_id_from_href,
     _get_affiliate_categories_mock,
     _get_affiliate_product_detail_mock,
     _is_mock_enabled,
@@ -511,6 +513,52 @@ async def test_search_affiliate_products_delegates_to_mock_when_enabled(mock_che
 
 @patch("app.services.aliexpress_service._is_mock_enabled", return_value=False)
 @patch(
+    "app.services.aliexpress_service._crawl_aliexpress_search_products",
+    new_callable=AsyncMock,
+)
+@pytest.mark.asyncio
+async def test_search_affiliate_products_delegates_to_crawl_when_disabled(mock_crawl, mock_check):
+    """MOCK_ENABLED=False일 때 검색이 크롤러 결과를 정규화해서 반환하는지 확인"""
+    mock_crawl.return_value = [
+        {
+            "product_id": "1005001111111111",
+            "product_title": "테스트 상품 A",
+            "product_detail_url": "https://www.aliexpress.com/item/1005001111111111.html",
+            "product_main_image_url": "https://img.example.com/a.jpg",
+            "sale_price": "12.34",
+            "target_sale_price": "12.34",
+            "target_original_price": "15.00",
+            "target_app_sale_price": "12.34",
+            "target_app_original_price": "15.00",
+            "discount": "",
+            "evaluate_rate": "",
+            "commission_rate": "",
+            "lastest_volume": "",
+            "shop_name": "Demo Store",
+            "shop_url": "https://www.aliexpress.com/store/1",
+            "first_level_category_id": "",
+            "first_level_category_name": "",
+            "second_level_category_id": "",
+            "second_level_category_name": "",
+        },
+    ]
+
+    result = await search_affiliate_products(keyword="테스트", page_no=1, page_size=10)
+
+    assert isinstance(result, AliexpressSearchResponse)
+    assert result.total == 1
+    assert result.items[0].product_id == "1005001111111111"
+    assert result.items[0].product_title == "테스트 상품 A"
+    mock_crawl.assert_awaited_once_with(
+        keyword="테스트",
+        page_no=1,
+        page_size=10,
+        sort=None,
+    )
+
+
+@patch("app.services.aliexpress_service._is_mock_enabled", return_value=False)
+@patch(
     "app.services.aliexpress_service._get_credentials",
     side_effect=ValueError("ALIEXPRESS_APP_KEY, ALIEXPRESS_APP_SECRET 환경변수가 필요합니다"),
 )
@@ -523,13 +571,14 @@ async def test_get_affiliate_categories_raises_when_no_credentials(mock_creds, m
 
 @patch("app.services.aliexpress_service._is_mock_enabled", return_value=False)
 @patch(
-    "app.services.aliexpress_service._get_credentials",
-    side_effect=ValueError("ALIEXPRESS_APP_KEY, ALIEXPRESS_APP_SECRET 환경변수가 필요합니다"),
+    "app.services.aliexpress_service._crawl_aliexpress_search_products",
+    new_callable=AsyncMock,
 )
 @pytest.mark.asyncio
-async def test_search_affiliate_products_raises_when_no_credentials(mock_creds, mock_check):
-    """MOCK_ENABLED=False이고 자격증명이 없을 때 ValueError 발생 확인"""
-    with pytest.raises(ValueError, match="ALIEXPRESS_APP_KEY"):
+async def test_search_affiliate_products_raises_when_crawl_fails(mock_crawl, mock_check):
+    """MOCK_ENABLED=False이고 크롤링이 실패하면 ValueError가 전파되는지 확인"""
+    mock_crawl.side_effect = ValueError("AliExpress 검색 페이지가 CAPTCHA/차단 페이지로 응답했습니다")
+    with pytest.raises(ValueError, match="CAPTCHA/차단"):
         await search_affiliate_products(keyword="테스트")
 
 
@@ -566,3 +615,16 @@ def test_normalize_categories_converts_ids_to_strings():
     assert len(result) == 1
     assert result[0].category_id == "200000345"
     assert result[0].parent_category_id == "0"
+
+
+def test_build_aliexpress_search_url_encodes_keyword():
+    """검색 URL이 키워드를 안전하게 인코딩하는지 확인"""
+    url = _build_aliexpress_search_url("삼성 갤럭시 버즈", page_no=2)
+    assert "wholesale-%EC%82%BC%EC%84%B1%20%EA%B0%A4%EB%9F%AD%EC%8B%9C%20%EB%B2%84%EC%A6%88.html" in url
+    assert "page=2" in url
+
+
+def test_extract_product_id_from_href_handles_common_patterns():
+    """검색 링크에서 product_id를 추출할 수 있는지 확인"""
+    assert _extract_product_id_from_href("https://www.aliexpress.com/item/1005006212345678.html") == "1005006212345678"
+    assert _extract_product_id_from_href("https://www.aliexpress.com/wholesale?productId=1005009999999999") == "1005009999999999"

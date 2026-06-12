@@ -1,6 +1,7 @@
 package com.pbm.command.config;
 
 import com.pbm.command.dto.event.CheckoutPaymentEvent;
+import com.pbm.command.dto.event.LoginCredentialRequestEvent;
 import com.pbm.command.dto.event.OptionSelectionRequestEvent;
 import com.pbm.command.dto.event.PriceRequestEvent;
 import com.pbm.command.dto.event.ProductCandidateDto;
@@ -129,6 +130,20 @@ public class KafkaProducerConfig {
         props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
 
         DefaultKafkaProducerFactory<String, OptionSelectionRequestEvent> factory =
+                new DefaultKafkaProducerFactory<>(props);
+        return new KafkaTemplate<>(factory);
+    }
+
+    /**
+     * login-credential-request 토픽 전용 KafkaTemplate.
+     * 로그인 자격증명 요청 이벤트를 notification-service로 발행한다.
+     */
+    @Bean
+    public KafkaTemplate<String, LoginCredentialRequestEvent> loginCredentialRequestKafkaTemplate() {
+        Map<String, Object> props = baseProducerProps();
+        props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
+
+        DefaultKafkaProducerFactory<String, LoginCredentialRequestEvent> factory =
                 new DefaultKafkaProducerFactory<>(props);
         return new KafkaTemplate<>(factory);
     }

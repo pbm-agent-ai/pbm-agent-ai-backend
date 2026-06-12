@@ -1,15 +1,9 @@
 """AliExpress 검색/상세 조회 서비스 - 외부 데이터 수집 및 응답 정규화 담당
 
-카테고리/상품 상세는 기존 Affiliate API를 유지하고,
-상품 검색은 AliExpress 검색 URL을 Playwright로 렌더링한 뒤 카드 DOM을 크롤링한다.
-ALIEXPRESS_MOCK_ENABLED=true 환경변수 설정 시 실제 API/브라우저 호출 없이 고정된 모킹 데이터를 반환한다.
+카테고리/상품 상세/상품 검색 모두 Affiliate API를 사용한다.
+ALIEXPRESS_MOCK_ENABLED=true 환경변수 설정 시 실제 API 호출 없이 고정된 모킹 데이터를 반환한다.
 
-검색 URL 기반 흐름:
-- https://ko.aliexpress.com/w/wholesale-{keyword}.html?spm=a2g0o.home.search.0
-- Playwright로 렌더링 후 a.search-card-item 카드 DOM을 수집
-- 수집한 카드에서 상품명/링크/이미지/가격 등을 정규화해서 반환
-
-기존 Affiliate API 인증/서명 흐름:
+Affiliate API 인증/서명 흐름:
 - 엔드포인트: https://api-sg.aliexpress.com/sync (기본값, 환경변수로 변경 가능)
 - method 파라미터 방식 사용
 - sign_method: hmac-sha256
@@ -910,9 +904,7 @@ async def search_affiliate_products(
     category_ids: str | None = None,
     tracking_id: str | None = None,
 ) -> AliexpressSearchResponse:
-    """AliExpress 검색 URL을 렌더링한 뒤 카드 DOM을 크롤링하고 정규화된 응답을 반환한다.
-
-    ALIEXPRESS_MOCK_ENABLED=true인 경우 실제 브라우저 호출 없이 모킹 데이터를 반환한다.
+    """AliExpress Affiliate 상품 검색 API 호출 및 정규화된 응답 반환
 
     Args:
         keyword: 검색 키워드
@@ -922,13 +914,14 @@ async def search_affiliate_products(
         target_currency: 타겟 통화 (기본 KRW)
         target_language: 타겟 언어 (기본 KO)
         ship_to_country: 배송 국가 (기본 KR)
+        category_ids: 카테고리 ID 목록 (선택)
         tracking_id: 트래킹 ID (선택)
 
     Returns:
         AliexpressSearchResponse: 정규화된 검색 결과
 
     Raises:
-        ValueError: 잘못된 파라미터 또는 검색 페이지 차단/크롤링 실패 시
+        ValueError: API 에러 응답, 자격증명 누락, 또는 잘못된 파라미터 시
     """
     if _is_mock_enabled():
         return await _search_affiliate_products_mock(
@@ -943,26 +936,65 @@ async def search_affiliate_products(
             tracking_id=tracking_id,
         )
 
-    # page_size 최대 50 제한
     page_size = min(page_size, 50)
 
     if sort:
         allowed_sorts = {"SALE_PRICE_ASC", "SALE_PRICE_DESC", "LAST_VOLUME_ASC", "LAST_VOLUME_DESC"}
         if sort not in allowed_sorts:
             raise ValueError(f"지원하지 않는 정렬값: {sort}. 허용값: {', '.join(allowed_sorts)}")
-    raw_products = await _crawl_aliexpress_search_products(
-        keyword=keyword,
-        page_no=page_no,
-        page_size=page_size,
-        sort=sort,
+
+    extra_params: dict[str, str] = {
+        "keywords": keyword,
+        "page_no": str(page_no),
+        "page_size": str(page_size),
+        "target_currency": target_currency,
+        "target_language": target_language,
+        "ship_to_country": ship_to_country,
+    }
+
+    if sort:
+        extra_params["sort"] = sort
+    if category_ids:
+        extra_params["category_ids"] = category_ids
+    if tracking_id:
+        extra_params["tracking_id"] = tracking_id
+
+    params = _build_signed_params(
+        method="aliexpress.affiliate.product.query",
+        extra_params=extra_params,
     )
 
-    total = len(raw_products)
-    start_index = (page_no - 1) * page_size
-    end_index = start_index + page_size
-    page_items = raw_products[start_index:end_index]
+    base_url = os.getenv("ALIEXPRESS_BASE_URL", ALIEXPRESS_API_BASE_URL)
 
-    items = _normalize_products(page_items)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(
+            base_url,
+            data=params,
+            headers={"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"},
+        )
+        response.raise_for_status()
+
+    data = response.json()
+
+    error_code, error_message = _extract_error(data)
+    if error_code:
+        raise ValueError(f"AliExpress API 에러: code={error_code}, message={error_message}")
+
+    resp_result = data.get("aliexpress_affiliate_product_query_response", data.get("resp_result", {}))
+    if isinstance(resp_result, dict) and "resp_result" in resp_result:
+        resp_result = resp_result["resp_result"]
+
+    result = resp_result.get("result", {}) if isinstance(resp_result, dict) else {}
+    products_data = result.get("products", result) if isinstance(result, dict) else {}
+    if isinstance(products_data, dict):
+        raw_products = products_data.get("product", [])
+    elif isinstance(products_data, list):
+        raw_products = products_data
+    else:
+        raw_products = []
+
+    total = result.get("total_record_count", result.get("total_result_count", len(raw_products)))
+    items = _normalize_products(raw_products)
     return AliexpressSearchResponse(
         total=total,
         page_no=page_no,

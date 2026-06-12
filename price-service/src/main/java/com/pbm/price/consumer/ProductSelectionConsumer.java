@@ -8,8 +8,10 @@ import com.pbm.price.dto.event.PriceValidationResultEventPayload;
 import com.pbm.price.dto.event.ProductCandidateDto;
 import com.pbm.price.dto.event.ProductSelectionEvent;
 import com.pbm.price.publisher.PriceValidationResultEventPublisher;
+import com.pbm.price.domain.MonitoringSubscriptionStatus;
 import com.pbm.price.service.MonitoringSubscriptionService;
 import com.pbm.price.service.SubscriptionMonitoringService;
+import com.pbm.price.service.UrlMonitoringService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -41,6 +43,7 @@ public class ProductSelectionConsumer {
 
     private final MonitoringSubscriptionService monitoringSubscriptionService;
     private final SubscriptionMonitoringService subscriptionMonitoringService;
+    private final UrlMonitoringService urlMonitoringService;
     private final PriceValidationResultEventPublisher priceValidationResultEventPublisher;
     private final PriceCurrencyConverter priceCurrencyConverter;
     private final PaymentServiceClient paymentServiceClient;
@@ -48,12 +51,14 @@ public class ProductSelectionConsumer {
     public ProductSelectionConsumer(
             MonitoringSubscriptionService monitoringSubscriptionService,
             SubscriptionMonitoringService subscriptionMonitoringService,
+            UrlMonitoringService urlMonitoringService,
             PriceValidationResultEventPublisher priceValidationResultEventPublisher,
             PriceCurrencyConverter priceCurrencyConverter,
             PaymentServiceClient paymentServiceClient
     ) {
         this.monitoringSubscriptionService = monitoringSubscriptionService;
         this.subscriptionMonitoringService = subscriptionMonitoringService;
+        this.urlMonitoringService = urlMonitoringService;
         this.priceValidationResultEventPublisher = priceValidationResultEventPublisher;
         this.priceCurrencyConverter = priceCurrencyConverter;
         this.paymentServiceClient = paymentServiceClient;
@@ -175,7 +180,10 @@ public class ProductSelectionConsumer {
                     triggeredProduct,
                     event.payload().scheduledEndAt()
             );
-            subscriptionMonitoringService.process(subscription.getId());
+            // AliExpress: API 재검증 불가 → process() 스킵
+            if (!"ALIEXPRESS".equals(triggeredProduct.platform())) {
+                subscriptionMonitoringService.process(subscription.getId());
+            }
         }
 
         List<ProductCandidateDto> registeredMonitoringProducts = registerMonitoringProducts(event, monitoringProducts);
@@ -243,7 +251,27 @@ public class ProductSelectionConsumer {
                 }
             }
 
-            subscriptionMonitoringService.process(subscription.getId());
+            // AliExpress: API가 깨져있으므로 process()(API 재검증) 건너뛰고 직접 TRIGGERED 전환
+            // 다른 플랫폼: 기존 process()로 API 재검증 수행
+            if ("ALIEXPRESS".equals(cheapest.candidate().platform())) {
+                subscription.changeStatus(MonitoringSubscriptionStatus.TRIGGERED);
+                subscriptionMonitoringService.publishAutoPaymentStartAlert(
+                        subscription,
+                        new SubscriptionMonitoringService.NormalizedProductSnapshot(
+                                true,
+                                cheapest.candidate().productId(),
+                                cheapest.candidate().productUrl(),
+                                cheapest.candidate().title(),
+                                cheapest.currentPrice(),
+                                com.pbm.price.domain.CurrencyType.KRW
+                        ),
+                        cheapest.currentPrice()
+                );
+                log.info("AliExpress 즉시 충족 - process() 스킵, 직접 TRIGGERED 전환 - subscriptionId: {}",
+                        subscription.getId());
+            } else {
+                subscriptionMonitoringService.process(subscription.getId());
+            }
         }
 
         // 최저가로 선택되지 않은 즉시 충족 상품도 결과 응답에는 남겨두어 사용자가 확인할 수 있게 한다.
@@ -302,16 +330,42 @@ public class ProductSelectionConsumer {
     ) {
         List<ProductCandidateDto> registered = new ArrayList<>();
         for (ProductCandidateDto monitoringProduct : monitoringProducts) {
-            MonitoringSubscription subscription = monitoringSubscriptionService.createOrUpdateFromSelection(
-                    event.payload().userId(),
-                    event.payload().commandId(),
-                    event.payload().targetPrice(),
-                    event.payload().intent(),
-                    monitoringProduct,
-                    event.payload().scheduledEndAt()
-            );
-            log.info("모니터링 구독 생성/갱신 완료 - subscriptionId: {}, commandId: {}, productId: {}",
-                    subscription.getId(), subscription.getCommandId(), monitoringProduct.productId());
+            MonitoringSubscription subscription;
+
+            if ("ALIEXPRESS".equals(monitoringProduct.platform())) {
+                // AliExpress → URL 모니터링으로 전환 (기존 URL 인프라 재활용)
+                subscription = urlMonitoringService.createSubscription(
+                        event.payload().userId(),
+                        event.payload().commandId(),
+                        monitoringProduct.productUrl(),
+                        event.payload().targetPrice(),
+                        monitoringProduct.currency(),
+                        "ALL",  // 단일 상품이므로 ALL
+                        event.payload().intent()
+                );
+                // AUTO_PURCHASE면 세션키 등록 (URL 구독은 기본적으로 세션키 미등록)
+                if ("AUTO_PURCHASE".equals(event.payload().intent())) {
+                    monitoringSubscriptionService.registerSessionKeyForSubscription(
+                            subscription,
+                            event.payload().scheduledEndAt()
+                    );
+                }
+                log.info("AliExpress 모니터링 → URL 타입 구독 생성 완료 - subscriptionId: {}, url: {}",
+                        subscription.getId(), monitoringProduct.productUrl());
+            } else {
+                // NAVER 등 기존 플랫폼 로직
+                subscription = monitoringSubscriptionService.createOrUpdateFromSelection(
+                        event.payload().userId(),
+                        event.payload().commandId(),
+                        event.payload().targetPrice(),
+                        event.payload().intent(),
+                        monitoringProduct,
+                        event.payload().scheduledEndAt()
+                );
+                log.info("모니터링 구독 생성/갱신 완료 - subscriptionId: {}, commandId: {}, productId: {}",
+                        subscription.getId(), subscription.getCommandId(), monitoringProduct.productId());
+            }
+
             registered.add(monitoringProduct);
         }
         return registered;

@@ -211,6 +211,75 @@ class AgentStepPlannerServiceTest {
     }
 
     @Test
+    @DisplayName("AliExpress 검색 결과 페이지에서는 선택된 상품의 productId로 deterministic CLICK을 반환한다")
+    void planNextAction_aliExpressSearchResults_clicksMatchedProductByProductId() {
+        CommandSession commandSession = CommandSession.createSearching(1L, "버즈4 구매");
+        commandSession.toProductSelectionRequired(null, null, null, toCandidatesJson(List.of()), 300000, "AUTO_PURCHASE");
+        commandSession.toPriceValidating("[\"1005008400551234\"]");
+        commandSession.completeValidation(
+                CommandSessionStatus.BROWSER_PURCHASE_IN_PROGRESS,
+                toValidationResultJson(new SelectionValidationResultResponse(
+                        List.of(new ProductCandidateResponse(
+                                "1005008400551234",
+                                "다용도 4홀 전기 플러그 잠금장치 부착 경고 라벨 공장 산업용 전력 관리를 위한 안전 장치 개선",
+                                "26500",
+                                "AliExpress",
+                                "https://ko.aliexpress.com/item/1005008400551234.html",
+                                null,
+                                "KRW",
+                                "ALIEXPRESS",
+                                "다용도 4홀 전기 플러그 잠금장치"
+                        )),
+                        List.of(),
+                        null,
+                        "triggered",
+                        false,
+                        List.of(),
+                        null
+                ))
+        );
+
+        PageSnapshotRequest snapshot = new PageSnapshotRequest(
+                "https://ko.aliexpress.com/w/wholesale-%EB%8B%A4%EC%9A%A9%EB%8F%84.html?SearchText=%EB%8B%A4%EC%9A%A9%EB%8F%84",
+                "AliExpress Search Results",
+                "다용도 4홀 전기 플러그 잠금장치 검색 결과",
+                List.of(
+                        new InteractiveElementRequest(
+                                "node-0-a",
+                                "a",
+                                "비슷하지만 다른 상품",
+                                null,
+                                "https://ko.aliexpress.com/item/1005008400559999.html",
+                                true,
+                                false
+                        ),
+                        new InteractiveElementRequest(
+                                "node-1-a",
+                                "a",
+                                "다용도 4홀 전기 플러그 잠금장치 부착 경고 라벨 공장 산업용 전력 관리를 위한 안전 장치 개선",
+                                null,
+                                "https://ko.aliexpress.com/item/1005008400551234.html",
+                                true,
+                                false
+                        )
+                ),
+                List.of(),
+                List.of(),
+                List.of(),
+                "",
+                LocalDateTime.now()
+        );
+
+        ActionInstructionResponse response = agentStepPlannerService.planNextAction("run-ali-search-1", 3, commandSession, snapshot);
+
+        assertThat(response.action()).isEqualTo(BrowserActionType.CLICK);
+        assertThat(response.target()).isNotNull();
+        assertThat(response.target().nodeId()).isNull();
+        assertThat(response.target().selector()).contains("1005008400551234");
+        assertThat(response.target().href()).contains("1005008400551234");
+    }
+
+    @Test
     @DisplayName("MONITORING_STARTED 상태면 브라우저 제어를 완료 처리한다 (completed)")
     void planNextAction_completesForMonitoringStarted() {
         CommandSession commandSession = CommandSession.createSearching(1L, "가격만 확인해줘");

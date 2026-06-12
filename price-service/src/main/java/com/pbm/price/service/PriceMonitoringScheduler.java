@@ -104,10 +104,16 @@ public class PriceMonitoringScheduler {
             // URL 타입은 익스텐션이 직접 크롤링하므로 서버 스케줄러에서 건너뛴다.
             log.debug("URL 타입 MonitorTarget 건너뜀 - productId: {}", productId);
             return;
+        } else if (target.getPlatform() == Platform.ALIEXPRESS) {
+            // AliExpress는 URL 기반 모니터링으로 전환됨 (API 500 에러 이슈)
+            // 익스텐션이 직접 상품 페이지를 크롤링하므로 서버 스케줄러에서 건너뛴다.
+            // 기존 ALIEXPRESS 타입 MonitorTarget은 수집 시각만 갱신하여 반복 폴링 방지
+            log.info("AliExpress MonitorTarget 건너뜀 (URL 모니터링 전환) - productId: {}", productId);
+            target.markFetched(now);
+            monitorTargetRepository.save(target);
+            return;
         } else if (target.getPlatform() == Platform.NAVER) {
             collectNaverTarget(target, productId, searchKeyword, productUrl, now);
-        } else if (target.getPlatform() == Platform.ALIEXPRESS) {
-            collectAliExpressTarget(target, productId, searchKeyword, now);
         } else {
             log.warn("지원하지 않는 platform - {}", target.getPlatform());
             target.markFetched(now);

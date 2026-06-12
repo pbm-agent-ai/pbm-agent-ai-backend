@@ -22,6 +22,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -61,9 +62,6 @@ class PriceTopicConsumerTest {
     private AliExpressProductUrlService aliExpressProductUrlService;
 
     @Mock
-    private com.pbm.price.service.BrowserSearchTaskService browserSearchTaskService;
-
-    @Mock
     private NaverProductUrlService naverProductUrlService;
 
     @Mock
@@ -78,7 +76,6 @@ class PriceTopicConsumerTest {
                 aliExpressShoppingService,
                 aliExpressCategoryIdResolver,
                 aliExpressProductUrlService,
-                browserSearchTaskService,
                 naverProductUrlService,
                 productSelectionRequiredEventPublisher,
                 urlMonitoringService
@@ -164,20 +161,39 @@ class PriceTopicConsumerTest {
     }
 
     @Test
-    @DisplayName("ALIEXPRESS - 브라우저 검색 태스크로 위임한다 (API 대신 사용자 브라우저 크롤링)")
-    void consume_aliExpressResults_enqueuesBrowserSearchTask() {
-        // given
+    @DisplayName("ALIEXPRESS - 일반 검색이면 공식 API 검색 후 후보 선택 이벤트를 발행한다")
+    void consume_aliExpressResults_publishCandidateSelectionEvent() {
         PriceRequestEvent event = createRequestEvent(1L, "무선 이어폰", 50000, "ALIEXPRESS", "USD");
+        when(aliExpressShoppingService.searchProducts(
+                eq("무선 이어폰"), eq(1), eq(20), eq(null), eq("USD"), eq("KO"), eq("KR"), eq(null), eq(null)
+        )).thenReturn(List.of(
+                new SearchResponse(
+                        "무선 이어폰 A",
+                        "49000",
+                        "55000",
+                        "AliExpress",
+                        "https://ko.aliexpress.com/item/1005000000000001.html",
+                        "https://img.example.com/ali-1.jpg",
+                        "USD",
+                        "1005000000000001"
+                )
+        ));
 
-        // when
         priceTopicConsumer.consume(event);
 
-        // then: API 검색 대신 브라우저 검색 태스크가 생성됨
-        verify(browserSearchTaskService, times(1)).enqueueAliExpressSearchTask(event);
-        verify(aliExpressShoppingService, never()).searchProducts(
-                anyString(), anyInt(), anyInt(), any(), any(), any(), any(), any(), any()
+        verify(aliExpressShoppingService, times(1)).searchProducts(
+                eq("무선 이어폰"), eq(1), eq(20), eq(null), eq("USD"), eq("KO"), eq("KR"), eq(null), eq(null)
         );
-        verify(naverShoppingService, never()).searchProducts(anyString(), anyInt());
+
+        ArgumentCaptor<ProductSelectionRequiredEvent> captor =
+                ArgumentCaptor.forClass(ProductSelectionRequiredEvent.class);
+        verify(productSelectionRequiredEventPublisher, times(1)).publish(captor.capture());
+
+        ProductSelectionRequiredEvent published = captor.getValue();
+        assertThat(published.payload().message()).isEqualTo("검색 결과를 확인하고 상품을 선택해주세요.");
+        assertThat(published.payload().candidates()).hasSize(1);
+        assertThat(published.payload().candidates().get(0).productId()).isEqualTo("1005000000000001");
+        assertThat(published.payload().candidates().get(0).platform()).isEqualTo("ALIEXPRESS");
     }
 
     @Test
@@ -198,8 +214,8 @@ class PriceTopicConsumerTest {
     }
 
     @Test
-    @DisplayName("ALIEXPRESS - searchCategoryHint가 있어도 브라우저 검색으로 위임한다")
-    void consume_aliExpressWithCategoryHint_enqueuesBrowserSearchTask() {
+    @DisplayName("ALIEXPRESS - searchCategoryHint가 있으면 category_ids를 붙여 공식 API 검색을 수행한다")
+    void consume_aliExpressWithCategoryHint_searchesWithResolvedCategoryIds() {
         ParsedCommandSnapshot snapshot = new ParsedCommandSnapshot(
                 "ELECTRONICS",
                 "mx master 3s",
@@ -217,13 +233,27 @@ class PriceTopicConsumerTest {
                 "MOUSE"
         );
         PriceRequestEvent event = createRequestEvent(1L, "로지텍 mx master 3s black", 100000, "ALIEXPRESS", "KRW", "AUTO_PURCHASE", snapshot);
+        when(aliExpressCategoryIdResolver.resolveCategoryIds("MOUSE")).thenReturn(Optional.of("10,20"));
+        when(aliExpressShoppingService.searchProducts(
+                eq("로지텍 mx master 3s black"), eq(1), eq(20), eq(null), eq("KRW"), eq("KO"), eq("KR"), eq("10,20"), eq(null)
+        )).thenReturn(List.of(
+                new SearchResponse(
+                        "로지텍 MX Master 3S",
+                        "99000",
+                        "120000",
+                        "AliExpress",
+                        "https://ko.aliexpress.com/item/1005000000000002.html",
+                        "https://img.example.com/ali-2.jpg",
+                        "KRW",
+                        "1005000000000002"
+                )
+        ));
 
         priceTopicConsumer.consume(event);
 
-        // AliExpress는 항상 브라우저 검색으로 위임 (API 대신)
-        verify(browserSearchTaskService, times(1)).enqueueAliExpressSearchTask(event);
-        verify(aliExpressShoppingService, never()).searchProducts(
-                anyString(), anyInt(), anyInt(), any(), any(), any(), any(), any(), any()
+        verify(aliExpressCategoryIdResolver, times(1)).resolveCategoryIds("MOUSE");
+        verify(aliExpressShoppingService, times(1)).searchProducts(
+                eq("로지텍 mx master 3s black"), eq(1), eq(20), eq(null), eq("KRW"), eq("KO"), eq("KR"), eq("10,20"), eq(null)
         );
     }
 

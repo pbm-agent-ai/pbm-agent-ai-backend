@@ -13,6 +13,7 @@ import com.pbm.price.dto.event.ProductSelectionEventPayload;
 import com.pbm.price.publisher.PriceValidationResultEventPublisher;
 import com.pbm.price.service.MonitoringSubscriptionService;
 import com.pbm.price.service.SubscriptionMonitoringService;
+import com.pbm.price.service.UrlMonitoringService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -29,6 +30,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -57,6 +59,9 @@ class ProductSelectionConsumerTest {
     private SubscriptionMonitoringService subscriptionMonitoringService;
 
     @Mock
+    private UrlMonitoringService urlMonitoringService;
+
+    @Mock
     private PriceValidationResultEventPublisher priceValidationResultEventPublisher;
 
     @Mock
@@ -83,6 +88,7 @@ class ProductSelectionConsumerTest {
         productSelectionConsumer = new ProductSelectionConsumer(
                 monitoringSubscriptionService,
                 subscriptionMonitoringService,
+                urlMonitoringService,
                 priceValidationResultEventPublisher,
                 priceCurrencyConverter,
                 paymentServiceClient
@@ -440,7 +446,7 @@ class ProductSelectionConsumerTest {
         mockRefreshedFound("p1", "상품 p1", "200000", "https://example.com/p1");
         MonitoringSubscription sub = createSubscription(100L, "p1");
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
-                anyLong(), anyString(), anyInt(), anyString(), any(), any()
+                anyLong(), anyString(), anyInt(), anyString(), any(), any(), anyBoolean()
         )).thenReturn(sub);
 
         // when
@@ -497,12 +503,12 @@ class ProductSelectionConsumerTest {
         MonitoringSubscription subPurchased = createSubscription(100L, "p2");
         MonitoringSubscription subMonitoring = createSubscription(200L, "p3");
 
-        // 최저가 p2만 createOrUpdateFromSelection + process
+        // 최저가 p2만 createOrUpdateFromSelection(7-param, immediateFullfillment=true)
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
                 eq(USER_ID), eq(COMMAND_ID), eq(TARGET_PRICE), eq("AUTO_PURCHASE"),
-                eq(prod2), any()
+                eq(prod2), any(), eq(true)
         )).thenReturn(subPurchased);
-        // 미충족 상품 모니터링 등록
+        // 미충족 상품 모니터링 등록 (6-param → 7-param, immediateFullfillment=false)
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
                 eq(USER_ID), eq(COMMAND_ID), eq(TARGET_PRICE), eq("AUTO_PURCHASE"),
                 eq(prod3), any()
@@ -512,8 +518,13 @@ class ProductSelectionConsumerTest {
         productSelectionConsumer.consume(event);
 
         // then
-        verify(monitoringSubscriptionService, times(2)).createOrUpdateFromSelection(
-                anyLong(), anyString(), anyInt(), anyString(), any(), any()
+        // 즉시 충족 (prod2): 7-param 호출
+        verify(monitoringSubscriptionService).createOrUpdateFromSelection(
+                anyLong(), anyString(), anyInt(), anyString(), eq(prod2), any(), eq(true)
+        );
+        // 모니터링 등록 (prod3): 6-param 호출
+        verify(monitoringSubscriptionService).createOrUpdateFromSelection(
+                anyLong(), anyString(), anyInt(), anyString(), eq(prod3), any()
         );
         verify(subscriptionMonitoringService).process(100L);    // 최저가 p2만 process
 
@@ -572,7 +583,7 @@ class ProductSelectionConsumerTest {
 
         MonitoringSubscription sub = createSubscription(100L, "p1");
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
-                anyLong(), anyString(), anyInt(), anyString(), any(), any()
+                anyLong(), anyString(), anyInt(), anyString(), any(), any(), anyBoolean()
         )).thenReturn(sub);
 
         // when
@@ -583,6 +594,38 @@ class ProductSelectionConsumerTest {
         assertThat(resultEventCaptor.getValue().payload().nextStatus()).isEqualTo("BROWSER_PURCHASE_IN_PROGRESS");
         assertThat(resultEventCaptor.getValue().payload().triggeredProducts()).hasSize(1);
         assertThat(resultEventCaptor.getValue().payload().monitoringProducts()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("AUTO_PURCHASE - ALIEXPRESS 즉시 충족 시 AUTO_PAYMENT_START 알림을 발행한다")
+    void autoPurchase_aliexpressImmediateMatch_publishesAutoPaymentStartAlert() {
+        ProductCandidateDto prod1 = candidateUsd("ali-1", "250000");
+        ProductSelectionEvent event = createEvent("AUTO_PURCHASE", List.of(prod1));
+
+        mockRefreshedWith(prod1, true, BigDecimal.valueOf(250000), CurrencyType.KRW);
+
+        MonitoringSubscription aliSub = MonitoringSubscription.create(
+                USER_ID, COMMAND_ID, Platform.ALIEXPRESS,
+                "ali-1", "https://ko.aliexpress.com/item/ali-1.html",
+                "알리 상품", BigDecimal.valueOf(250000), null,
+                "버즈4", BigDecimal.valueOf(TARGET_PRICE),
+                CurrencyType.KRW, "AUTO_PURCHASE",
+                MonitoringSubscriptionStatus.ACTIVE, 0, 5, null
+        );
+        ReflectionTestUtils.setField(aliSub, "id", 300L);
+
+        when(monitoringSubscriptionService.createOrUpdateFromSelection(
+                anyLong(), anyString(), anyInt(), anyString(), any(), any(), anyBoolean()
+        )).thenReturn(aliSub);
+
+        productSelectionConsumer.consume(event);
+
+        verify(subscriptionMonitoringService, never()).process(300L);
+        verify(subscriptionMonitoringService, times(1)).publishAutoPaymentStartAlert(
+                eq(aliSub),
+                any(SubscriptionMonitoringService.NormalizedProductSnapshot.class),
+                eq(BigDecimal.valueOf(250000))
+        );
     }
 
     // =========================================================================
@@ -608,7 +651,7 @@ class ProductSelectionConsumerTest {
         MonitoringSubscription subPurchased = createSubscription(100L, "p1");
         when(monitoringSubscriptionService.createOrUpdateFromSelection(
                 eq(USER_ID), eq(COMMAND_ID), eq(TARGET_PRICE), eq("AUTO_PURCHASE"),
-                any(), any()
+                any(), any(), eq(true)
         )).thenReturn(subPurchased);
 
         // when

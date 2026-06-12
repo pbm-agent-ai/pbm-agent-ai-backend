@@ -1,0 +1,30 @@
+{
+  "runId": "8b7dfd94-4bf4-4b93-a53d-ae2ecdcf7d14",
+  "stepIndex": 6,
+  "currentUrl": "https://ko.aliexpress.com/item/1005009627913067.html?spm=a2g0o.productlist.main.2.21384c56MOmRgU&algo_pvid=4e723dd5-7610-43ed-98bb-8561247967a7&algo_exp_id=4e723dd5-7610-43ed-98bb-8561247967a7-1&pdp_ext_f=%7B%22order%22%3A%22534%22%2C%22eval%22%3A%221%22%2C%22fromPage%22%3A%22search%22%7D&pdp_npi=6%40dis%21KRW%21159750%21127800%21%21%21102.01%2181.61%21%40212e509017812434843456465eb2bf%2112000058287110342%21sea%21KR%212670358201%21X%211%210%21n_tag%3A-29919%3Bd%3A9ef3e404%3Bm03_new_user%3A-29895&curPageLogUid=bakkxjx2YNU4&utparam-url=scene%3Asearch%7Cquery_from%3A%7Cx_object_id%3A1005009627913067%7C_p_origin_prod%3A",
+  "action": "CLICK",
+  "imageWidth": 1529,
+  "imageHeight": 929,
+  "rawX": 799.0,
+  "rawY": 202.0,
+  "normalizedX": 0.799,
+  "normalizedY": 0.202,
+  "pixelInterpretation": {
+    "x": 799,
+    "y": 202
+  },
+  "grid1000Interpretation": {
+    "x": 1221,
+    "y": 187
+  },
+  "targetLabel": "수정하기",
+  "confidence": 0.9,
+  "reason": "스마트스토어 옵션 UI인 색상 수정하기 버튼 클릭",
+  "errorCode": null,
+  "errorMessage": null,
+  "mode": "SMARTSTORE_OPTION_PRESENCE",
+  "targetOption": null,
+  "savedAtUtc": "20260612T055202",
+  "rawPath": "/app/vision-debug/20260612T055202_8b7dfd94-4bf4-4b93-a53d-ae2ecdcf7d14_step6_raw.png",
+  "annotatedPath": "/app/vision-debug/20260612T055202_8b7dfd94-4bf4-4b93-a53d-ae2ecdcf7d14_step6_annotated.png"
+}

@@ -3,8 +3,6 @@ package com.pbm.price.service;
 import com.pbm.price.client.ExternalApiClient;
 import com.pbm.price.domain.MonitorTarget;
 import com.pbm.price.domain.Platform;
-import com.pbm.price.dto.response.AliExpressShoppingItem;
-import com.pbm.price.dto.response.AliexpressProductDetailResponse;
 import com.pbm.price.dto.response.NaverShoppingItem;
 import com.pbm.price.repository.MonitorTargetRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -107,9 +105,9 @@ class PriceMonitoringSchedulerTest {
     }
 
     @Test
-    @DisplayName("알리익스프레스 대상이 있으면 detail API 우선, 실패 시 search fallback")
-    void collectDueTargets_aliExpressTarget_callsDetailApiFirst() {
-        // given: 알리 수집 대상 1건
+    @DisplayName("알리익스프레스 대상은 URL 모니터링 전환으로 API 호출 없이 건너뛴다")
+    void collectDueTargets_aliExpressTarget_skipsApiCall() {
+        // given: 알리 수집 대상 1건 (URL 모니터링 전환 후 스케줄러에서 스킵)
         MonitorTarget aliTarget = MonitorTarget.create(
                 Platform.ALIEXPRESS, "ali-prod-456", "airpodspro", null, 10
         );
@@ -117,62 +115,50 @@ class PriceMonitoringSchedulerTest {
         when(monitorTargetRepository.findByNextFetchAtBefore(any()))
                 .thenReturn(List.of(aliTarget));
 
-        // detail API 실패
-        when(externalApiClient.getAliExpressProductDetail("ali-prod-456", "KRW", "KO", "KR"))
-                .thenReturn(new AliexpressProductDetailResponse(null));
-
-        // search fallback 성공
-        AliExpressShoppingItem fallbackItem = new AliExpressShoppingItem(
-                "Apple AirPods Pro", "199.00", "250000", "290000", "Apple Store",
-                "https://aliexpress.com/item/ali-prod-456", "ali-prod-456",
-                "https://img.example.com/airpods.jpg", "95", "1", "Electronics", "2", "Audio"
-        );
-        when(externalApiClient.searchAliExpressProductItems(
-                anyString(), anyInt(), anyInt(), any(), anyString(), anyString(), anyString(), any(), any()
-        )).thenReturn(List.of(fallbackItem));
-
         // when: 스케줄러 실행
         scheduler.collectDueTargets();
 
-        // then: detail API 호출 후 search fallback → 매칭된 상품 저장
-        verify(externalApiClient).getAliExpressProductDetail("ali-prod-456", "KRW", "KO", "KR");
-        verify(productPersistenceService).saveRefreshedAliExpressProduct(eq(aliTarget), eq(fallbackItem), eq("KRW"), any());
+        // then: AliExpress API는 호출하지 않고, 수집 시각만 갱신하여 반복 폴링 방지
+        verify(externalApiClient, never()).getAliExpressProductDetail(anyString(), anyString(), anyString(), anyString());
+        verify(externalApiClient, never()).searchAliExpressProductItems(
+                anyString(), anyInt(), anyInt(), any(), anyString(), anyString(), anyString(), any(), any()
+        );
+        verify(monitorTargetRepository).save(aliTarget);
     }
 
     @Test
     @DisplayName("한 대상 수집 실패해도 나머지 대상은 계속 수집한다")
     void collectDueTargets_partialFailure_continuesProcessing() {
-        // given: 네이버 대상(실패) + 알리 대상(성공)
-        MonitorTarget naverTarget = MonitorTarget.create(
+        // given: 네이버 대상(실패) + 네이버 대상(성공)
+        MonitorTarget failTarget = MonitorTarget.create(
                 Platform.NAVER, "naver-fail", "아이폰15", null, 10
         );
-        naverTarget.markFetched(baseTime.minusSeconds(600));
+        failTarget.markFetched(baseTime.minusSeconds(600));
 
-        MonitorTarget aliTarget = MonitorTarget.create(
-                Platform.ALIEXPRESS, "ali-success", "airpods", null, 10
+        MonitorTarget successTarget = MonitorTarget.create(
+                Platform.NAVER, "naver-success", "갤럭시탭", "https://shopping.naver.com/tab", 10
         );
-        aliTarget.markFetched(baseTime.minusSeconds(600));
+        successTarget.markFetched(baseTime.minusSeconds(600));
 
         when(monitorTargetRepository.findByNextFetchAtBefore(any()))
-                .thenReturn(List.of(naverTarget, aliTarget));
+                .thenReturn(List.of(failTarget, successTarget));
 
-        // 네이버 검색은 예외 발생
-        when(externalApiClient.searchNaverProductItems(anyString(), anyInt(), eq(1)))
+        // 첫 번째 네이버 검색은 예외 발생 (아이폰15 키워드)
+        when(externalApiClient.searchNaverProductItems(eq("아이폰15"), anyInt(), eq(1)))
                 .thenThrow(new RuntimeException("API 호출 실패"));
 
-        // 알리 detail API 성공
-        AliExpressShoppingItem aliItem = new AliExpressShoppingItem(
-                "AirPods", "149.00", "200000", "230000", "Apple Store",
-                "https://aliexpress.com/item/ali-success", "ali-success",
-                "https://img.example.com/airpods.jpg", "95", "1", "Electronics", "2", "Audio"
+        // 두 번째 네이버 검색은 성공 (갤럭시탭 키워드)
+        NaverShoppingItem matchedItem = new NaverShoppingItem(
+                "갤럭시 탭 S9", "800000", "900000", "삼성공식몰", "https://shopping.naver.com/tab",
+                "naver-success", "https://img.example.com/tab.jpg", "삼성", "전자", "디지털", "태블릿", "", ""
         );
-        when(externalApiClient.getAliExpressProductDetail("ali-success", "KRW", "KO", "KR"))
-                .thenReturn(new AliexpressProductDetailResponse(aliItem));
+        when(externalApiClient.searchNaverProductItems(eq("갤럭시탭"), anyInt(), eq(1)))
+                .thenReturn(List.of(matchedItem));
 
         // when: 스케줄러 실행
         scheduler.collectDueTargets();
 
-        // then: 네이버 실패 후에도 알리 API는 정상 호출됨
-        verify(productPersistenceService).saveRefreshedAliExpressProduct(eq(aliTarget), eq(aliItem), eq("KRW"), any());
+        // then: 첫 번째 실패 후에도 두 번째 네이버 대상은 정상 수집됨
+        verify(productPersistenceService).saveRefreshedNaverProduct(eq(successTarget), eq(matchedItem), any());
     }
 }

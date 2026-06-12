@@ -221,15 +221,40 @@ public class SubscriptionMonitoringService {
 
     /**
      * 선택된 후보 상품 1건을 즉시 단건 재조회한다.
+     * <p>
+     * AliExpress: URL 크롤링으로 이미 수집된 candidate 데이터를 신뢰하여
+     * API 호출 없이 직접 스냅샷을 반환한다. (AliExpress API 500 에러 우회)
+     * NAVER/기타: 기존 API 기반 재조회 로직을 사용한다.
      *
      * @param candidate 선택한 후보 상품 DTO
      * @return 재조회 결과 스냅샷
      */
     public NormalizedProductSnapshot refreshSelectedProduct(ProductCandidateDto candidate) {
+        Platform platform = Platform.valueOf(candidate.platform());
+
+        // AliExpress: URL 크롤링으로 이미 수집된 candidate 데이터를 신뢰 (API 호출 생략)
+        if (platform == Platform.ALIEXPRESS) {
+            BigDecimal price = candidate.lprice() != null
+                    ? new BigDecimal(candidate.lprice()) : BigDecimal.ZERO;
+            CurrencyType currency = CurrencyType.valueOf(candidate.currency());
+            boolean found = price.compareTo(BigDecimal.ZERO) > 0;
+            log.info("AliExpress 상품 candidate 데이터 직접 사용 (API 호출 생략) - productId: {}, price: {}, currency: {}",
+                    candidate.productId(), price, currency);
+            return new NormalizedProductSnapshot(
+                    found,
+                    candidate.productId(),
+                    candidate.productUrl(),
+                    candidate.title(),
+                    price,
+                    currency
+            );
+        }
+
+        // NAVER/기타: 기존 API 기반 재조회
         MonitoringSubscription temporarySubscription = MonitoringSubscription.create(
                 0L,
                 UUID.randomUUID().toString(),
-                Platform.valueOf(candidate.platform()),
+                platform,
                 candidate.productId(),
                 candidate.productUrl(),
                 candidate.title(),
@@ -535,34 +560,9 @@ public class SubscriptionMonitoringService {
             BigDecimal currentPriceInKrw
     ) {
         Instant now = Instant.now();
+        publishPriceAlertEvent(subscription, snapshot, currentPriceInKrw, now);
 
-        // price-alert 이벤트 발행 (알림용)
-        // intent에 따라 eventType을 다르게 설정:
-        //   - "AUTO_PURCHASE" → "AUTO_PAYMENT_START" (결제 파이프라인 트리거)
-        //   - 그 외            → "PRICE_CONDITION_MET" (일반 조건 충족 알림)
         String intent = subscription.getIntent();
-        String eventType = "AUTO_PURCHASE".equals(intent) ? "AUTO_PAYMENT_START" : "PRICE_CONDITION_MET";
-
-        PriceAlertEventPayload alertPayload = new PriceAlertEventPayload(
-                subscription.getUserId(),
-                snapshot.title(),
-                currentPriceInKrw.intValue(),
-                subscription.getTargetPrice().intValue(),
-                snapshot.productUrl(),
-                subscription.getSearchKeyword(),
-                intent
-        );
-        PriceAlertEvent alertEvent = new PriceAlertEvent(
-                UUID.randomUUID().toString(),
-                eventType,
-                now,
-                "price-service",
-                alertPayload
-        );
-        priceAlertEventPublisher.publish(alertEvent);
-        log.info("price-alert 이벤트 발행 완료 - subscriptionId: {}, eventId: {}, eventType: {}, intent: {}",
-                subscription.getId(), alertEvent.eventId(), eventType, intent);
-
         if (!"AUTO_PURCHASE".equals(intent)) {
             return;
         }
@@ -606,6 +606,48 @@ public class SubscriptionMonitoringService {
         priceValidationResultEventPublisher.publish(browserPurchaseEvent);
         log.info("모니터링 트리거 브라우저 구매 이벤트 발행 완료 - subscriptionId: {}, commandId: {}, triggerPrice: {}",
                 subscription.getId(), subscription.getCommandId(), currentPriceInKrw.intValue());
+    }
+
+    /**
+     * 즉시 구매 진입 시점에도 네이버 모니터링 경로와 동일한 AUTO_PAYMENT_START 알림을 보낼 수 있도록
+     * price-alert 이벤트 발행 로직을 공개한다.
+     */
+    public void publishAutoPaymentStartAlert(
+            MonitoringSubscription subscription,
+            NormalizedProductSnapshot snapshot,
+            BigDecimal currentPriceInKrw
+    ) {
+        publishPriceAlertEvent(subscription, snapshot, currentPriceInKrw, Instant.now());
+    }
+
+    private void publishPriceAlertEvent(
+            MonitoringSubscription subscription,
+            NormalizedProductSnapshot snapshot,
+            BigDecimal currentPriceInKrw,
+            Instant occurredAt
+    ) {
+        String intent = subscription.getIntent();
+        String eventType = "AUTO_PURCHASE".equals(intent) ? "AUTO_PAYMENT_START" : "PRICE_CONDITION_MET";
+
+        PriceAlertEventPayload alertPayload = new PriceAlertEventPayload(
+                subscription.getUserId(),
+                snapshot.title(),
+                currentPriceInKrw.intValue(),
+                subscription.getTargetPrice().intValue(),
+                snapshot.productUrl(),
+                subscription.getSearchKeyword(),
+                intent
+        );
+        PriceAlertEvent alertEvent = new PriceAlertEvent(
+                UUID.randomUUID().toString(),
+                eventType,
+                occurredAt,
+                "price-service",
+                alertPayload
+        );
+        priceAlertEventPublisher.publish(alertEvent);
+        log.info("price-alert 이벤트 발행 완료 - subscriptionId: {}, eventId: {}, eventType: {}, intent: {}",
+                subscription.getId(), alertEvent.eventId(), eventType, intent);
     }
 
     // ──────────────────────────────────────────────────────────────────────────

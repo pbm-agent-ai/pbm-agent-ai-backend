@@ -20,6 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -604,7 +605,9 @@ public class AgentStepPlannerService {
         }
 
         PlatformConfig platformConfig = resolvePlatformConfig(commandSession);
-        if (!platformConfig.isPreferSearchNavigation()) {
+        boolean supportsSearchResultsVisionFallback = platformConfig.isPreferSearchNavigation()
+                || platformConfig.getPlatform() == PlatformType.ALIEXPRESS;
+        if (!supportsSearchResultsVisionFallback) {
             return null;
         }
 
@@ -757,15 +760,17 @@ public class AgentStepPlannerService {
         // targetProduct의 productUrl에서 productId를 추출해 href로 매칭 → AI 없이 deterministic CLICK
         // 네이버 상품 링크는 target="_blank"(새 탭)로 열리므로,
         // extension이 새 탭 감지 후 targetTabId를 교체하는 방식으로 처리한다.
+        boolean supportsDeterministicSearchResultClick = platformConfig.isPreferSearchNavigation()
+                || platformConfig.getPlatform() == PlatformType.ALIEXPRESS;
         if (pageType == PageType.SEARCH_RESULTS
-                && platformConfig.isPreferSearchNavigation()
+                && supportsDeterministicSearchResultClick
                 && targetProduct != null
                 && targetProduct.productUrl() != null) {
             Optional<InteractiveElementRequest> matchedProduct =
-                    findProductByUrlId(snapshot, targetProduct.productUrl());
+                    findProductByUrlId(snapshot, targetProduct);
             if (matchedProduct.isPresent()) {
-                log.info("[AgentStepPlannerService] productId href 매칭 성공 → CLICK - runId={}, nodeId={}",
-                        runId, matchedProduct.get().nodeId());
+                log.info("[AgentStepPlannerService] productId href 매칭 성공 → CLICK - runId={}, selector={}, href={}",
+                        runId, matchedProduct.get().selector(), matchedProduct.get().href());
                 return ActionInstructionResponse.click(stepIndex, buildActionId(runId, stepIndex), matchedProduct.get());
             }
             log.info("[AgentStepPlannerService] productId href 매칭 실패 → AI fallback - runId={}", runId);
@@ -1169,24 +1174,18 @@ public class AgentStepPlannerService {
      *
      * AI 없이 deterministic하게 상품 카드를 찾을 수 있어 신뢰도가 높다.
      */
-    private Optional<InteractiveElementRequest> findProductByUrlId(PageSnapshotRequest snapshot, String productUrl) {
-        if (snapshot == null || productUrl == null || productUrl.isBlank()) {
+    private Optional<InteractiveElementRequest> findProductByUrlId(PageSnapshotRequest snapshot, ProductCandidateResponse targetProduct) {
+        if (snapshot == null || targetProduct == null) {
             return Optional.empty();
         }
 
-        // URL 경로의 마지막 세그먼트를 productId로 추출 (쿼리스트링 제외)
-        // 예: ".../products/12487456679?nl-query=..." → "12487456679"
-        String path = productUrl.split("\\?")[0]; // 쿼리스트링 제거
-        String[] segments = path.split("/");
-        if (segments.length == 0) {
-            return Optional.empty();
-        }
-        String productId = segments[segments.length - 1];
+        String productId = extractProductIdForSearchResultMatch(targetProduct);
         if (productId.isBlank() || productId.length() < 4) {
             return Optional.empty();
         }
 
-        log.info("[AgentStepPlannerService] productId 추출 - productUrl={}, productId={}", productUrl, productId);
+        log.info("[AgentStepPlannerService] productId 추출 - candidateProductId={}, productUrl={}, normalizedProductId={}",
+                targetProduct.productId(), targetProduct.productUrl(), productId);
 
         // 수집된 href 목록 출력 (매칭 실패 원인 파악용)
         List<String> collectedHrefs = snapshot.interactiveElements().stream()
@@ -1203,14 +1202,68 @@ public class AgentStepPlannerService {
                 .filter(el -> el.href() != null && el.href().contains(productId))
                 .findFirst()
                 .map(el -> new InteractiveElementRequest(
-                        el.nodeId(),
+                        null,
                         el.role(),
                         el.labelText(),
-                        "a[href*=\"" + productId + "\"]",
+                        buildProductHrefSelector(productId),
                         el.href(),
                         el.isVisible(),
                         el.disabled()
                 ));
+    }
+
+    private String extractProductIdForSearchResultMatch(ProductCandidateResponse targetProduct) {
+        if (targetProduct.productId() != null && targetProduct.productId().matches("\\d{4,}")) {
+            return targetProduct.productId();
+        }
+
+        String productUrl = targetProduct.productUrl();
+        if (productUrl == null || productUrl.isBlank()) {
+            return "";
+        }
+
+        java.util.regex.Matcher pathMatcher = java.util.regex.Pattern
+                .compile("/(?:item|i)/(\\d+)(?:\\.html)?", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(productUrl);
+        if (pathMatcher.find()) {
+            return pathMatcher.group(1);
+        }
+
+        try {
+            URI uri = URI.create(productUrl);
+            String query = uri.getQuery();
+            if (query != null && !query.isBlank()) {
+                for (String pair : query.split("&")) {
+                    String[] parts = pair.split("=", 2);
+                    if (parts.length == 2
+                            && ("productId".equalsIgnoreCase(parts[0]) || "id".equalsIgnoreCase(parts[0]))
+                            && parts[1].matches("\\d{4,}")) {
+                        return parts[1];
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // productUrl 파싱 실패 시 아래 마지막 세그먼트 fallback 사용
+        }
+
+        String path = productUrl.split("\\?")[0];
+        String[] segments = path.split("/");
+        if (segments.length == 0) {
+            return "";
+        }
+        String lastSegment = segments[segments.length - 1];
+        java.util.regex.Matcher digitsMatcher = java.util.regex.Pattern.compile("(\\d{4,})").matcher(lastSegment);
+        return digitsMatcher.find() ? digitsMatcher.group(1) : lastSegment;
+    }
+
+    private String buildProductHrefSelector(String productId) {
+        return String.join(", ",
+                "a[href*=\"/item/" + productId + ".html\"]",
+                "a[href*=\"/item/" + productId + "\"]",
+                "a[href*=\"/i/" + productId + ".html\"]",
+                "a[href*=\"/i/" + productId + "\"]",
+                "a[href*=\"productId=" + productId + "\"]",
+                "a[href*=\"id=" + productId + "\"]");
     }
 
     /**

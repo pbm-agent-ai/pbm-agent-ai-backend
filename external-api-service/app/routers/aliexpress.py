@@ -46,7 +46,7 @@ async def search_products(
 ) -> AliexpressSearchResponse:
     """AliExpress 상품 검색
 
-    검색 URL을 브라우저로 렌더링한 뒤 카드 DOM을 크롤링해서
+    keyword는 Affiliate API 전송 시 `keywords`로 매핑되며,
     price-service 등 다른 서비스가 소비하기 쉬운 정규화된 형태로 응답합니다.
     """
     return await search_affiliate_products(

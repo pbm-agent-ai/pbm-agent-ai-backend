@@ -144,6 +144,7 @@ def test_search_products_with_default_params(mock_search):
         target_currency="KRW",
         target_language="KO",
         ship_to_country="KR",
+        category_ids=None,
         tracking_id=None,
     )
 
@@ -158,7 +159,7 @@ def test_search_products_with_custom_params(mock_search):
     response = client.get(
         "/api/v1/aliexpress/search?keyword=갤럭시&page_no=2&page_size=20"
         "&sort=SALE_PRICE_ASC&target_currency=USD&target_language=EN"
-        "&ship_to_country=US&tracking_id=mytrack123"
+        "&ship_to_country=US&category_ids=10,20&tracking_id=mytrack123"
     )
     assert response.status_code == 200
 
@@ -170,6 +171,7 @@ def test_search_products_with_custom_params(mock_search):
         target_currency="USD",
         target_language="EN",
         ship_to_country="US",
+        category_ids="10,20",
         tracking_id="mytrack123",
     )
 

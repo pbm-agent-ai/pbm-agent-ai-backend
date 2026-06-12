@@ -342,6 +342,9 @@ public class UrlMonitoringService {
                 ? "BROWSER_PURCHASE_IN_PROGRESS"
                 : "MONITORING_STARTED";
 
+        // URL 구독의 실질 플랫폼 추론 (AliExpress URL → "ALIEXPRESS" 보정)
+        String effectivePlatform = resolveEffectivePlatform(sub);
+
         com.pbm.price.dto.event.ProductCandidateDto candidateDto =
                 new com.pbm.price.dto.event.ProductCandidateDto(
                         sub.getProductId(),
@@ -351,7 +354,7 @@ public class UrlMonitoringService {
                         sub.getProductUrl(),
                         sub.getSnapshotImageUrl(),
                         "KRW",
-                        sub.getPlatform().name(),
+                        effectivePlatform,
                         null
                 );
 
@@ -377,7 +380,29 @@ public class UrlMonitoringService {
         );
 
         priceValidationResultEventPublisher.publish(event);
-        log.info("URL 모니터링 트리거 이벤트 발행 - commandId: {}, subscriptionId: {}, intent: {}, nextStatus: {}",
-                sub.getCommandId(), sub.getId(), sub.getIntent(), nextStatus);
+        log.info("URL 모니터링 트리거 이벤트 발행 - commandId: {}, subscriptionId: {}, intent: {}, " +
+                        "nextStatus: {}, effectivePlatform: {}",
+                sub.getCommandId(), sub.getId(), sub.getIntent(), nextStatus, effectivePlatform);
+    }
+
+    /**
+     * URL 구독의 실질 플랫폼을 URL 패턴으로 추론한다.
+     * <p>
+     * AliExpress 상품이 URL 모니터링으로 전환된 경우, 구독의 platform은 URL이지만
+     * 다운스트림(command-service)의 네비게이션과 PlatformConfig 매핑을 위해
+     * 실제 플랫폼을 URL 패턴으로 판별하여 반환한다.
+     *
+     * @param sub 모니터링 구독
+     * @return 실질 플랫폼 문자열 ("ALIEXPRESS", "URL" 등)
+     */
+    private String resolveEffectivePlatform(MonitoringSubscription sub) {
+        if (sub.getPlatform() != Platform.URL) {
+            return sub.getPlatform().name();
+        }
+        String url = sub.getProductUrl();
+        if (url != null && url.contains("aliexpress.com")) {
+            return "ALIEXPRESS";
+        }
+        return sub.getPlatform().name();
     }
 }

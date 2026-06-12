@@ -530,6 +530,36 @@ public class MonitoringSubscriptionService {
     }
 
     /**
+     * 외부에서 생성된 URL 구독에 대해 세션키를 등록한다.
+     * <p>
+     * URL 모니터링으로 전환된 AliExpress 등 AUTO_PURCHASE 구독에서 사용.
+     * UrlMonitoringService.createSubscription()으로 생성된 구독은 세션키가 없으므로
+     * 이 메서드를 통해 키페어 생성 + Kafka 이벤트 발행을 수행한다.
+     *
+     * @param subscription   세션키를 등록할 구독
+     * @param scheduledEndAt 모니터링 종료 예정 시각 (null이면 기본 7일)
+     */
+    public void registerSessionKeyForSubscription(
+            MonitoringSubscription subscription,
+            Instant scheduledEndAt
+    ) {
+        Instant now = Instant.now();
+        Instant resolvedEndAt = (scheduledEndAt != null && scheduledEndAt.isAfter(now))
+                ? scheduledEndAt
+                : now.plus(DEFAULT_MONITORING_DURATION_DAYS, ChronoUnit.DAYS);
+
+        ParsedSelectionContext context = new ParsedSelectionContext(
+                subscription.getPlatform(),
+                subscription.getCurrency(),
+                subscription.getSnapshotPrice() != null ? subscription.getSnapshotPrice() : BigDecimal.ZERO,
+                subscription.getTargetPrice(),
+                now,
+                resolvedEndAt
+        );
+        registerSessionKey(subscription, context, true);  // Kafka 이벤트 발행
+    }
+
+    /**
      * AUTO_PURCHASE 조건 생성 시 사용자의 지갑 한도를 사전 검증한다.
      * <p>
      * 목표 가격이 지갑 한도를 초과하면 즉시 예외를 발생시켜

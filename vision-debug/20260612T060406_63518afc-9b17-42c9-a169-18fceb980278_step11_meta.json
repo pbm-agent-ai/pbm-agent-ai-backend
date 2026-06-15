@@ -1,0 +1,30 @@
+{
+  "runId": "63518afc-9b17-42c9-a169-18fceb980278",
+  "stepIndex": 11,
+  "currentUrl": "https://ko.aliexpress.com/item/1005012436414252.html?pdp_npi=6%40dis%21KRW%2126500%2126500%21%21%21114.53%21114.53%21%402140da8b17812440963568611e1075%2112000058384570034%21affd%21%21%21%211%210%21",
+  "action": "CLICK",
+  "imageWidth": 1529,
+  "imageHeight": 929,
+  "rawX": 725.0,
+  "rawY": 715.0,
+  "normalizedX": 0.725,
+  "normalizedY": 0.715,
+  "pixelInterpretation": {
+    "x": 725,
+    "y": 715
+  },
+  "grid1000Interpretation": {
+    "x": 1108,
+    "y": 664
+  },
+  "targetLabel": "바로 구매",
+  "confidence": 0.9,
+  "reason": "가격 조건 만족, 구매 진행을 위해 바로 구매 버튼 클릭",
+  "errorCode": null,
+  "errorMessage": null,
+  "mode": "GENERAL",
+  "targetOption": null,
+  "savedAtUtc": "20260612T060406",
+  "rawPath": "/app/vision-debug/20260612T060406_63518afc-9b17-42c9-a169-18fceb980278_step11_raw.png",
+  "annotatedPath": "/app/vision-debug/20260612T060406_63518afc-9b17-42c9-a169-18fceb980278_step11_annotated.png"
+}

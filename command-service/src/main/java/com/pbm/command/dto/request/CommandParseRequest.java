@@ -14,8 +14,15 @@ import io.swagger.v3.oas.annotations.media.Schema;
 @Schema(description = "자연어 명령 파싱 요청 DTO")
 public record CommandParseRequest(
         @Schema(description = "자연어 명령문", example = "AliExpress에서 QCY T13 ANC 블루투스 이어폰 검정색 상품 10만원 이하면 구매해줘.")
-        String commandText
+        String commandText,
+        @Schema(description = "현재 페이지 상품의 현재가 (익스텐션이 DOM에서 추출, 선택적)", example = "185973")
+        Integer currentPrice
 ) {
+    /** commandText만 전달하는 기존 호출부와의 하위 호환 생성자 */
+    public CommandParseRequest(String commandText) {
+        this(commandText, null);
+    }
+
     public CommandParseRequest {
         commandText = commandText == null ? null : commandText.trim();
     }

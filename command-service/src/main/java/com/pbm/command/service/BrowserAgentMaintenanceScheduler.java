@@ -52,7 +52,12 @@ public class BrowserAgentMaintenanceScheduler {
         }
 
         int interruptedRuns = agentRunService.interruptRunsAssignedToDevices(Set.copyOf(offlineDeviceIds));
-        log.info("browser-agent stale 점검 완료 - offlineDevices={}, interruptedRuns={}", offlineDeviceIds.size(), interruptedRuns);
+
+        // URL 모니터링은 price-service의 MonitoringSubscription.next_check_at 기준으로 관리되므로
+        // 디바이스 오프라인 시 별도 pause 처리가 필요 없다.
+        // 디바이스 재접속 시 next_check_at <= now인 구독이 heartbeat 응답에 자동 포함된다.
+        log.info("browser-agent stale 점검 완료 - offlineDevices={}, interruptedRuns={}",
+                offlineDeviceIds.size(), interruptedRuns);
     }
 
     /**
@@ -68,5 +73,35 @@ public class BrowserAgentMaintenanceScheduler {
         }
 
         log.info("browser-agent 승인 만료 점검 완료 - expiredRuns={}", expiredCount);
+    }
+
+    /**
+     * 옵션 선택 대기 시간(3분)이 초과된 run을 ABORTED로 전환한다.
+     */
+    @Scheduled(fixedDelay = 30000)
+    public void expireOptionSelectionRuns() {
+        LocalDateTime threshold = LocalDateTime.now().minusMinutes(3);
+        int expiredCount = agentRunService.expireOptionSelectionBefore(threshold);
+
+        if (expiredCount == 0) {
+            return;
+        }
+
+        log.info("옵션 선택 만료 점검 완료 - expiredRuns={}", expiredCount);
+    }
+
+    /**
+     * 로그인 자격증명 입력 대기 시간(3분)이 초과된 run을 ABORTED로 전환한다.
+     */
+    @Scheduled(fixedDelay = 30000)
+    public void expireLoginCredentialRuns() {
+        LocalDateTime threshold = LocalDateTime.now().minusMinutes(3);
+        int expiredCount = agentRunService.expireLoginCredentialBefore(threshold);
+
+        if (expiredCount == 0) {
+            return;
+        }
+
+        log.info("로그인 자격증명 만료 점검 완료 - expiredRuns={}", expiredCount);
     }
 }

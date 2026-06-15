@@ -1,10 +1,9 @@
-"""AliExpress Affiliate API 호출 서비스 - 외부 API 통신 및 응답 정규화 담당
+"""AliExpress 검색/상세 조회 서비스 - 외부 데이터 수집 및 응답 정규화 담당
 
-기본적으로 실제 AliExpress Affiliate API를 호출한다.
+카테고리/상품 상세/상품 검색 모두 Affiliate API를 사용한다.
 ALIEXPRESS_MOCK_ENABLED=true 환경변수 설정 시 실제 API 호출 없이 고정된 모킹 데이터를 반환한다.
-로컬 개발 및 CI 환경에서 AliExpress API 자격증명 없이도 동작 검증이 가능하다 (필요 시에만 활성화).
 
-서명 규칙:
+Affiliate API 인증/서명 흐름:
 - 엔드포인트: https://api-sg.aliexpress.com/sync (기본값, 환경변수로 변경 가능)
 - method 파라미터 방식 사용
 - sign_method: hmac-sha256
@@ -16,12 +15,15 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from urllib.parse import quote
 
 import httpx
+from playwright.async_api import async_playwright
 
 from app.schemas.aliexpress import (
     AliexpressCategoryItem,
@@ -35,6 +37,18 @@ logger = logging.getLogger(__name__)
 
 # AliExpress Affiliate API 기본 URL
 ALIEXPRESS_API_BASE_URL = "https://api-sg.aliexpress.com/sync"
+ALIEXPRESS_SEARCH_URL_TEMPLATE = "https://ko.aliexpress.com/w/wholesale-{keyword}.html?spm=a2g0o.home.search.0"
+ALIEXPRESS_SEARCH_INITIAL_WAIT_MS = int(os.getenv("ALIEXPRESS_SEARCH_INITIAL_WAIT_MS", "5000"))
+ALIEXPRESS_SEARCH_SCROLL_WAIT_MS = int(os.getenv("ALIEXPRESS_SEARCH_SCROLL_WAIT_MS", "1500"))
+ALIEXPRESS_SEARCH_MAX_SCROLLS = int(os.getenv("ALIEXPRESS_SEARCH_MAX_SCROLLS", "12"))
+ALIEXPRESS_SEARCH_HEADLESS = os.getenv("ALIEXPRESS_SEARCH_HEADLESS", "true").lower() == "true"
+ALIEXPRESS_SEARCH_USER_DATA_DIR = os.getenv("ALIEXPRESS_SEARCH_USER_DATA_DIR")
+ALIEXPRESS_SEARCH_STORAGE_STATE = os.getenv("ALIEXPRESS_SEARCH_STORAGE_STATE")
+ALIEXPRESS_SEARCH_USER_AGENT = os.getenv(
+    "ALIEXPRESS_SEARCH_USER_AGENT",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+)
 
 
 def _is_mock_enabled() -> bool:
@@ -192,6 +206,407 @@ def _normalize_products(raw_products: list[dict]) -> list[AliexpressProductItem]
             second_level_category_name=str(item.get("second_level_category_name", "")),
         ))
     return normalized
+
+
+def _build_aliexpress_search_url(keyword: str, page_no: int = 1) -> str:
+    """AliExpress 검색 URL을 생성한다."""
+    encoded_keyword = quote(keyword, safe="")
+    url = ALIEXPRESS_SEARCH_URL_TEMPLATE.format(keyword=encoded_keyword)
+    if page_no > 1:
+        url = f"{url}&page={page_no}"
+    return url
+
+
+def _parse_price_text(value: str | None) -> str:
+    """가격 텍스트에서 숫자만 추출한다."""
+    if not value:
+        return ""
+    match = re.search(r"\d[\d,]*(?:\.\d+)?", str(value).replace("\xa0", " "))
+    if not match:
+        return ""
+    return match.group(0).replace(",", "")
+
+
+def _normalize_crawled_product_prices(raw_products: list[dict]) -> list[dict]:
+    """크롤링한 원본 상품 딕셔너리의 가격 필드를 후처리한다."""
+    normalized: list[dict] = []
+    for item in raw_products:
+        cloned = dict(item)
+        price_candidates = cloned.get("debug_price_candidates") or []
+        first_candidate = price_candidates[0] if len(price_candidates) > 0 else ""
+        second_candidate = price_candidates[1] if len(price_candidates) > 1 else ""
+
+        current_price = _parse_price_text(
+            cloned.get("target_sale_price")
+            or cloned.get("sale_price")
+            or cloned.get("debug_primary_price_text")
+            or first_candidate
+        )
+        original_price = _parse_price_text(
+            cloned.get("target_original_price")
+            or cloned.get("target_app_original_price")
+            or cloned.get("debug_secondary_price_text")
+            or second_candidate
+        )
+
+        if current_price:
+            cloned["sale_price"] = current_price
+            cloned["target_sale_price"] = current_price
+            if not cloned.get("target_app_sale_price"):
+                cloned["target_app_sale_price"] = current_price
+
+        if original_price:
+            cloned["target_original_price"] = original_price
+            if not cloned.get("target_app_original_price"):
+                cloned["target_app_original_price"] = original_price
+
+        normalized.append(cloned)
+
+    return normalized
+
+
+def _extract_product_id_from_href(href: str | None) -> str:
+    """상품 링크에서 product_id를 추출한다."""
+    if not href:
+        return ""
+    patterns = [
+        r"(?:productId|product_id)=([0-9]{8,})",
+        r"/item/([0-9]{8,})\.html",
+        r"/i/([0-9]{8,})\.html",
+        r"([0-9]{12,})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, href)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _dedupe_products(raw_products: list[dict]) -> list[dict]:
+    """product_id 또는 상세 URL 기준으로 중복을 제거한다."""
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for item in raw_products:
+        key = (item.get("product_id") or item.get("product_detail_url") or item.get("product_title") or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _sort_products_for_request(raw_products: list[dict], sort: str | None) -> list[dict]:
+    """검색 정렬 요청을 로컬에서 가능한 범위만 반영한다."""
+    if not sort:
+        return raw_products
+
+    if sort not in {"SALE_PRICE_ASC", "SALE_PRICE_DESC", "LAST_VOLUME_ASC", "LAST_VOLUME_DESC"}:
+        return raw_products
+
+    if sort.startswith("SALE_PRICE"):
+        reverse = sort.endswith("DESC")
+
+        def sort_key(item: dict) -> tuple[int, float]:
+            price = _parse_price_text(item.get("target_sale_price") or item.get("sale_price") or "")
+            if not price:
+                return (1, float("inf"))
+            try:
+                return (0, float(price))
+            except ValueError:
+                return (1, float("inf"))
+
+        return sorted(raw_products, key=sort_key, reverse=reverse)
+
+    return raw_products
+
+
+async def _extract_crawl_products_from_page(page) -> list[dict]:
+    """렌더링된 AliExpress 검색 결과 페이지에서 카드 정보를 추출한다."""
+    raw_json = await page.evaluate(
+        """
+        () => {
+          const normalize = (value) => (value || "").replace(/\\s+/g, " ").trim();
+          const absUrl = (value) => {
+            if (!value) return "";
+            try {
+              return new URL(value, window.location.href).href;
+            } catch (error) {
+              return String(value);
+            }
+          };
+          const pickText = (root, selectors) => {
+            for (const selector of selectors) {
+              const el = root.querySelector(selector);
+              if (el) {
+                const text = normalize(el.getAttribute("alt") || el.textContent || "");
+                if (text) return text;
+              }
+            }
+            return "";
+          };
+          const pickFirst = (root, selectors) => {
+            for (const selector of selectors) {
+              const el = root.querySelector(selector);
+              if (el) return el;
+            }
+            return null;
+          };
+          const getPriceText = (root, selectors) => {
+            for (const selector of selectors) {
+              const el = root.querySelector(selector);
+              if (el) {
+                const text = normalize(
+                  el.getAttribute("aria-label")
+                  || el.getAttribute("content")
+                  || el.getAttribute("data-price")
+                  || el.textContent
+                  || ""
+                );
+                if (text) return text;
+              }
+            }
+            return "";
+          };
+          const extractPriceCandidates = (value) => {
+            const text = normalize(value);
+            if (!text) return [];
+            const patterns = [
+              /(?:US\\s*\\$|USD\\s*)\\s*([\\d,.]+)/gi,
+              /\\$\\s*([\\d,.]+)/g,
+              /(?:₩|￦|KRW)\\s*([\\d,.]+)/gi,
+              /([\\d,.]+)\\s*원/g,
+              /\\b\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?\\b/g,
+              /\\b\\d+\\.\\d{2}\\b/g,
+            ];
+            const prices = [];
+            for (const pattern of patterns) {
+              let match;
+              while ((match = pattern.exec(text)) !== null) {
+                const candidate = normalize(match[1] || match[0]).replace(/[^0-9.,]/g, "");
+                if (!candidate) continue;
+                if (!prices.includes(candidate)) {
+                  prices.push(candidate);
+                }
+              }
+            }
+            return prices;
+          };
+          const extractProductId = (href, fallback) => {
+            const source = `${href || ""} ${fallback || ""}`;
+            const patterns = [
+              /(?:productId|product_id)=([0-9]{8,})/i,
+              /\\/item\\/([0-9]{8,})\\.html/i,
+              /\\/i\\/([0-9]{8,})\\.html/i,
+              /([0-9]{12,})/i,
+            ];
+            for (const pattern of patterns) {
+              const match = source.match(pattern);
+              if (match) return match[1];
+            }
+            return "";
+          };
+
+          const cards = Array.from(document.querySelectorAll("a.search-card-item"));
+          return cards.map((card) => {
+            const img = card.querySelector("img");
+            const href = absUrl(card.getAttribute("href") || card.href || "");
+            const cardText = normalize(card.innerText || card.textContent || "");
+            const cardHtml = card.innerHTML || "";
+            const title = pickText(card, [
+              ".item-title-wrap",
+              "[class*='item-title']",
+              "[class*='title']",
+            ]) || normalize(img?.getAttribute("alt") || img?.alt || "");
+            const currentPrice = getPriceText(card, [
+              ".price-current",
+              "[class*='price-current']",
+              "[class*='current']",
+            ]);
+            const originalPrice = getPriceText(card, [
+              ".price-original",
+              "[class*='price-original']",
+              "[class*='original']",
+            ]);
+            const priceCandidates = extractPriceCandidates(
+              `${currentPrice} ${originalPrice} ${cardText} ${cardHtml}`
+            );
+            const shopLink = pickFirst(card, [
+              "a[href*='/store/']",
+              "a[href*='store/']",
+              "a[href*='shop/']",
+            ]);
+            const storeName = pickText(card, [
+              "[class*='store-name']",
+              "[class*='shop-name']",
+              "[class*='store']",
+            ]) || normalize(shopLink?.textContent || "");
+
+            return {
+              product_id: extractProductId(href, card.getAttribute("data-product-id") || card.getAttribute("data-id") || ""),
+              product_title: title,
+              product_detail_url: href,
+              product_main_image_url: absUrl(img?.getAttribute("src") || img?.getAttribute("data-src") || img?.getAttribute("data-lazy-src") || img?.currentSrc || img?.src || ""),
+              sale_price: (currentPrice || priceCandidates[0] || "").replace(/[^0-9.]/g, ""),
+              target_sale_price: (currentPrice || priceCandidates[0] || "").replace(/[^0-9.]/g, ""),
+              target_original_price: (originalPrice || priceCandidates[1] || "").replace(/[^0-9.]/g, ""),
+              target_app_sale_price: (currentPrice || priceCandidates[0] || "").replace(/[^0-9.]/g, ""),
+              target_app_original_price: (originalPrice || priceCandidates[1] || "").replace(/[^0-9.]/g, ""),
+              discount: "",
+              evaluate_rate: "",
+              commission_rate: "",
+              lastest_volume: "",
+              shop_name: storeName,
+              shop_url: absUrl(shopLink?.getAttribute("href") || shopLink?.href || ""),
+              first_level_category_id: "",
+              first_level_category_name: "",
+              second_level_category_id: "",
+              second_level_category_name: "",
+              debug_primary_price_text: currentPrice || priceCandidates[0] || "",
+              debug_secondary_price_text: originalPrice || priceCandidates[1] || "",
+              debug_price_candidates: priceCandidates,
+              debug_card_text: cardText,
+            };
+          });
+        }
+        """
+    )
+    if isinstance(raw_json, str):
+        try:
+            return json.loads(raw_json)
+        except json.JSONDecodeError:
+            logger.warning("AliExpress 검색 카드 JSON 파싱 실패")
+            return []
+    if isinstance(raw_json, list):
+        return raw_json
+    return []
+
+
+async def _crawl_aliexpress_search_products(
+    keyword: str,
+    page_no: int = 1,
+    page_size: int = 10,
+    sort: str | None = None,
+) -> list[dict]:
+    """AliExpress 검색 페이지를 브라우저 렌더링 후 카드 목록을 수집한다."""
+    search_url = _build_aliexpress_search_url(keyword, page_no)
+    target_collect_count = max(page_no * page_size, page_size)
+    max_scrolls = max(1, ALIEXPRESS_SEARCH_MAX_SCROLLS)
+
+    logger.info(
+        "AliExpress URL 검색 크롤링 시작 - keyword=%s, page_no=%s, page_size=%s, sort=%s, url=%s",
+        keyword,
+        page_no,
+        page_size,
+        sort,
+        search_url,
+    )
+
+    async with async_playwright() as playwright:
+        browser = None
+        context = None
+        page = None
+        try:
+            context_kwargs: dict = {
+                "locale": "ko-KR",
+                "viewport": {"width": 1440, "height": 2200},
+                "user_agent": ALIEXPRESS_SEARCH_USER_AGENT,
+                "extra_http_headers": {
+                    "accept-language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+                },
+            }
+            if ALIEXPRESS_SEARCH_STORAGE_STATE and not ALIEXPRESS_SEARCH_USER_DATA_DIR:
+                context_kwargs["storage_state"] = ALIEXPRESS_SEARCH_STORAGE_STATE
+            if ALIEXPRESS_SEARCH_USER_DATA_DIR:
+                logger.info("AliExpress 검색 크롤링 - persistent user_data_dir 사용: %s", ALIEXPRESS_SEARCH_USER_DATA_DIR)
+                context = await playwright.chromium.launch_persistent_context(
+                    ALIEXPRESS_SEARCH_USER_DATA_DIR,
+                    headless=ALIEXPRESS_SEARCH_HEADLESS,
+                    args=["--disable-blink-features=AutomationControlled"],
+                    **context_kwargs,
+                )
+            else:
+                browser = await playwright.chromium.launch(
+                    headless=ALIEXPRESS_SEARCH_HEADLESS,
+                    args=["--disable-blink-features=AutomationControlled"],
+                )
+                context = await browser.new_context(**context_kwargs)
+            page = await context.new_page()
+
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+            await page.wait_for_timeout(ALIEXPRESS_SEARCH_INITIAL_WAIT_MS)
+
+            if "punish" in page.url or "Captcha Interception" in await page.title():
+                raise ValueError(
+                    "AliExpress 검색 페이지가 CAPTCHA/차단 페이지로 응답했습니다. "
+                    "브라우저 쿠키 또는 수동 세션이 필요할 수 있습니다."
+                )
+
+            collected: list[dict] = []
+            seen: set[str] = set()
+            stagnant_rounds = 0
+            viewport_height = 2200
+
+            for attempt in range(max_scrolls):
+                batch = _normalize_crawled_product_prices(await _extract_crawl_products_from_page(page))
+                before_count = len(collected)
+                for item in batch:
+                    key = (item.get("product_id") or item.get("product_detail_url") or item.get("product_title") or "").strip()
+                    if not key or key in seen:
+                        continue
+                    seen.add(key)
+                    collected.append(item)
+
+                logger.info(
+                    "AliExpress 검색 크롤링 스냅샷 - attempt=%s, batch=%s, total=%s, target=%s",
+                    attempt + 1,
+                    len(batch),
+                    len(collected),
+                    target_collect_count,
+                )
+
+                if len(collected) >= target_collect_count:
+                    break
+
+                if len(collected) == before_count:
+                    stagnant_rounds += 1
+                else:
+                    stagnant_rounds = 0
+
+                if stagnant_rounds >= 2:
+                    break
+
+                await page.mouse.wheel(0, viewport_height * 2)
+                await page.wait_for_timeout(ALIEXPRESS_SEARCH_SCROLL_WAIT_MS)
+
+            collected = _dedupe_products(_sort_products_for_request(collected, sort))
+            missing_price_items = [
+                {
+                    "product_id": item.get("product_id"),
+                    "title": item.get("product_title"),
+                    "primary": item.get("debug_primary_price_text"),
+                    "secondary": item.get("debug_secondary_price_text"),
+                    "candidates": item.get("debug_price_candidates"),
+                    "card_text": (item.get("debug_card_text") or "")[:240],
+                }
+                for item in collected
+                if not _parse_price_text(item.get("target_sale_price") or item.get("sale_price"))
+            ]
+            logger.info(
+                "AliExpress 검색 크롤링 완료 - keyword=%s, collected=%s, missingPrice=%s",
+                keyword,
+                len(collected),
+                len(missing_price_items),
+            )
+            if missing_price_items:
+                logger.info("AliExpress 가격 미추출 샘플: %s", missing_price_items[:3])
+            return collected
+        finally:
+            if page is not None:
+                await page.close()
+            if context is not None:
+                await context.close()
+            if browser is not None:
+                await browser.close()
 
 
 # --- 모킹용 고정 데이터 ---
@@ -491,16 +906,15 @@ async def search_affiliate_products(
 ) -> AliexpressSearchResponse:
     """AliExpress Affiliate 상품 검색 API 호출 및 정규화된 응답 반환
 
-    ALIEXPRESS_MOCK_ENABLED=true인 경우 실제 API 호출 없이 모킹 데이터를 반환한다.
-
     Args:
-        keyword: 검색 키워드 (AliExpress API 전송 시 'keywords'로 매핑)
+        keyword: 검색 키워드
         page_no: 페이지 번호 (기본 1)
         page_size: 페이지당 결과 수 (기본 10, 최대 50)
         sort: 정렬 기준 (SALE_PRICE_ASC, SALE_PRICE_DESC, LAST_VOLUME_ASC, LAST_VOLUME_DESC)
         target_currency: 타겟 통화 (기본 KRW)
         target_language: 타겟 언어 (기본 KO)
         ship_to_country: 배송 국가 (기본 KR)
+        category_ids: 카테고리 ID 목록 (선택)
         tracking_id: 트래킹 ID (선택)
 
     Returns:
@@ -522,10 +936,13 @@ async def search_affiliate_products(
             tracking_id=tracking_id,
         )
 
-    # page_size 최대 50 제한
     page_size = min(page_size, 50)
 
-    # 검색 파라미터 구성 (keyword → keywords 매핑)
+    if sort:
+        allowed_sorts = {"SALE_PRICE_ASC", "SALE_PRICE_DESC", "LAST_VOLUME_ASC", "LAST_VOLUME_DESC"}
+        if sort not in allowed_sorts:
+            raise ValueError(f"지원하지 않는 정렬값: {sort}. 허용값: {', '.join(allowed_sorts)}")
+
     extra_params: dict[str, str] = {
         "keywords": keyword,
         "page_no": str(page_no),
@@ -536,18 +953,16 @@ async def search_affiliate_products(
     }
 
     if sort:
-        allowed_sorts = {"SALE_PRICE_ASC", "SALE_PRICE_DESC", "LAST_VOLUME_ASC", "LAST_VOLUME_DESC"}
-        if sort not in allowed_sorts:
-            raise ValueError(f"지원하지 않는 정렬값: {sort}. 허용값: {', '.join(allowed_sorts)}")
         extra_params["sort"] = sort
-
+    if category_ids:
+        extra_params["category_ids"] = category_ids
     if tracking_id:
         extra_params["tracking_id"] = tracking_id
 
-    if category_ids:
-        extra_params["category_ids"] = category_ids
-
-    params = _build_signed_params(method="aliexpress.affiliate.product.query", extra_params=extra_params)
+    params = _build_signed_params(
+        method="aliexpress.affiliate.product.query",
+        extra_params=extra_params,
+    )
 
     base_url = os.getenv("ALIEXPRESS_BASE_URL", ALIEXPRESS_API_BASE_URL)
 
@@ -561,19 +976,15 @@ async def search_affiliate_products(
 
     data = response.json()
 
-    # 에러 응답 확인
     error_code, error_message = _extract_error(data)
     if error_code:
         raise ValueError(f"AliExpress API 에러: code={error_code}, message={error_message}")
 
-    # 상품 응답 파싱: ...resp_result.result.products 또는 {product:[...]} 형태 모두 처리
     resp_result = data.get("aliexpress_affiliate_product_query_response", data.get("resp_result", {}))
     if isinstance(resp_result, dict) and "resp_result" in resp_result:
         resp_result = resp_result["resp_result"]
 
     result = resp_result.get("result", {}) if isinstance(resp_result, dict) else {}
-
-    # products 데이터 추출: products.product 또는 직접 product 리스트
     products_data = result.get("products", result) if isinstance(result, dict) else {}
     if isinstance(products_data, dict):
         raw_products = products_data.get("product", [])
@@ -582,9 +993,7 @@ async def search_affiliate_products(
     else:
         raw_products = []
 
-    # total: total_record_count 또는 total_result_count 우선, 없으면 items 길이
     total = result.get("total_record_count", result.get("total_result_count", len(raw_products)))
-
     items = _normalize_products(raw_products)
     return AliexpressSearchResponse(
         total=total,

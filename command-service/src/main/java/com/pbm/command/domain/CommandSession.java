@@ -78,6 +78,14 @@ public class CommandSession {
     @Column(length = 30)
     private String platform;
 
+    /** GPT가 자연어에서 추출한 색상 옵션 (예: "black", "블랙") */
+    @Column(length = 100)
+    private String parsedColor;
+
+    /** GPT가 자연어에서 추출한 사이즈 옵션 (예: "M", "270") */
+    @Column(length = 100)
+    private String parsedSize;
+
     @CreatedDate
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -271,6 +279,15 @@ public class CommandSession {
     }
 
     /**
+     * 결제 페이지 도달 상태로 전환한다.
+     * 역할: 브라우저 자동화가 최종 결제 페이지에 도달했을 때 호출한다.
+     *       PBM 토큰 차감 이벤트를 발행한 뒤 이 상태로 전환된다.
+     */
+    public void toCheckoutReached() {
+        this.status = CommandSessionStatus.CHECKOUT_REACHED;
+    }
+
+    /**
      * 검증 완료 결과를 저장하고 세션 상태를 최종 상태로 전환한다.
      *
      * @param nextStatus           검증 완료 후 세션 상태
@@ -343,5 +360,17 @@ public class CommandSession {
      */
     public void updateOriginalCommand(String mergedCommand) {
         this.originalCommand = mergedCommand;
+    }
+
+    /**
+     * GPT 파싱 결과에서 추출한 상품 옵션(색상, 사이즈)을 저장한다.
+     * 이후 상품 상세페이지에서 optionGroups 매칭 시 활용한다.
+     *
+     * @param color GPT가 추출한 색상 (예: "black"), null 가능
+     * @param size  GPT가 추출한 사이즈 (예: "M"), null 가능
+     */
+    public void updateParsedOptions(String color, String size) {
+        this.parsedColor = color;
+        this.parsedSize = size;
     }
 }

@@ -19,10 +19,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * CommandParsingService 단위 테스트.
  *
- * 역할: 공통 필수 필드(PRODUCT_NAME, MAX_PRICE, PLATFORM) 규칙이
+ * 역할: 공통 필수 필드(PRODUCT_NAME, MAX_PRICE) 규칙이
  *       실제 파싱 응답에 올바르게 반영되는지 검증한다.
- * 동작: 대표 명령어를 입력하여 intent, category, 공통 필수 누락/모호 필드 계산 결과를 확인한다.
- *       카테고리별 size/color/model 의존 로직은 제거되어, PLATFORM이 공통 필수 필드로 적용된다.
+ * 동작: PLATFORM은 선택 필드 — 누락돼도 needsClarification이 false로 실행을 계속한다.
+ *       상품명과 최대가격만 필수이며, 나머지 필드는 null 허용.
  * 연관: CommandParsingService, CommandFieldEvaluationService.
  */
 class CommandParsingServiceTest {
@@ -33,8 +33,8 @@ class CommandParsingServiceTest {
             new CommandParsingService(openAiCommandClient, new CommandFieldEvaluationService(new CommandFieldPolicyService()));
 
     @Test
-    @DisplayName("PLATFORM이 누락된 자동 결제 명령을 파싱하면 platform이 필수 누락으로 표시된다")
-    void parse_autoPurchaseShoesWithoutPlatform_returnsPlatformMissing() {
+    @DisplayName("PLATFORM이 없어도 clarification 없이 즉시 실행을 계속한다")
+    void parse_autoPurchaseShoesWithoutPlatform_proceedsWithoutClarification() {
         when(openAiCommandClient.parseCommand(any(CommandParseRequest.class)))
                 .thenReturn(new OpenAiParsedCommandPayload(
                         CommandIntent.AUTO_PURCHASE,
@@ -46,7 +46,7 @@ class CommandParsingServiceTest {
                                 null,
                                 null,
                                 null,
-                                null,
+                                null,       // platforms = null (미지정)
                                 200000,
                                 null,
                                 "KRW"
@@ -62,11 +62,11 @@ class CommandParsingServiceTest {
         assertThat(response.parsedCommand().productCategory()).isEqualTo(ProductCategory.SHOES);
         assertThat(response.parsedCommand().productName()).isEqualTo("나이키 조던");
         assertThat(response.parsedCommand().maxPrice()).isEqualTo(200000);
-        // 공통 필수 필드: PRODUCT_NAME(있음), MAX_PRICE(있음), PLATFORM(null→누락)
-        assertThat(response.missingRequiredFields()).containsExactly("platform");
-        // autoPurchaseClarificationFields와 broadProductClarificationFields는 빈 리스트 → 모호 필드 없음
+        // PLATFORM이 선택 필드로 변경됨 → missing에 platform 없음
+        assertThat(response.missingRequiredFields()).doesNotContain("platform");
         assertThat(response.ambiguousFields()).isEmpty();
-        assertThat(response.needsClarification()).isTrue();
+        // platform 누락만으로는 clarification 요청 안 함
+        assertThat(response.needsClarification()).isFalse();
     }
 
     @Test
@@ -133,7 +133,7 @@ class CommandParsingServiceTest {
 
         assertThat(response.intent()).isEqualTo(CommandIntent.AUTO_PURCHASE);
         assertThat(response.parsedCommand().productCategory()).isEqualTo(ProductCategory.UNKNOWN);
-        // 공통 필수 필드 3개 모두 있음 → 누락 없음
+        // 공통 필수 필드 2개(PRODUCT_NAME, MAX_PRICE) 모두 있음 → 누락 없음
         assertThat(response.missingRequiredFields()).isEmpty();
         assertThat(response.ambiguousFields()).isEmpty();
         assertThat(response.needsClarification()).isFalse();

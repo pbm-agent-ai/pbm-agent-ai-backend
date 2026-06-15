@@ -1,8 +1,12 @@
 package com.pbm.payment.controller;
 
 import com.pbm.payment.common.ApiResponse;
+import com.pbm.payment.domain.Payment;
+import com.pbm.payment.domain.TokenTransaction;
+import com.pbm.payment.domain.TokenTransactionType;
 import com.pbm.payment.dto.response.PaymentDetailResponse;
 import com.pbm.payment.dto.response.PaymentSummaryResponse;
+import com.pbm.payment.repository.TokenTransactionRepository;
 import com.pbm.payment.service.PaymentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,11 +20,11 @@ import java.util.List;
 
 /**
  * PBM 결제 내역 조회 API 컨트롤러.
- * 
+ *
  * 역할: 사용자별 결제 목록 조회와 결제 건 단건 상세 조회를 제공한다.
  * 동작: gateway의 /api/v1/payments/** 경로로 라우팅되며,
  *       모든 응답은 ApiResponse<T> 래퍼로 감싸 반환한다.
- * 연관: PaymentService, PaymentSummaryResponse, PaymentDetailResponse.
+ * 연관: PaymentService, PaymentSummaryResponse, PaymentDetailResponse, TokenTransactionRepository.
  */
 @Slf4j
 @RestController
@@ -29,6 +33,7 @@ import java.util.List;
 public class PaymentController {
 
     private final PaymentService paymentService;
+    private final TokenTransactionRepository tokenTransactionRepository;
 
     /**
      * 현재 인증된 사용자의 결제 내역 목록을 최신순으로 조회한다.
@@ -53,7 +58,8 @@ public class PaymentController {
 
     /**
      * 결제 식별자(paymentId)로 결제 건의 상세 정보를 조회한다.
-     * 
+     * 해당 사용자의 FEE 타입 거래 내역(결제 가스비 + 세션키 등록 수수료)을 함께 반환한다.
+     *
      * @param paymentId 조회할 결제 식별자 ("pay-" 로 시작하는 문자열)
      * @return 결제 상세 정보를 감싼 ApiResponse, 존재하지 않으면 error 응답
      */
@@ -64,13 +70,19 @@ public class PaymentController {
         log.info("결제 상세 조회 요청 - paymentId: {}", paymentId);
 
         try {
-            PaymentDetailResponse payment = PaymentDetailResponse.from(
-                    paymentService.getPaymentByPaymentId(paymentId)
-            );
-            return ApiResponse.success(payment, "결제 상세 조회 성공");
+            Payment payment = paymentService.getPaymentByPaymentId(paymentId);
+
+            // 해당 사용자의 FEE 타입 거래 내역 조회 (상품/구독 단위로 묶을 수 있으면 subscriptionId 우선 사용)
+            List<TokenTransaction> feeTransactions = payment.getSubscriptionId() != null
+                    ? tokenTransactionRepository.findByUserIdAndSubscriptionIdAndTypeOrderByCreatedAtDesc(
+                            payment.getUserId(), payment.getSubscriptionId(), TokenTransactionType.FEE)
+                    : tokenTransactionRepository.findByUserIdAndTypeOrderByCreatedAtDesc(
+                            payment.getUserId(), TokenTransactionType.FEE);
+
+            PaymentDetailResponse response = PaymentDetailResponse.from(payment, feeTransactions);
+            return ApiResponse.success(response, "결제 상세 조회 성공");
         } catch (IllegalArgumentException e) {
             log.warn("결제 건 조회 실패 - paymentId: {}, 원인: {}", paymentId, e.getMessage());
-            // 예외 계층이 준비되기 전까지 컨트롤러에서 최소한의 변환 처리
             return ApiResponse.error(e.getMessage());
         }
     }

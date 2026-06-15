@@ -1,6 +1,7 @@
 package com.pbm.price.service;
 
 import com.pbm.price.client.ExternalApiClient;
+import com.pbm.price.domain.CurrencyType;
 import com.pbm.price.domain.MonitorTarget;
 import com.pbm.price.domain.Platform;
 import com.pbm.price.dto.response.AliExpressShoppingItem;
@@ -13,6 +14,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
@@ -20,16 +22,14 @@ import java.util.List;
  * 공유 수집 기반 가격 모니터링 스케줄러 (product 단위).
  *
  * 역할: 주기적으로 수집 예정 시각이 도래한 MonitorTarget을 찾아
- *       해당 상품의 최신 가격 정보를 수집하고 DB에 영속화한다.
- * 동작: 스케줄러 실행 주기(scheduler-interval-ms, 기본 1분)마다 DB를 폴링하여
+ *       해당 상품의 최신 가격 정보를 수집하고 DB에 영속화한 뒤,
+ *       해당 상품의 모든 ACTIVE 구독에 대해 목표가 조건을 인라인 평가한다.
+ * 동작: 스케줄러 실행 주기(scheduler-interval-ms, 기본 10분)마다 DB를 폴링하여
  *       nextFetchAt이 현재 시각보다 이전인 MonitorTarget만 선택적으로 수집한다.
  *       개별 대상의 수집 주기(fetch-interval-minutes, 기본 10분)는 MonitorTarget에 설정되며,
- *       스케줄러는 1분마다 확인만 하고 실제 API 호출은 수집 예정 시각이 도래한 대상에만 수행한다.
  *       하나의 대상 수집이 실패해도 전체 배치가 중단되지 않도록 try-catch로 격리한다.
- * 변경: keyword 기반 수집 → productId 기반 수집으로 전환.
- *       NAVER: searchKeyword로 검색 후 productId/productUrl 매칭.
- *       ALIEXPRESS: detail API 우선, searchKeyword fallback.
- * 연관: MonitorTargetRepository, ExternalApiClient, ProductPersistenceService.
+ * 연관: MonitorTargetRepository, ExternalApiClient, ProductPersistenceService,
+ *       SubscriptionMonitoringService.
  */
 @Slf4j
 @Service
@@ -39,10 +39,7 @@ public class PriceMonitoringScheduler {
     private final MonitorTargetRepository monitorTargetRepository;
     private final ExternalApiClient externalApiClient;
     private final ProductPersistenceService productPersistenceService;
-
-    // 검색 시 한 번에 가져올 기본 결과 수
-    @Value("${app.monitoring.default-display:10}")
-    private int defaultDisplay;
+    private final SubscriptionMonitoringService subscriptionMonitoringService;
 
     // 기본 AliExpress 검색 파라미터
     @Value("${app.monitoring.aliexpress-default-page-size:10}")
@@ -57,9 +54,10 @@ public class PriceMonitoringScheduler {
      * 동작 흐름:
      * 1. nextFetchAt이 현재 시각 이전인 MonitorTarget 목록을 조회
      * 2. 각 대상의 platform에 따라 네이버 또는 알리 API 호출
-     * 3. 매칭된 상품만 Product/PriceHistory에 반영
-     * 4. 대상의 lastFetchedAt/nextFetchAt 갱신
-     * 5. 한 대상 실패가 전체 배치를 중단시키지 않도록 예외를 로깅하고 계속 진행
+     * 3. 매칭된 상품만 PriceHistory에 반영
+     * 4. 수집된 가격으로 해당 상품의 ACTIVE 구독 조건을 인라인 평가
+     * 5. 대상의 lastFetchedAt/nextFetchAt 갱신
+     * 6. 한 대상 실패가 전체 배치를 중단시키지 않도록 예외를 로깅하고 계속 진행
      */
     @Scheduled(fixedDelayString = "${app.monitoring.scheduler-interval-ms:600000}")
     public void collectDueTargets() {
@@ -91,8 +89,8 @@ public class PriceMonitoringScheduler {
     }
 
     /**
-     * 단일 MonitorTarget에 대해 API를 호출하여 최신 가격 정보를 수집한다.
-     * product 단위로 매칭하여 해당 상품만 영속화한다.
+     * 단일 MonitorTarget에 대해 API를 호출하여 최신 가격 정보를 수집하고,
+     * 해당 상품의 ACTIVE 구독 조건을 인라인 평가한다.
      *
      * @param target 수집할 모니터링 대상
      */
@@ -102,13 +100,22 @@ public class PriceMonitoringScheduler {
         String productUrl = target.getProductUrl();
         Instant now = Instant.now();
 
-        if (target.getPlatform() == Platform.NAVER) {
-            collectNaverTarget(target, productId, searchKeyword, productUrl, now);
+        if (target.getPlatform() == Platform.URL) {
+            // URL 타입은 익스텐션이 직접 크롤링하므로 서버 스케줄러에서 건너뛴다.
+            log.debug("URL 타입 MonitorTarget 건너뜀 - productId: {}", productId);
+            return;
         } else if (target.getPlatform() == Platform.ALIEXPRESS) {
-            collectAliExpressTarget(target, productId, searchKeyword, now);
+            // AliExpress는 URL 기반 모니터링으로 전환됨 (API 500 에러 이슈)
+            // 익스텐션이 직접 상품 페이지를 크롤링하므로 서버 스케줄러에서 건너뛴다.
+            // 기존 ALIEXPRESS 타입 MonitorTarget은 수집 시각만 갱신하여 반복 폴링 방지
+            log.info("AliExpress MonitorTarget 건너뜀 (URL 모니터링 전환) - productId: {}", productId);
+            target.markFetched(now);
+            monitorTargetRepository.save(target);
+            return;
+        } else if (target.getPlatform() == Platform.NAVER) {
+            collectNaverTarget(target, productId, searchKeyword, productUrl, now);
         } else {
             log.warn("지원하지 않는 platform - {}", target.getPlatform());
-            // 지원하지 않는 platform이어도 schedule은 갱신해서 계속 시도하지 않도록 함
             target.markFetched(now);
             monitorTargetRepository.save(target);
         }
@@ -116,6 +123,7 @@ public class PriceMonitoringScheduler {
 
     /**
      * NAVER 대상 수집: searchKeyword로 검색 후 productId/productUrl 매칭.
+     * 수집 성공 시 인라인 조건 평가, 실패 시 miss 기록.
      */
     private void collectNaverTarget(MonitorTarget target, String productId, String searchKeyword,
                                      String productUrl, Instant now) {
@@ -140,17 +148,29 @@ public class PriceMonitoringScheduler {
         if (matched != null) {
             log.info("네이버 상품 매칭 성공 - productId: {}, title: {}", productId, matched.title());
             productPersistenceService.saveRefreshedNaverProduct(target, matched, now);
+
+            // 수집된 가격으로 ACTIVE 구독 조건 인라인 평가
+            BigDecimal currentPrice = parsePrice(matched.lprice());
+            if (currentPrice != null) {
+                subscriptionMonitoringService.evaluateSubscriptionsForTarget(
+                        Platform.NAVER, productId, currentPrice, CurrencyType.KRW,
+                        matched.title(), matched.link()
+                );
+            }
         } else {
             log.warn("네이버 상품 매칭 실패 - productId: {}, searchKeyword: {}", productId, searchKeyword);
+            // 매칭 실패 → ACTIVE 구독에 miss 기록
+            subscriptionMonitoringService.handleCollectionMiss(Platform.NAVER, productId);
         }
 
-        // 수집 완료 시각을 갱신하여 다음 주기에 다시 수집할 수 있도록 함 (실패해도 interval 유지)
+        // 수집 완료 시각 갱신 (성공/실패 무관하게 다음 주기 설정)
         target.markFetched(now);
         monitorTargetRepository.save(target);
     }
 
     /**
      * ALIEXPRESS 대상 수집: productId detail API 우선, searchKeyword fallback.
+     * 수집 성공 시 인라인 조건 평가, 실패 시 miss 기록.
      */
     private void collectAliExpressTarget(MonitorTarget target, String productId, String searchKeyword, Instant now) {
         log.info("알리익스프레스 수집 - productId: {}", productId);
@@ -175,8 +195,31 @@ public class PriceMonitoringScheduler {
             log.info("알리익스프레스 상품 매칭 성공 - productId: {}, title: {}",
                     productId, product.product_title());
             productPersistenceService.saveRefreshedAliExpressProduct(target, product, "KRW", now);
+
+            // 수집된 가격으로 ACTIVE 구독 조건 인라인 평가
+            BigDecimal currentPrice;
+            CurrencyType currency;
+            if (product.target_sale_price() != null && !product.target_sale_price().isBlank()) {
+                currentPrice = parsePrice(product.target_sale_price());
+                currency = CurrencyType.KRW;
+            } else if (product.sale_price() != null && !product.sale_price().isBlank()) {
+                currentPrice = parsePrice(product.sale_price());
+                currency = CurrencyType.USD;
+            } else {
+                currentPrice = null;
+                currency = CurrencyType.KRW;
+            }
+
+            if (currentPrice != null) {
+                subscriptionMonitoringService.evaluateSubscriptionsForTarget(
+                        Platform.ALIEXPRESS, productId, currentPrice, currency,
+                        product.product_title(), product.product_detail_url()
+                );
+            }
         } else {
             log.warn("알리익스프레스 상품 매칭 실패 - productId: {}, searchKeyword: {}", productId, searchKeyword);
+            // 매칭 실패 → ACTIVE 구독에 miss 기록
+            subscriptionMonitoringService.handleCollectionMiss(Platform.ALIEXPRESS, productId);
         }
 
         // 수집 완료 시각 갱신
@@ -252,5 +295,20 @@ public class PriceMonitoringScheduler {
         }
 
         return null;
+    }
+
+    /**
+     * 문자열 가격을 BigDecimal로 파싱한다.
+     */
+    private BigDecimal parsePrice(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return new BigDecimal(value.replace(",", "").trim());
+        } catch (NumberFormatException e) {
+            log.warn("가격 파싱 실패 - value: {}", value);
+            return null;
+        }
     }
 }

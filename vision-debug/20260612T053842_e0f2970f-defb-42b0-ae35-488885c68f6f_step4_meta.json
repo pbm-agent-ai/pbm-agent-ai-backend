@@ -1,0 +1,30 @@
+{
+  "runId": "e0f2970f-defb-42b0-ae35-488885c68f6f",
+  "stepIndex": 4,
+  "currentUrl": "https://ko.aliexpress.com/item/1005009627913067.html?spm=a2g0o.productlist.main.2.21384c56ycW9Lt&algo_pvid=8e7e2b7f-2ef9-45bb-a863-982c0682fdda&algo_exp_id=8e7e2b7f-2ef9-45bb-a863-982c0682fdda-1&pdp_ext_f=%7B%22order%22%3A%22534%22%2C%22eval%22%3A%221%22%2C%22fromPage%22%3A%22search%22%7D&pdp_npi=6%40dis%21KRW%21159750%21127800%21%21%21102.01%2181.61%21%402140f53817812426819891397e9a20%2112000058287110342%21sea%21KR%212670358201%21X%211%210%21n_tag%3A-29919%3Bd%3A9ef3e404%3Bm03_new_user%3A-29895&curPageLogUid=KyhNUJoByWIi&utparam-url=scene%3Asearch%7Cquery_from%3A%7Cx_object_id%3A1005009627913067%7C_p_origin_prod%3A",
+  "action": "CLICK",
+  "imageWidth": 1541,
+  "imageHeight": 929,
+  "rawX": 755.0,
+  "rawY": 206.0,
+  "normalizedX": 0.755,
+  "normalizedY": 0.206,
+  "pixelInterpretation": {
+    "x": 755,
+    "y": 206
+  },
+  "grid1000Interpretation": {
+    "x": 1163,
+    "y": 191
+  },
+  "targetLabel": "수정하기",
+  "confidence": 0.9,
+  "reason": "Smartstore option UI (color/size toggle, listbox opener, or role=radio option button) is present. Clicking \"수정하기\" button to open color/size options.",
+  "errorCode": null,
+  "errorMessage": null,
+  "mode": "SMARTSTORE_OPTION_PRESENCE",
+  "targetOption": null,
+  "savedAtUtc": "20260612T053842",
+  "rawPath": "/app/vision-debug/20260612T053842_e0f2970f-defb-42b0-ae35-488885c68f6f_step4_raw.png",
+  "annotatedPath": "/app/vision-debug/20260612T053842_e0f2970f-defb-42b0-ae35-488885c68f6f_step4_annotated.png"
+}

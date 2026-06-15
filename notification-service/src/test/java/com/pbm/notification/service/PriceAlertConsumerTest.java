@@ -52,7 +52,8 @@ class PriceAlertConsumerTest {
                 "아이폰 16 Pro 256GB",  // productName: 상품명
                 1200000,               // currentPrice: 현재 가격 (1,200,000원)
                 1100000,               // targetPrice: 목표 가격 (1,100,000원)
-                "https://example.com/iphone16pro"  // productUrl: 상품 페이지
+                "https://example.com/iphone16pro",  // productUrl: 상품 페이지
+                "아이폰 16 프로"        // searchKeyword: 검색 키워드
         );
         PriceAlertEvent event = new PriceAlertEvent(
                 "evt-test-001",        // eventId: 이벤트 고유 ID
@@ -87,7 +88,8 @@ class PriceAlertConsumerTest {
                 "갤럭시 S25 Ultra",
                 1300000,
                 1200000,
-                null  // productUrl이 없는 경우
+                null,  // productUrl이 없는 경우
+                "갤럭시"
         );
         PriceAlertEvent event = new PriceAlertEvent(
                 "evt-test-002",

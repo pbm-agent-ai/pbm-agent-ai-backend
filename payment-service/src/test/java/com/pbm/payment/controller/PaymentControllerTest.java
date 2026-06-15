@@ -1,6 +1,8 @@
 package com.pbm.payment.controller;
 
 import com.pbm.payment.domain.Payment;
+import com.pbm.payment.domain.TokenTransactionType;
+import com.pbm.payment.repository.TokenTransactionRepository;
 import com.pbm.payment.service.PaymentService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -35,11 +37,15 @@ class PaymentControllerTest {
     @MockBean
     private PaymentService paymentService;
 
+    /** TokenTransactionRepository를 Mock으로 대체하여 FEE 내역 조회를 격리한다 */
+    @MockBean
+    private TokenTransactionRepository tokenTransactionRepository;
+
     // ──────────────── 테스트 픽스처 헬퍼 ────────────────
 
     /** 테스트용 Payment 엔티티 생성 (SUCCESS 상태) */
     private Payment createTestPayment(String paymentId, Long userId, String productName) {
-        Payment payment = Payment.create(paymentId, userId, productName,
+        Payment payment = Payment.create(paymentId, userId, 123L, productName,
                 "https://example.com/product/" + paymentId,
                 15000, "KRW", null);
         payment.markSuccess("0xtxhash" + paymentId);
@@ -48,7 +54,7 @@ class PaymentControllerTest {
 
     /** 테스트용 Payment 엔티티 생성 (FAILED 상태) */
     private Payment createFailedPayment(String paymentId, Long userId, String productName) {
-        Payment payment = Payment.create(paymentId, userId, productName,
+        Payment payment = Payment.create(paymentId, userId, 456L, productName,
                 "https://example.com/product/" + paymentId,
                 8900, "USD", null);
         payment.markFailed("잔액 부족");
@@ -58,7 +64,7 @@ class PaymentControllerTest {
     // ──────────────── 결제 목록 조회 테스트 ────────────────
 
     @Test
-    @DisplayName("GET /api/v1/payments?userId=1: 정상 조회 시 200 OK와 ApiResponse<List> JSON 반환")
+    @DisplayName("GET /api/v1/payments: 정상 조회 시 200 OK와 ApiResponse<List> JSON 반환")
     void getPaymentsByUserId_success_returns200WithApiResponse() throws Exception {
         // given - 사용자 1의 결제 2건이 존재하는 상황
         Payment pay1 = createTestPayment("pay-aa111111", 1L, "에어팟 프로 2세대");
@@ -69,7 +75,7 @@ class PaymentControllerTest {
 
         // when & then - HTTP 상태코드와 ApiResponse JSON 형식 검증
         mockMvc.perform(get("/api/v1/payments")
-                        .param("userId", "1"))
+                        .header("X-User-Id", "1"))
                 .andExpect(status().isOk())
                 // ApiResponse 래퍼 구조 검증
                 .andExpect(jsonPath("$.success").value(true))
@@ -90,14 +96,14 @@ class PaymentControllerTest {
     }
 
     @Test
-    @DisplayName("GET /api/v1/payments?userId=99: 결제 내역이 없는 사용자 조회 시 빈 배열 반환")
+    @DisplayName("GET /api/v1/payments: 결제 내역이 없는 사용자 조회 시 빈 배열 반환")
     void getPaymentsByUserId_emptyList_returns200WithEmptyArray() throws Exception {
         // given - 결제 내역이 없는 사용자
         when(paymentService.getPaymentsByUserId(99L)).thenReturn(List.of());
 
         // when & then - 빈 배열이 정상 반환되는지 검증
         mockMvc.perform(get("/api/v1/payments")
-                        .param("userId", "99"))
+                        .header("X-User-Id", "99"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data").isArray())
@@ -112,6 +118,9 @@ class PaymentControllerTest {
         // given - SUCCESS 상태의 결제 건이 존재하는 상황
         Payment payment = createTestPayment("pay-cc333333", 2L, "갤럭시 버즈");
         when(paymentService.getPaymentByPaymentId("pay-cc333333")).thenReturn(payment);
+        when(tokenTransactionRepository.findByUserIdAndSubscriptionIdAndTypeOrderByCreatedAtDesc(
+                2L, 123L, TokenTransactionType.FEE))
+                .thenReturn(List.of());
 
         // when & then - 상세 응답의 모든 필드 검증
         mockMvc.perform(get("/api/v1/payments/pay-cc333333"))
@@ -127,7 +136,9 @@ class PaymentControllerTest {
                 .andExpect(jsonPath("$.data.currency").value("KRW"))
                 .andExpect(jsonPath("$.data.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.transactionHash").value("0xtxhashpay-cc333333"))
-                .andExpect(jsonPath("$.data.failureReason").doesNotExist());
+                .andExpect(jsonPath("$.data.failureReason").doesNotExist())
+                .andExpect(jsonPath("$.data.feeDetails").isArray())
+                .andExpect(jsonPath("$.data.feeDetails.length()").value(0));
     }
 
     @Test
@@ -153,6 +164,9 @@ class PaymentControllerTest {
         // given - FAILED 상태의 결제 건이 존재하는 상황
         Payment failedPayment = createFailedPayment("pay-dd444444", 3L, "맥북 케이스");
         when(paymentService.getPaymentByPaymentId("pay-dd444444")).thenReturn(failedPayment);
+        when(tokenTransactionRepository.findByUserIdAndSubscriptionIdAndTypeOrderByCreatedAtDesc(
+                3L, 456L, TokenTransactionType.FEE))
+                .thenReturn(List.of());
 
         // when & then - fail 상태 필드 검증
         mockMvc.perform(get("/api/v1/payments/pay-dd444444"))

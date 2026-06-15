@@ -8,7 +8,7 @@ import java.util.List;
  * 카테고리 고정 목록:
  *   대분류(categoryMain)    소분류(categorySub)
  *   ─────────────────────────────────────────
- *   HOME_APPLIANCE      →  FOOD_PROCESSOR, VACUUM, WASHER, REFRIGERATOR, AIR_PURIFIER
+ *   HOME_APPLIANCE      →  FOOD_PROCESSOR, VACUUM, WASHER, REFRIGERATOR, KIMCHI_REFRIGERATOR, AIR_PURIFIER
  *   ELECTRONICS         →  EARPHONE, HEADPHONE, SMARTPHONE, MONITOR, KEYBOARD, MOUSE, LAPTOP, TABLET
  *   LIVING              →  FURNITURE, BEDDING, LIGHTING
  *   BEAUTY              →  SKINCARE, MAKEUP, HAIR

@@ -35,6 +35,9 @@ public enum CommandSessionStatus {
     /** PRICE_CHECK 의도가 실시간 가격 검증까지 완료된 상태 */
     PRICE_CHECK_COMPLETED,
 
+    /** AUTO_PURCHASE 의도에서 결제 페이지 도달 → PBM 토큰 차감 진행 중 */
+    CHECKOUT_REACHED,
+
     /** AUTO_PURCHASE 의도에서 즉시 구매 처리가 완료된 상태 */
     AUTO_PURCHASE_COMPLETED
 }

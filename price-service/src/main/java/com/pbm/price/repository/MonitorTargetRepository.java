@@ -3,6 +3,8 @@ package com.pbm.price.repository;
 import com.pbm.price.domain.MonitorTarget;
 import com.pbm.price.domain.Platform;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
@@ -28,4 +30,19 @@ public interface MonitorTargetRepository extends JpaRepository<MonitorTarget, Lo
      * @return 수집해야 할 MonitorTarget 목록
      */
     List<MonitorTarget> findByNextFetchAtBefore(Instant threshold);
+
+    /**
+     * URL 플랫폼 수집 대상 중 nextFetchAt이 도래했거나 아직 초기화되지 않은 대상을 조회한다.
+     * 익스텐션 heartbeat에서 크롤링 대상을 결정할 때 사용된다.
+     *
+     * @param productIds 대상 productId 목록 (사용자의 ACTIVE URL 구독에서 추출)
+     * @param now        현재 시각
+     * @return 크롤링이 필요한 MonitorTarget 목록
+     */
+    @Query("SELECT mt FROM MonitorTarget mt " +
+           "WHERE mt.platform = 'URL' " +
+           "AND mt.productId IN :productIds " +
+           "AND (mt.nextFetchAt IS NULL OR mt.nextFetchAt <= :now)")
+    List<MonitorTarget> findDueUrlTargetsByProductIds(@Param("productIds") List<String> productIds,
+                                                      @Param("now") Instant now);
 }

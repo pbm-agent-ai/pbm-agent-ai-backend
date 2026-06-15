@@ -6,11 +6,20 @@ spring:
   application:
     name: notification-service
 
-  # DB를 현재 사용하지 않으므로 DataSource/JPA 자동설정을 제외한다
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
-      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+  # PostgreSQL 데이터소스 설정
+  datasource:
+    url: ${NOTIFICATION_DB_URL:jdbc:postgresql://localhost:5432/notification_db}
+    username: ${NOTIFICATION_DB_USERNAME:postgres}
+    password: ${NOTIFICATION_DB_PASSWORD:password}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+    show-sql: false
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
@@ -22,14 +31,63 @@ spring:
         spring.json.trusted.packages: "*"
         # 타입 헤더 없이 역직렬화하도록 설정 (발행 측에서 타입 헤더를 보내지 않는 경우 대응)
         spring.json.use.type.headers: false
-        # 역직렬화할 기본 대상 타입을 명시적으로 지정
-        spring.json.value.default.type: com.pbm.notification.dto.event.PriceAlertEvent
+        # 참고: spring.json.value.default.type은 전역 설정을 사용하지 않고
+        # 각 @KafkaListener의 properties로 개별 지정한다.
+        # PriceAlertConsumer → PriceAlertEvent
+        # PaymentResultConsumer → PaymentResultEvent
+        # spring.json.value.default.type: (전역 미설정 - Consumer별 properties로 대체)
+    # Kafka Producer 설정 (옵션 선택 응답 이벤트 발행용)
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+
+  # Gmail SMTP 설정
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${GMAIL_USERNAME:}
+    password: ${GMAIL_APP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
 
 # 애플리케이션 커스텀 설정
 app:
   kafka:
     topics:
       price-alert: price-alert
+      payment-result: payment-result
+      option-selection-request: option-selection-request
+      option-selection-response: option-selection-response
+      login-credential-request: login-credential-request
+      login-credential-response: login-credential-response
+  # 텔레그램 봇 설정
+  telegram:
+    bot-token: ${TELEGRAM_BOT_TOKEN:}
+    api-url: https://api.telegram.org
+  # 알림 발송자 이메일 (From 헤더)
+  mail:
+    from: ${GMAIL_USERNAME:noreply@pbm-agent.com}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  health:
+    mail:
+      enabled: false  # Gmail 인증 실패 시 health DOWN 방지
+  metrics:
+    tags:
+      application: ${spring.application.name}
 
 eureka:
   client:
@@ -39,3 +97,18 @@ eureka:
     fetch-registry: true
   instance:
     prefer-ip-address: true
+
+# Resilience4j Circuit Breaker 설정
+resilience4j:
+  circuitbreaker:
+    instances:
+      telegram:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+      email:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3

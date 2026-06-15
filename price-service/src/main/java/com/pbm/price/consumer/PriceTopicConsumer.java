@@ -1,17 +1,25 @@
 package com.pbm.price.consumer;
 
+import com.pbm.price.client.PaymentServiceClient;
+import com.pbm.price.domain.MonitoringSubscription;
+import com.pbm.price.domain.MonitoringSubscriptionStatus;
 import com.pbm.price.domain.Platform;
 import com.pbm.price.dto.event.PriceRequestEvent;
+import com.pbm.price.dto.event.PriceValidationResultEvent;
+import com.pbm.price.dto.event.PriceValidationResultEventPayload;
 import com.pbm.price.dto.event.ProductCandidateDto;
 import com.pbm.price.dto.event.ProductSelectionRequiredEvent;
 import com.pbm.price.dto.event.ProductSelectionRequiredEventPayload;
 import com.pbm.price.dto.response.SearchResponse;
+import com.pbm.price.publisher.PriceValidationResultEventPublisher;
 import com.pbm.price.publisher.ProductSelectionRequiredEventPublisher;
 import com.pbm.price.service.AliExpressCategoryIdResolver;
 import com.pbm.price.service.AliExpressProductUrlService;
 import com.pbm.price.service.AliExpressShoppingService;
+import com.pbm.price.service.MonitoringSubscriptionService;
 import com.pbm.price.service.NaverProductUrlService;
 import com.pbm.price.service.NaverShoppingService;
+import com.pbm.price.service.UrlMonitoringService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -46,19 +54,31 @@ public class PriceTopicConsumer {
     private final AliExpressProductUrlService aliExpressProductUrlService;
     private final NaverProductUrlService naverProductUrlService;
     private final ProductSelectionRequiredEventPublisher productSelectionRequiredEventPublisher;
+    private final UrlMonitoringService urlMonitoringService;
+    private final MonitoringSubscriptionService monitoringSubscriptionService;
+    private final PaymentServiceClient paymentServiceClient;
+    private final PriceValidationResultEventPublisher priceValidationResultEventPublisher;
 
     public PriceTopicConsumer(NaverShoppingService naverShoppingService,
                               AliExpressShoppingService aliExpressShoppingService,
                               AliExpressCategoryIdResolver aliExpressCategoryIdResolver,
                               AliExpressProductUrlService aliExpressProductUrlService,
                               NaverProductUrlService naverProductUrlService,
-                              ProductSelectionRequiredEventPublisher productSelectionRequiredEventPublisher) {
+                              ProductSelectionRequiredEventPublisher productSelectionRequiredEventPublisher,
+                              UrlMonitoringService urlMonitoringService,
+                              MonitoringSubscriptionService monitoringSubscriptionService,
+                              PaymentServiceClient paymentServiceClient,
+                              PriceValidationResultEventPublisher priceValidationResultEventPublisher) {
         this.naverShoppingService = naverShoppingService;
         this.aliExpressShoppingService = aliExpressShoppingService;
         this.aliExpressCategoryIdResolver = aliExpressCategoryIdResolver;
         this.aliExpressProductUrlService = aliExpressProductUrlService;
         this.naverProductUrlService = naverProductUrlService;
         this.productSelectionRequiredEventPublisher = productSelectionRequiredEventPublisher;
+        this.urlMonitoringService = urlMonitoringService;
+        this.monitoringSubscriptionService = monitoringSubscriptionService;
+        this.paymentServiceClient = paymentServiceClient;
+        this.priceValidationResultEventPublisher = priceValidationResultEventPublisher;
     }
 
     /**
@@ -73,6 +93,12 @@ public class PriceTopicConsumer {
         log.info("price-topic 메시지 수신 - eventId: {}, keyword: {}, targetPrice: {}, platform: {}, currency: {}",
                 event.eventId(), event.payload().keyword(), event.payload().targetPrice(),
                 event.payload().platform(), event.payload().currency());
+
+        // URL_MONITOR_REQUEST: URL 기반 MonitoringSubscription 생성
+        if ("URL_MONITOR_REQUEST".equals(event.eventType())) {
+            handleUrlMonitorRequest(event);
+            return;
+        }
 
         // 플랫폼별 쇼핑 API로 상품 검색 (최대 30건 저장)
         List<SearchResponse> results = searchProductsByPlatform(event);
@@ -235,6 +261,198 @@ public class PriceTopicConsumer {
         return event.payload().productUrls() != null
                 && !event.payload().productUrls().isEmpty()
                 && "ALIEXPRESS".equalsIgnoreCase(event.payload().platform());
+    }
+
+    /**
+     * URL_MONITOR_REQUEST 이벤트를 처리하여 URL 기반 MonitoringSubscription을 생성한다.
+     * payload.productUrl에 단건 URL이 담겨 있다.
+     * <p>
+     * 즉시 충족 시나리오 (currentPrice != null && AUTO_PURCHASE && currentPrice <= targetPrice):
+     *   - 세션키: 키페어 생성 + DB 저장 후, PaymentServiceClient로 동기 REST 등록
+     *   - 구독 상태: TRIGGERED로 즉시 전환
+     *   - PriceValidationResultEvent 발행하여 command-service가 브라우저 구매 흐름 시작
+     * <p>
+     * 모니터링 시나리오 (그 외):
+     *   - 세션키: 키페어 생성 + Kafka 비동기 이벤트 발행
+     *   - 구독 상태: ACTIVE 유지, 스케줄러가 주기적으로 가격 확인
+     */
+    private void handleUrlMonitorRequest(PriceRequestEvent event) {
+        try {
+            String productUrl = event.payload().productUrl();
+            if (productUrl == null || productUrl.isBlank()) {
+                log.warn("URL_MONITOR_REQUEST에 productUrl이 없습니다. eventId: {}", event.eventId());
+                return;
+            }
+
+            // Kafka 이벤트에서 urlCondition 추출 (없으면 기본값 ALL)
+            String urlCondition = (event.payload().urlCondition() != null && !event.payload().urlCondition().isBlank())
+                    ? event.payload().urlCondition()
+                    : "ALL";
+
+            Integer currentPrice = event.payload().currentPrice();
+            Integer targetPrice = event.payload().targetPrice();
+            String intent = event.payload().intent();
+            boolean isImmediateFulfillment = currentPrice != null
+                    && "AUTO_PURCHASE".equals(intent)
+                    && targetPrice != null
+                    && currentPrice <= targetPrice;
+
+            if (isImmediateFulfillment) {
+                // ── 즉시 충족: 동기 REST로 세션키 등록 + TRIGGERED + PriceValidationResultEvent ──
+                handleUrlImmediateFulfillment(event, productUrl, urlCondition, currentPrice);
+            } else {
+                // ── 모니터링: 기존 비동기 Kafka 흐름 ──
+                handleUrlMonitoring(event, productUrl, urlCondition);
+            }
+
+            log.info("URL 모니터링 구독 처리 완료 - commandId: {}, url: {}, intent: {}, immediate: {}",
+                    event.payload().commandId(), productUrl, intent, isImmediateFulfillment);
+        } catch (Exception e) {
+            log.error("URL_MONITOR_REQUEST 처리 실패 - eventId: {}, 원인: {}",
+                    event.eventId(), e.getMessage(), e);
+        }
+    }
+
+    /**
+     * URL 즉시 충족 처리.
+     * 현재 가격이 이미 목표 가격 이하이므로 모니터링 없이 바로 구매 흐름으로 진입한다.
+     * ProductSelectionConsumer.handleAutoPurchase()의 즉시 충족 패턴과 동일한 흐름.
+     *
+     * @param event        원본 이벤트
+     * @param productUrl   상품 URL
+     * @param urlCondition ALL | ANY
+     * @param currentPrice 익스텐션이 추출한 현재 가격
+     */
+    private void handleUrlImmediateFulfillment(
+            PriceRequestEvent event, String productUrl, String urlCondition, int currentPrice
+    ) {
+        log.info("URL 즉시 충족 시작 - commandId: {}, currentPrice: {}, targetPrice: {}, url: {}",
+                event.payload().commandId(), currentPrice, event.payload().targetPrice(), productUrl);
+
+        // 1. 구독 생성
+        MonitoringSubscription subscription = urlMonitoringService.createSubscription(
+                event.payload().userId(),
+                event.payload().commandId(),
+                productUrl,
+                event.payload().targetPrice(),
+                event.payload().currency(),
+                urlCondition,
+                event.payload().intent()
+        );
+
+        // 2. 세션키 등록 — 키페어 생성 + DB 저장만 (Kafka 발행 생략, 동기 REST로 등록)
+        monitoringSubscriptionService.registerSessionKeyForSubscription(
+                subscription, null, false  // publishKafkaEvent=false
+        );
+
+        // 3. 동기 REST로 세션키 등록 (블록체인 트랜잭션 완료까지 대기)
+        String aiAgentPrivateKey = null;
+        if (subscription.getAiAgentPrivateKey() != null) {
+            boolean sessionKeyRegistered = paymentServiceClient.registerSessionKey(
+                    event.payload().userId(),
+                    subscription.getId(),
+                    subscription.getAiAgentAddress(),
+                    subscription.getAiAgentPrivateKey(),
+                    subscription.getTargetPrice().longValue(),
+                    calculateValidSeconds(subscription.getScheduledEndAt()),
+                    resolveEffectivePlatform(productUrl)
+            );
+            if (sessionKeyRegistered) {
+                aiAgentPrivateKey = subscription.getAiAgentPrivateKey();
+                log.info("URL 즉시 충족 - 세션키 동기 등록 성공 - subscriptionId: {}", subscription.getId());
+            } else {
+                log.warn("URL 즉시 충족 - 세션키 동기 등록 실패 - subscriptionId: {}", subscription.getId());
+            }
+        }
+
+        // 4. 구독 상태 TRIGGERED 전환
+        subscription.changeStatus(MonitoringSubscriptionStatus.TRIGGERED);
+
+        // 5. PriceValidationResultEvent 발행 → command-service가 브라우저 구매 흐름 시작
+        String effectivePlatform = resolveEffectivePlatform(productUrl);
+        ProductCandidateDto candidateDto = new ProductCandidateDto(
+                subscription.getProductId(),
+                subscription.getSnapshotTitle() != null ? subscription.getSnapshotTitle() : productUrl,
+                String.valueOf(currentPrice),
+                null,
+                productUrl,
+                subscription.getSnapshotImageUrl(),
+                "KRW",
+                effectivePlatform,
+                null
+        );
+
+        PriceValidationResultEvent resultEvent = new PriceValidationResultEvent(
+                UUID.randomUUID().toString(),
+                "PRICE_VALIDATION_COMPLETED",
+                Instant.now(),
+                "price-service",
+                new PriceValidationResultEventPayload(
+                        subscription.getId(),
+                        event.payload().commandId(),
+                        "BROWSER_PURCHASE_IN_PROGRESS",
+                        List.of(candidateDto),   // triggeredProducts
+                        List.of(),               // monitoringProducts
+                        null,                    // purchasedProductId
+                        "URL 모니터링 즉시 충족 - 현재가 " + currentPrice + "원 ≤ 목표가 " + event.payload().targetPrice() + "원",
+                        false,
+                        List.of(),
+                        null,
+                        currentPrice,            // triggerPrice
+                        aiAgentPrivateKey        // AI 에이전트 개인키
+                )
+        );
+        priceValidationResultEventPublisher.publish(resultEvent);
+
+        log.info("URL 즉시 충족 완료 - subscriptionId: {}, effectivePlatform: {}, triggerPrice: {}",
+                subscription.getId(), effectivePlatform, currentPrice);
+    }
+
+    /**
+     * URL 모니터링 등록 처리 (기존 비동기 흐름).
+     * 목표 가격 미달이거나 현재 가격 정보가 없는 경우, 주기적 모니터링을 등록한다.
+     */
+    private void handleUrlMonitoring(PriceRequestEvent event, String productUrl, String urlCondition) {
+        MonitoringSubscription subscription = urlMonitoringService.createSubscription(
+                event.payload().userId(),
+                event.payload().commandId(),
+                productUrl,
+                event.payload().targetPrice(),
+                event.payload().currency(),
+                urlCondition,
+                event.payload().intent()
+        );
+
+        // AUTO_PURCHASE intent면 세션키 등록 (Kafka 비동기, 결제 시 PBM 토큰 차감에 필요)
+        if ("AUTO_PURCHASE".equals(event.payload().intent())) {
+            monitoringSubscriptionService.registerSessionKeyForSubscription(
+                    subscription, null  // scheduledEndAt null → 기본 7일, publishKafkaEvent=true (기본값)
+            );
+            log.info("URL 모니터링 AUTO_PURCHASE 세션키 등록 완료 - subscriptionId: {}, url: {}",
+                    subscription.getId(), productUrl);
+        }
+    }
+
+    /**
+     * 모니터링 종료 예정 시각까지의 유효 기간(초)을 계산한다.
+     */
+    private long calculateValidSeconds(Instant scheduledEndAt) {
+        if (scheduledEndAt != null) {
+            return Math.max(0, scheduledEndAt.getEpochSecond() - Instant.now().getEpochSecond());
+        }
+        // 기본값: 7일
+        return 7L * 24 * 3600;
+    }
+
+    /**
+     * URL의 실질 플랫폼을 URL 패턴으로 추론한다.
+     * AliExpress URL이면 "ALIEXPRESS", 그 외면 "URL" 반환.
+     */
+    private String resolveEffectivePlatform(String productUrl) {
+        if (productUrl != null && productUrl.contains("aliexpress.com")) {
+            return "ALIEXPRESS";
+        }
+        return "URL";
     }
 
     private boolean hasDirectNaverUrls(PriceRequestEvent event) {

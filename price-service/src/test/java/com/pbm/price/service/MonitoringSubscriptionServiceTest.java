@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * MonitoringSubscriptionService의 createOrUpdateFromSelection 로직을 검증하는 테스트.
@@ -283,5 +284,71 @@ class MonitoringSubscriptionServiceTest {
                 USER_ID, COMMAND_ID, TARGET_PRICE, INTENT, candidate))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("유효하지 않은 lprice 값");
+    }
+
+    // ─── 지갑 한도 검증 테스트 ──────────────────────────────────────────
+
+    @Test
+    @DisplayName("AUTO_PURCHASE: 지갑 한도가 충분하면 구독이 정상 생성된다")
+    void createOrUpdateFromSelection_withAutoPurchaseAndSufficientWalletLimit_createsSubscription() {
+        // given: 지갑 한도가 목표 가격보다 충분히 큰 경우
+        when(paymentServiceClient.getWalletLimit(USER_ID)).thenReturn(BigDecimal.valueOf(100000));
+        ProductCandidateDto candidate = createCandidate("NAVER", "KRW", "50000");
+
+        // when
+        MonitoringSubscription result = monitoringSubscriptionService.createOrUpdateFromSelection(
+                USER_ID, COMMAND_ID, 45000, "AUTO_PURCHASE", candidate);
+
+        // then: 구독이 정상 생성됨
+        assertThat(result.getId()).isNotNull();
+        assertThat(result.getIntent()).isEqualTo("AUTO_PURCHASE");
+        assertThat(result.getStatus()).isEqualTo(MonitoringSubscriptionStatus.ACTIVE);
+    }
+
+    @Test
+    @DisplayName("AUTO_PURCHASE: 지갑 한도가 목표 가격보다 작으면 IllegalArgumentException이 발생한다")
+    void createOrUpdateFromSelection_withAutoPurchaseAndInsufficientWalletLimit_throwsException() {
+        // given: 지갑 한도가 목표 가격보다 작은 경우
+        when(paymentServiceClient.getWalletLimit(USER_ID)).thenReturn(BigDecimal.valueOf(30000));
+        ProductCandidateDto candidate = createCandidate("NAVER", "KRW", "50000");
+
+        // when & then: IllegalArgumentException 발생 확인
+        assertThatThrownBy(() -> monitoringSubscriptionService.createOrUpdateFromSelection(
+                USER_ID, COMMAND_ID, 45000, "AUTO_PURCHASE", candidate))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("지갑 한도");
+    }
+
+    @Test
+    @DisplayName("AUTO_PURCHASE: 지갑 한도가 null이면 검증을 건너뛰고 구독이 생성된다")
+    void createOrUpdateFromSelection_withAutoPurchaseAndNullWalletLimit_skipsValidation() {
+        // given: getWalletLimit가 null을 반환 (지갑 미생성 또는 조회 실패)
+        when(paymentServiceClient.getWalletLimit(USER_ID)).thenReturn(null);
+        ProductCandidateDto candidate = createCandidate("NAVER", "KRW", "50000");
+
+        // when
+        MonitoringSubscription result = monitoringSubscriptionService.createOrUpdateFromSelection(
+                USER_ID, COMMAND_ID, 45000, "AUTO_PURCHASE", candidate);
+
+        // then: 구독이 정상 생성됨 (검증 건너뜀)
+        assertThat(result.getId()).isNotNull();
+        assertThat(result.getStatus()).isEqualTo(MonitoringSubscriptionStatus.ACTIVE);
+    }
+
+    @Test
+    @DisplayName("PRICE_TRACK: 지갑 한도가 낮아도 검증을 수행하지 않고 구독이 생성된다")
+    void createOrUpdateFromSelection_withPriceTrack_skipsWalletValidation() {
+        // given: 지갑 한도가 매우 낮지만 PRICE_TRACK이므로 검증하지 않음
+        when(paymentServiceClient.getWalletLimit(USER_ID)).thenReturn(BigDecimal.valueOf(1000));
+        ProductCandidateDto candidate = createCandidate("NAVER", "KRW", "50000");
+
+        // when
+        MonitoringSubscription result = monitoringSubscriptionService.createOrUpdateFromSelection(
+                USER_ID, COMMAND_ID, 45000, "PRICE_TRACK", candidate);
+
+        // then: 구독이 정상 생성됨 (검증 자체를 수행하지 않음)
+        assertThat(result.getId()).isNotNull();
+        assertThat(result.getIntent()).isEqualTo("PRICE_TRACK");
+        assertThat(result.getStatus()).isEqualTo(MonitoringSubscriptionStatus.ACTIVE);
     }
 }

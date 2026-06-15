@@ -16,7 +16,7 @@ import java.util.List;
  *       동일 영상(video_id)을 재분석하면 기존 데이터를 덮어쓴다.
  * 카테고리 구조:
  *   - category_main: 대분류 (예: HOME_APPLIANCE, ELECTRONICS)
- *   - category_sub:  소분류 (예: FOOD_PROCESSOR, EARPHONE)
+ *   - category_sub:  소분류 (예: FOOD_PROCESSOR, EARPHONE, KIMCHI_REFRIGERATOR)
  * 연관: YoutubeReviewProduct (1:N, CascadeType.ALL)
  */
 @Getter

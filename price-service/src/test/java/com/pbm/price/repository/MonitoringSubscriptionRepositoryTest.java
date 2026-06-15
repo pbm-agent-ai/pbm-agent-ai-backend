@@ -136,45 +136,43 @@ class MonitoringSubscriptionRepositoryTest {
     }
 
     @Test
-    @DisplayName("findByStatusAndNextCheckAtBefore: 수집 예정 시각이 도래한 구독 목록을 반환한다")
-    void findByStatusAndNextCheckAtBefore_returnsDueSubscriptions() {
-        // given: 과거 nextCheckAt을 가진 ACTIVE 구독
-        MonitoringSubscription dueSub = MonitoringSubscription.create(
-                1L, UUID.randomUUID().toString(), Platform.NAVER, "prod-due",
-                null, null, null, null, null, null,
-                CurrencyType.KRW, null, MonitoringSubscriptionStatus.ACTIVE,
+    @DisplayName("findByPlatformAndProductIdAndStatus: 특정 상품의 ACTIVE 구독을 조회한다")
+    void findByPlatformAndProductIdAndStatus_returnsMatchingSubscriptions() {
+        // given: ACTIVE 구독 1건
+        MonitoringSubscription activeSub = MonitoringSubscription.create(
+                1L, UUID.randomUUID().toString(), Platform.NAVER, "prod-target",
+                null, null, null, null, null, BigDecimal.valueOf(30000),
+                CurrencyType.KRW, "PRICE_TRACK", MonitoringSubscriptionStatus.ACTIVE,
                 0, 10, null
         );
-        dueSub.markChecked(Instant.now().minusSeconds(3600)); // 1시간 전 수집 -> nextCheckAt 과거
-        repository.save(dueSub);
+        repository.save(activeSub);
 
-        // 미래 nextCheckAt을 가진 ACTIVE 구독 (수집 대상 아님)
-        MonitoringSubscription futureSub = MonitoringSubscription.create(
-                2L, UUID.randomUUID().toString(), Platform.ALIEXPRESS, "prod-future",
-                null, null, null, null, null, null,
-                CurrencyType.USD, null, MonitoringSubscriptionStatus.ACTIVE,
+        // COMPLETED 상태 구독 (대상 아님)
+        MonitoringSubscription completedSub = MonitoringSubscription.create(
+                2L, UUID.randomUUID().toString(), Platform.NAVER, "prod-target",
+                null, null, null, null, null, BigDecimal.valueOf(30000),
+                CurrencyType.KRW, "PRICE_TRACK", MonitoringSubscriptionStatus.COMPLETED,
                 0, 10, null
         );
-        futureSub.markChecked(Instant.now()); // 방금 수집 -> nextCheckAt 미래
-        repository.save(futureSub);
+        repository.save(completedSub);
 
-        // PAUSED 상태 구독 (수집 대상 아님)
-        MonitoringSubscription pausedSub = MonitoringSubscription.create(
-                3L, UUID.randomUUID().toString(), Platform.NAVER, "prod-paused",
-                null, null, null, null, null, null,
-                CurrencyType.KRW, null, MonitoringSubscriptionStatus.PAUSED,
+        // 다른 productId (대상 아님)
+        MonitoringSubscription otherSub = MonitoringSubscription.create(
+                3L, UUID.randomUUID().toString(), Platform.NAVER, "prod-other",
+                null, null, null, null, null, BigDecimal.valueOf(30000),
+                CurrencyType.KRW, "PRICE_TRACK", MonitoringSubscriptionStatus.ACTIVE,
                 0, 10, null
         );
-        pausedSub.markChecked(Instant.now().minusSeconds(3600)); // nextCheckAt 과거지만 PAUSED
-        repository.save(pausedSub);
+        repository.save(otherSub);
 
         // when
-        List<MonitoringSubscription> dueSubs = repository
-                .findByStatusAndNextCheckAtBefore(MonitoringSubscriptionStatus.ACTIVE, Instant.now());
+        List<MonitoringSubscription> result = repository
+                .findByPlatformAndProductIdAndStatus(Platform.NAVER, "prod-target", MonitoringSubscriptionStatus.ACTIVE);
 
-        // then: ACTIVE + nextCheckAt이 과거인 구독만 조회되어야 함
-        assertThat(dueSubs).hasSize(1);
-        assertThat(dueSubs.get(0).getProductId()).isEqualTo("prod-due");
+        // then: NAVER + prod-target + ACTIVE인 구독 1건만 반환
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getProductId()).isEqualTo("prod-target");
+        assertThat(result.get(0).getStatus()).isEqualTo(MonitoringSubscriptionStatus.ACTIVE);
     }
 
     @Test

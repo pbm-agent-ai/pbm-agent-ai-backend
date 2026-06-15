@@ -5,6 +5,9 @@ server:
 spring:
   application:
     name: price-service
+  sql:
+    init:
+      mode: always
   datasource:
     url: ${PRICE_DB_URL:jdbc:postgresql://localhost:5432/price_db}
     username: ${PRICE_DB_USERNAME:postgres}
@@ -12,6 +15,7 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
+    defer-datasource-initialization: true
     properties:
       hibernate:
         format_sql: true
@@ -118,6 +122,15 @@ eureka:
       defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
   instance:
     prefer-ip-address: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
 
 springdoc:
   swagger-ui:

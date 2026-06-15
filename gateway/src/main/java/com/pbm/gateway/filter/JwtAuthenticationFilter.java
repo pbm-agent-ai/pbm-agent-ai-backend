@@ -30,6 +30,7 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             "/api/v1/auth/refresh",
             "/api/v1/devices/register",
             "/api/v1/platforms/",          // 플랫폼 설정 조회 (익스텐션이 인증 없이 호출)
+            "/api/notifications/telegram/webhook",  // 텔레그램 봇 Webhook (Telegram 서버에서 호출)
             // Swagger UI (개발용)
             "/auth-service/swagger-ui",
             "/auth-service/v3/api-docs",

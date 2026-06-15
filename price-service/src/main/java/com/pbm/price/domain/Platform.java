@@ -9,5 +9,7 @@ package com.pbm.price.domain;
  */
 public enum Platform {
     NAVER,
-    ALIEXPRESS
+    ALIEXPRESS,
+    /** 사용자가 직접 URL을 제공한 경우 (익스텐션이 가격 수집) */
+    URL
 }

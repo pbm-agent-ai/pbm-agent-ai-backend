@@ -1,16 +1,24 @@
 package com.pbm.price.consumer;
 
+import com.pbm.price.client.PaymentServiceClient;
+import com.pbm.price.domain.CurrencyType;
+import com.pbm.price.domain.MonitoringSubscription;
+import com.pbm.price.domain.MonitoringSubscriptionStatus;
 import com.pbm.price.dto.event.ParsedCommandSnapshot;
 import com.pbm.price.dto.event.PriceRequestEvent;
 import com.pbm.price.dto.event.PriceRequestEventPayload;
+import com.pbm.price.dto.event.PriceValidationResultEvent;
 import com.pbm.price.dto.event.ProductSelectionRequiredEvent;
 import com.pbm.price.dto.response.SearchResponse;
+import com.pbm.price.publisher.PriceValidationResultEventPublisher;
 import com.pbm.price.publisher.ProductSelectionRequiredEventPublisher;
 import com.pbm.price.service.AliExpressCategoryIdResolver;
 import com.pbm.price.service.AliExpressProductUrlService;
 import com.pbm.price.service.AliExpressShoppingService;
+import com.pbm.price.service.MonitoringSubscriptionService;
 import com.pbm.price.service.NaverProductUrlService;
 import com.pbm.price.service.NaverShoppingService;
+import com.pbm.price.service.UrlMonitoringService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,12 +27,16 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -62,6 +74,18 @@ class PriceTopicConsumerTest {
     @Mock
     private NaverProductUrlService naverProductUrlService;
 
+    @Mock
+    private UrlMonitoringService urlMonitoringService;
+
+    @Mock
+    private MonitoringSubscriptionService monitoringSubscriptionService;
+
+    @Mock
+    private PaymentServiceClient paymentServiceClient;
+
+    @Mock
+    private PriceValidationResultEventPublisher priceValidationResultEventPublisher;
+
     private PriceTopicConsumer priceTopicConsumer;
 
     @BeforeEach
@@ -72,7 +96,11 @@ class PriceTopicConsumerTest {
                 aliExpressCategoryIdResolver,
                 aliExpressProductUrlService,
                 naverProductUrlService,
-                productSelectionRequiredEventPublisher
+                productSelectionRequiredEventPublisher,
+                urlMonitoringService,
+                monitoringSubscriptionService,
+                paymentServiceClient,
+                priceValidationResultEventPublisher
         );
     }
 
@@ -155,33 +183,38 @@ class PriceTopicConsumerTest {
     }
 
     @Test
-    @DisplayName("ALIEXPRESS - 알리 검색 결과도 후보 선택 이벤트로 발행한다")
+    @DisplayName("ALIEXPRESS - 일반 검색이면 공식 API 검색 후 후보 선택 이벤트를 발행한다")
     void consume_aliExpressResults_publishCandidateSelectionEvent() {
-        // given
         PriceRequestEvent event = createRequestEvent(1L, "무선 이어폰", 50000, "ALIEXPRESS", "USD");
-        List<SearchResponse> results = List.of(
-                new SearchResponse("무선 이어폰", "90000", "120000", "AliStore", "https://aliexpress.com/item/1", "https://img.example.com/ae-1.jpg", "USD", "ae-1")
-        );
         when(aliExpressShoppingService.searchProducts(
                 eq("무선 이어폰"), eq(1), eq(20), eq(null), eq("USD"), eq("KO"), eq("KR"), eq(null), eq(null)
-        )).thenReturn(results);
+        )).thenReturn(List.of(
+                new SearchResponse(
+                        "무선 이어폰 A",
+                        "49000",
+                        "55000",
+                        "AliExpress",
+                        "https://ko.aliexpress.com/item/1005000000000001.html",
+                        "https://img.example.com/ali-1.jpg",
+                        "USD",
+                        "1005000000000001"
+                )
+        ));
 
-        // when
         priceTopicConsumer.consume(event);
 
-        // then
         verify(aliExpressShoppingService, times(1)).searchProducts(
                 eq("무선 이어폰"), eq(1), eq(20), eq(null), eq("USD"), eq("KO"), eq("KR"), eq(null), eq(null)
         );
-        verify(naverShoppingService, never()).searchProducts(anyString(), anyInt());
 
         ArgumentCaptor<ProductSelectionRequiredEvent> captor =
                 ArgumentCaptor.forClass(ProductSelectionRequiredEvent.class);
         verify(productSelectionRequiredEventPublisher, times(1)).publish(captor.capture());
 
         ProductSelectionRequiredEvent published = captor.getValue();
+        assertThat(published.payload().message()).isEqualTo("검색 결과를 확인하고 상품을 선택해주세요.");
         assertThat(published.payload().candidates()).hasSize(1);
-        assertThat(published.payload().candidates().get(0).productId()).isEqualTo("ae-1");
+        assertThat(published.payload().candidates().get(0).productId()).isEqualTo("1005000000000001");
         assertThat(published.payload().candidates().get(0).platform()).isEqualTo("ALIEXPRESS");
     }
 
@@ -203,8 +236,8 @@ class PriceTopicConsumerTest {
     }
 
     @Test
-    @DisplayName("ALIEXPRESS - searchCategoryHint가 있으면 category_ids를 함께 전달한다")
-    void consume_aliExpressWithCategoryHint_passesResolvedCategoryIds() {
+    @DisplayName("ALIEXPRESS - searchCategoryHint가 있으면 category_ids를 붙여 공식 API 검색을 수행한다")
+    void consume_aliExpressWithCategoryHint_searchesWithResolvedCategoryIds() {
         ParsedCommandSnapshot snapshot = new ParsedCommandSnapshot(
                 "ELECTRONICS",
                 "mx master 3s",
@@ -222,15 +255,27 @@ class PriceTopicConsumerTest {
                 "MOUSE"
         );
         PriceRequestEvent event = createRequestEvent(1L, "로지텍 mx master 3s black", 100000, "ALIEXPRESS", "KRW", "AUTO_PURCHASE", snapshot);
-        when(aliExpressCategoryIdResolver.resolveCategoryIds("MOUSE")).thenReturn(java.util.Optional.of("30"));
+        when(aliExpressCategoryIdResolver.resolveCategoryIds("MOUSE")).thenReturn(Optional.of("10,20"));
         when(aliExpressShoppingService.searchProducts(
-                eq("로지텍 mx master 3s black"), eq(1), eq(20), eq(null), eq("KRW"), eq("KO"), eq("KR"), eq("30"), eq(null)
-        )).thenReturn(List.of());
+                eq("로지텍 mx master 3s black"), eq(1), eq(20), eq(null), eq("KRW"), eq("KO"), eq("KR"), eq("10,20"), eq(null)
+        )).thenReturn(List.of(
+                new SearchResponse(
+                        "로지텍 MX Master 3S",
+                        "99000",
+                        "120000",
+                        "AliExpress",
+                        "https://ko.aliexpress.com/item/1005000000000002.html",
+                        "https://img.example.com/ali-2.jpg",
+                        "KRW",
+                        "1005000000000002"
+                )
+        ));
 
         priceTopicConsumer.consume(event);
 
-        verify(aliExpressShoppingService).searchProducts(
-                eq("로지텍 mx master 3s black"), eq(1), eq(20), eq(null), eq("KRW"), eq("KO"), eq("KR"), eq("30"), eq(null)
+        verify(aliExpressCategoryIdResolver, times(1)).resolveCategoryIds("MOUSE");
+        verify(aliExpressShoppingService, times(1)).searchProducts(
+                eq("로지텍 mx master 3s black"), eq(1), eq(20), eq(null), eq("KRW"), eq("KO"), eq("KR"), eq("10,20"), eq(null)
         );
     }
 
@@ -371,5 +416,240 @@ class PriceTopicConsumerTest {
         verify(productSelectionRequiredEventPublisher).publish(captor.capture());
         assertThat(captor.getValue().payload().candidates()).hasSize(1);
         assertThat(captor.getValue().payload().candidates().get(0).productId()).isEqualTo("57981069328");
+    }
+
+    // ===== URL_MONITOR_REQUEST 테스트 =====
+
+    /**
+     * URL_MONITOR_REQUEST 전용 PriceRequestEvent 생성 헬퍼 (currentPrice 없음 → 모니터링 시나리오).
+     */
+    private PriceRequestEvent createUrlMonitorEvent(Long userId, String productUrl,
+                                                     Integer targetPrice, String intent,
+                                                     String urlCondition) {
+        return createUrlMonitorEvent(userId, productUrl, targetPrice, intent, urlCondition, null);
+    }
+
+    /**
+     * URL_MONITOR_REQUEST 전용 PriceRequestEvent 생성 헬퍼 (currentPrice 지정 가능).
+     */
+    private PriceRequestEvent createUrlMonitorEvent(Long userId, String productUrl,
+                                                     Integer targetPrice, String intent,
+                                                     String urlCondition, Integer currentPrice) {
+        return new PriceRequestEvent(
+                "evt-url-mon-001",
+                "URL_MONITOR_REQUEST",
+                Instant.now(),
+                "command-service",
+                new PriceRequestEventPayload(
+                        userId, null, targetPrice, "URL", "KRW",
+                        "cmd-url-mon-001", intent, null,
+                        productUrl, null, null, urlCondition, currentPrice
+                )
+        );
+    }
+
+    @Test
+    @DisplayName("URL_MONITOR_REQUEST - AUTO_PURCHASE이면 구독 생성 후 세션키를 등록한다")
+    void consume_urlMonitorAutoPurchase_registersSessionKey() {
+        // given: AliExpress 상품 URL로 AUTO_PURCHASE 모니터링 요청
+        String productUrl = "https://ko.aliexpress.com/item/1005011805791975.html";
+        PriceRequestEvent event = createUrlMonitorEvent(1L, productUrl, 300000, "AUTO_PURCHASE", "ALL");
+
+        MonitoringSubscription mockSubscription = MonitoringSubscription.createUrl(
+                1L, "cmd-url-mon-001", productUrl,
+                BigDecimal.valueOf(300000), CurrencyType.KRW,
+                "AUTO_PURCHASE", MonitoringSubscriptionStatus.ACTIVE,
+                10, Instant.now().plusSeconds(604800), "ALL"
+        );
+        when(urlMonitoringService.createSubscription(
+                eq(1L), eq("cmd-url-mon-001"), eq(productUrl),
+                eq(300000), eq("KRW"), eq("ALL"), eq("AUTO_PURCHASE")
+        )).thenReturn(mockSubscription);
+
+        // when: 이벤트 소비
+        priceTopicConsumer.consume(event);
+
+        // then: URL 구독 생성 + 세션키 등록 호출 확인
+        verify(urlMonitoringService).createSubscription(
+                eq(1L), eq("cmd-url-mon-001"), eq(productUrl),
+                eq(300000), eq("KRW"), eq("ALL"), eq("AUTO_PURCHASE")
+        );
+        verify(monitoringSubscriptionService).registerSessionKeyForSubscription(
+                eq(mockSubscription), eq(null)
+        );
+    }
+
+    @Test
+    @DisplayName("URL_MONITOR_REQUEST - PRICE_TRACK이면 세션키를 등록하지 않는다")
+    void consume_urlMonitorPriceTrack_doesNotRegisterSessionKey() {
+        // given: PRICE_TRACK intent (가격 추적만, 자동 구매 아님)
+        String productUrl = "https://ko.aliexpress.com/item/1005011805791975.html";
+        PriceRequestEvent event = createUrlMonitorEvent(1L, productUrl, 300000, "PRICE_TRACK", "ALL");
+
+        MonitoringSubscription mockSubscription = MonitoringSubscription.createUrl(
+                1L, "cmd-url-mon-001", productUrl,
+                BigDecimal.valueOf(300000), CurrencyType.KRW,
+                "PRICE_TRACK", MonitoringSubscriptionStatus.ACTIVE,
+                10, Instant.now().plusSeconds(604800), "ALL"
+        );
+        when(urlMonitoringService.createSubscription(
+                eq(1L), eq("cmd-url-mon-001"), eq(productUrl),
+                eq(300000), eq("KRW"), eq("ALL"), eq("PRICE_TRACK")
+        )).thenReturn(mockSubscription);
+
+        // when: 이벤트 소비
+        priceTopicConsumer.consume(event);
+
+        // then: URL 구독 생성만 호출, 세션키 등록은 호출 안 됨
+        verify(urlMonitoringService).createSubscription(
+                eq(1L), eq("cmd-url-mon-001"), eq(productUrl),
+                eq(300000), eq("KRW"), eq("ALL"), eq("PRICE_TRACK")
+        );
+        verify(monitoringSubscriptionService, never()).registerSessionKeyForSubscription(any(), any());
+    }
+
+    @Test
+    @DisplayName("URL_MONITOR_REQUEST - productUrl이 없으면 구독을 생성하지 않는다")
+    void consume_urlMonitorNoUrl_doesNotCreateSubscription() {
+        // given: productUrl이 null인 URL_MONITOR_REQUEST
+        PriceRequestEvent event = createUrlMonitorEvent(1L, null, 300000, "AUTO_PURCHASE", "ALL");
+
+        // when: 이벤트 소비
+        priceTopicConsumer.consume(event);
+
+        // then: 구독 생성도 세션키 등록도 호출되지 않음
+        verify(urlMonitoringService, never()).createSubscription(
+                any(), any(), any(), any(), any(), any(), any()
+        );
+        verify(monitoringSubscriptionService, never()).registerSessionKeyForSubscription(any(), any());
+        verify(monitoringSubscriptionService, never()).registerSessionKeyForSubscription(any(), any(), anyBoolean());
+    }
+
+    // ===== URL 즉시 충족 테스트 =====
+
+    @Test
+    @DisplayName("URL_MONITOR_REQUEST - 즉시 충족 시 동기 REST 세션키 등록 + TRIGGERED + PriceValidationResultEvent 발행")
+    void consume_urlMonitorImmediateFulfillment_registersSessionKeySyncAndPublishesEvent() {
+        // given: 현재가 280000원 ≤ 목표가 300000원 → 즉시 충족
+        String productUrl = "https://ko.aliexpress.com/item/1005011805791975.html";
+        PriceRequestEvent event = createUrlMonitorEvent(
+                1L, productUrl, 300000, "AUTO_PURCHASE", "ALL", 280000
+        );
+
+        MonitoringSubscription mockSubscription = MonitoringSubscription.createUrl(
+                1L, "cmd-url-mon-001", productUrl,
+                BigDecimal.valueOf(300000), CurrencyType.KRW,
+                "AUTO_PURCHASE", MonitoringSubscriptionStatus.ACTIVE,
+                10, Instant.now().plusSeconds(604800), "ALL"
+        );
+        // assignSessionKey 시뮬레이션 (registerSessionKeyForSubscription이 내부에서 설정)
+        mockSubscription.assignSessionKey("0xTestAddress", "testPrivateKey");
+
+        when(urlMonitoringService.createSubscription(
+                eq(1L), eq("cmd-url-mon-001"), eq(productUrl),
+                eq(300000), eq("KRW"), eq("ALL"), eq("AUTO_PURCHASE")
+        )).thenReturn(mockSubscription);
+
+        when(paymentServiceClient.registerSessionKey(
+                eq(1L), any(), eq("0xTestAddress"), eq("testPrivateKey"),
+                eq(300000L), anyLong(), eq("ALIEXPRESS")
+        )).thenReturn(true);
+
+        // when
+        priceTopicConsumer.consume(event);
+
+        // then: 즉시 충족 흐름 확인
+        // 1) 구독 생성
+        verify(urlMonitoringService).createSubscription(
+                eq(1L), eq("cmd-url-mon-001"), eq(productUrl),
+                eq(300000), eq("KRW"), eq("ALL"), eq("AUTO_PURCHASE")
+        );
+        // 2) 세션키 등록 — publishKafkaEvent=false (즉시 충족이므로 Kafka 발행 생략)
+        verify(monitoringSubscriptionService).registerSessionKeyForSubscription(
+                eq(mockSubscription), eq(null), eq(false)
+        );
+        // 3) 동기 REST 세션키 등록
+        verify(paymentServiceClient).registerSessionKey(
+                eq(1L), any(), eq("0xTestAddress"), eq("testPrivateKey"),
+                eq(300000L), anyLong(), eq("ALIEXPRESS")
+        );
+        // 4) PriceValidationResultEvent 발행
+        ArgumentCaptor<PriceValidationResultEvent> captor =
+                ArgumentCaptor.forClass(PriceValidationResultEvent.class);
+        verify(priceValidationResultEventPublisher).publish(captor.capture());
+
+        PriceValidationResultEvent resultEvent = captor.getValue();
+        assertThat(resultEvent.payload().nextStatus()).isEqualTo("BROWSER_PURCHASE_IN_PROGRESS");
+        assertThat(resultEvent.payload().triggerPrice()).isEqualTo(280000);
+        assertThat(resultEvent.payload().aiAgentPrivateKey()).isEqualTo("testPrivateKey");
+        assertThat(resultEvent.payload().triggeredProducts()).hasSize(1);
+        assertThat(resultEvent.payload().triggeredProducts().get(0).platform()).isEqualTo("ALIEXPRESS");
+    }
+
+    @Test
+    @DisplayName("URL_MONITOR_REQUEST - 현재가 > 목표가이면 즉시 충족이 아닌 모니터링으로 처리한다")
+    void consume_urlMonitorCurrentPriceExceedsTarget_fallsBackToMonitoring() {
+        // given: 현재가 350000원 > 목표가 300000원 → 모니터링
+        String productUrl = "https://ko.aliexpress.com/item/1005011805791975.html";
+        PriceRequestEvent event = createUrlMonitorEvent(
+                1L, productUrl, 300000, "AUTO_PURCHASE", "ALL", 350000
+        );
+
+        MonitoringSubscription mockSubscription = MonitoringSubscription.createUrl(
+                1L, "cmd-url-mon-001", productUrl,
+                BigDecimal.valueOf(300000), CurrencyType.KRW,
+                "AUTO_PURCHASE", MonitoringSubscriptionStatus.ACTIVE,
+                10, Instant.now().plusSeconds(604800), "ALL"
+        );
+        when(urlMonitoringService.createSubscription(
+                eq(1L), eq("cmd-url-mon-001"), eq(productUrl),
+                eq(300000), eq("KRW"), eq("ALL"), eq("AUTO_PURCHASE")
+        )).thenReturn(mockSubscription);
+
+        // when
+        priceTopicConsumer.consume(event);
+
+        // then: 모니터링 흐름 (Kafka 비동기 세션키 등록)
+        verify(monitoringSubscriptionService).registerSessionKeyForSubscription(
+                eq(mockSubscription), eq(null)
+        );
+        // 동기 REST 세션키 등록은 호출되지 않아야 함
+        verify(paymentServiceClient, never()).registerSessionKey(
+                anyLong(), anyLong(), anyString(), anyString(), anyLong(), anyLong(), anyString()
+        );
+        // PriceValidationResultEvent는 발행되지 않아야 함
+        verify(priceValidationResultEventPublisher, never()).publish(any());
+    }
+
+    @Test
+    @DisplayName("URL_MONITOR_REQUEST - PRICE_TRACK + currentPrice 있어도 즉시 충족이 아닌 모니터링으로 처리한다")
+    void consume_urlMonitorPriceTrackWithCurrentPrice_doesNotTriggerImmediateFulfillment() {
+        // given: 현재가 280000 ≤ 목표가 300000이지만 intent=PRICE_TRACK → 모니터링
+        String productUrl = "https://ko.aliexpress.com/item/1005011805791975.html";
+        PriceRequestEvent event = createUrlMonitorEvent(
+                1L, productUrl, 300000, "PRICE_TRACK", "ALL", 280000
+        );
+
+        MonitoringSubscription mockSubscription = MonitoringSubscription.createUrl(
+                1L, "cmd-url-mon-001", productUrl,
+                BigDecimal.valueOf(300000), CurrencyType.KRW,
+                "PRICE_TRACK", MonitoringSubscriptionStatus.ACTIVE,
+                10, Instant.now().plusSeconds(604800), "ALL"
+        );
+        when(urlMonitoringService.createSubscription(
+                eq(1L), eq("cmd-url-mon-001"), eq(productUrl),
+                eq(300000), eq("KRW"), eq("ALL"), eq("PRICE_TRACK")
+        )).thenReturn(mockSubscription);
+
+        // when
+        priceTopicConsumer.consume(event);
+
+        // then: PRICE_TRACK이므로 세션키도 등록하지 않고 PriceValidationResultEvent도 발행하지 않음
+        verify(monitoringSubscriptionService, never()).registerSessionKeyForSubscription(any(), any());
+        verify(monitoringSubscriptionService, never()).registerSessionKeyForSubscription(any(), any(), anyBoolean());
+        verify(paymentServiceClient, never()).registerSessionKey(
+                anyLong(), anyLong(), anyString(), anyString(), anyLong(), anyLong(), anyString()
+        );
+        verify(priceValidationResultEventPublisher, never()).publish(any());
     }
 }

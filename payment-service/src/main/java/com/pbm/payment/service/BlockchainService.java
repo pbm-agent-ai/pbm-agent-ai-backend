@@ -30,6 +30,7 @@ import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 /**
  * 블록체인(Sepolia) 스마트 컨트랙트 호출 서비스.
@@ -51,7 +52,7 @@ import java.util.Optional;
 public class BlockchainService {
 
     /** 일반 함수 호출용 가스 리밋 */
-    private static final BigInteger GAS_LIMIT = BigInteger.valueOf(300_000L);
+    public static final BigInteger GAS_LIMIT = BigInteger.valueOf(300_000L);
 
     /** 컨트랙트 배포(createAccount) 전용 가스 리밋.
      *  실측: 1,477,551 gas 소모 후 서브콜에서 잔여 가스 부족으로 revert 발생.
@@ -73,8 +74,8 @@ public class BlockchainService {
     /** PBM 토큰 소수점: 18자리 */
     private static final BigInteger TOKEN_DECIMALS = BigInteger.TEN.pow(18);
 
-    /** 트랜잭션 receipt 대기 최대 횟수 (1회당 5초, 최대 60초 = 1분, 디버깅용 단축) */
-    private static final int RECEIPT_MAX_RETRIES = 12;
+    /** 트랜잭션 receipt 대기 최대 횟수 (1회당 5초, 최대 120초 = 2분) */
+    private static final int RECEIPT_MAX_RETRIES = 24;
     private static final long RECEIPT_POLL_INTERVAL_MS = 5_000L;
 
     private final Web3j web3j;
@@ -229,29 +230,106 @@ public class BlockchainService {
         return txHash;
     }
 
+    /**
+     * PBMSmartAccount.updateWalletLimit()를 호출하여 지갑 총 한도를 변경한다.
+     * owner인 사용자 Credentials로 서명해야 한다.
+     *
+     * @param walletAddress   PBMSmartAccount 주소
+     * @param newLimitKrw     새 한도 (KRW)
+     * @param userCredentials 사용자 EOA Credentials (owner)
+     * @return 트랜잭션 해시
+     */
+    public String updateWalletLimit(String walletAddress, long newLimitKrw, Credentials userCredentials) {
+        BigInteger limitInWei = BigInteger.valueOf(newLimitKrw).multiply(TOKEN_DECIMALS);
+        log.info("지갑 한도 변경 - wallet: {}, newLimit: {} KRW", walletAddress, newLimitKrw);
+
+        Function fn = new Function(
+                "updateWalletLimit",
+                List.of(new Uint256(limitInWei)),
+                List.of()
+        );
+
+        String txHash = sendTransaction(userCredentials, walletAddress, fn, BigInteger.ZERO);
+        waitForReceipt(txHash);
+        log.info("updateWalletLimit tx 완료 - wallet: {}, newLimit: {} KRW, txHash: {}", walletAddress, newLimitKrw, txHash);
+        return txHash;
+    }
+
+    /**
+     * PBMSmartAccount.totalAllocated()를 조회한다 (현재 활성 세션키들의 한도 합계).
+     *
+     * @param walletAddress PBMSmartAccount 주소
+     * @return totalAllocated (wei 단위)
+     */
+    public BigInteger getTotalAllocated(String walletAddress) {
+        Function fn = new Function(
+                "totalAllocated",
+                List.of(),
+                List.of(new TypeReference<Uint256>() {})
+        );
+        String result = ethCall(masterCredentials.getAddress(), walletAddress, fn);
+        List<Type> decoded = FunctionReturnDecoder.decode(result, fn.getOutputParameters());
+        return ((Uint256) decoded.get(0)).getValue();
+    }
+
+    /**
+     * PBMSmartAccount.walletLimit()를 조회한다.
+     *
+     * @param walletAddress PBMSmartAccount 주소
+     * @return walletLimit (wei 단위)
+     */
+    public BigInteger getWalletLimit(String walletAddress) {
+        Function fn = new Function(
+                "walletLimit",
+                List.of(),
+                List.of(new TypeReference<Uint256>() {})
+        );
+        String result = ethCall(masterCredentials.getAddress(), walletAddress, fn);
+        List<Type> decoded = FunctionReturnDecoder.decode(result, fn.getOutputParameters());
+        return ((Uint256) decoded.get(0)).getValue();
+    }
+
     // ──────────────────────────────────────────────────────────────────
     // AI 에이전트 가스비 지원
     // ──────────────────────────────────────────────────────────────────
 
     /**
-     * AI 에이전트 주소에 최소 ETH(0.0001 ETH)를 전송한다.
+     * AI 에이전트 주소에 최소 ETH(0.00005 ETH)를 전송한다.
      * <p>
-     * executeAIPayment() 1회 호출에 필요한 가스비만 지원한다.
-     * 실제 가스 비용은 결제 완료 후 postOp()를 통해 사용자 PBM으로 회수된다.
+     * 기존 호환성을 위한 메서드. 기본 지원 금액(AI_AGENT_FUND_AMOUNT)으로
+     * {@link #fundAiAgent(String, BigInteger)}를 호출한다.
      *
      * @param aiAgentAddress ETH를 받을 AI 에이전트 주소
-     * @return 트랜잭션 해시
+     * @return 트랜잭션 receipt
      */
     public TransactionReceipt fundAiAgent(String aiAgentAddress) {
-        log.info("AI 에이전트 ETH 지원(0.0001 ETH) - aiAgent: {}", aiAgentAddress);
+        return fundAiAgent(aiAgentAddress, AI_AGENT_FUND_AMOUNT);
+    }
+
+    /**
+     * AI 에이전트 주소에 지정된 금액의 ETH를 전송한다.
+     * <p>
+     * executeAIPayment()는 AI 에이전트 키로 서명해야 하므로,
+     * AI 에이전트 주소에 ETH가 필요하다.
+     * 이 메서드는 waitForReceipt()를 호출하여 트랜잭션 confirm을 기다리므로,
+     * 반환 시점에는 AI 에이전트가 ETH를 받은 상태가 보장된다.
+     *
+     * @param aiAgentAddress ETH를 받을 AI 에이전트 주소
+     * @param amount         전송할 ETH 금액 (wei)
+     * @return 트랜잭션 receipt
+     */
+    public TransactionReceipt fundAiAgent(String aiAgentAddress, BigInteger amount) {
+        log.info("AI 에이전트 ETH 지원 - aiAgent: {}, amount: {} wei", aiAgentAddress, amount);
 
         try {
             BigInteger nonce = getNonce(masterCredentials.getAddress());
             BigInteger gasPrice = getGasPrice(); // 네트워크 gas price 동적 조회
             log.info("AI 에이전트 ETH 전송 - nonce: {}, gasPrice: {} wei, amount: {} wei, to: {}",
-                    nonce, gasPrice, AI_AGENT_FUND_AMOUNT, aiAgentAddress);
+                    nonce, gasPrice, amount, aiAgentAddress);
+
+            // ETH 전송 트랜잭션 생성 (21,000 gas는 ETH 전송 기본 가스)
             RawTransaction rawTx = RawTransaction.createEtherTransaction(
-                    nonce, gasPrice, BigInteger.valueOf(21_000L), aiAgentAddress, AI_AGENT_FUND_AMOUNT
+                    nonce, gasPrice, BigInteger.valueOf(21_000L), aiAgentAddress, amount
             );
             // EIP-155: 체인 ID 포함 서명 (Sepolia = 11155111) — 미포함 시 트랜잭션이 거부/정체됨
             byte[] signed = TransactionEncoder.signMessage(rawTx, CHAIN_ID, masterCredentials);
@@ -263,7 +341,7 @@ public class BlockchainService {
             String txHash = sent.getTransactionHash();
             log.info("AI 에이전트 ETH 전송 성공 - txHash: {}, nonce: {}, gasPrice: {} wei",
                     txHash, nonce, gasPrice);
-            // 다음 트랜잭션(addSessionKey)과 nonce 충돌 방지를 위해 확정 대기
+            // 다음 트랜잭션과 nonce 충돌 방지를 위해 확정 대기
             TransactionReceipt receipt = waitForReceipt(txHash);
             log.info("AI 에이전트 ETH 지원 완료 - txHash: {}", txHash);
             return receipt;
@@ -273,11 +351,54 @@ public class BlockchainService {
     }
 
     /**
-     * 사용자 EOA 주소에 가스비용 ETH를 지원한다.
+     * AI 에이전트 주소의 ETH 잔액을 확인하고 필요 가스비보다 부족하면 ETH를 지원한다.
      * <p>
-     * 사용자 EOA는 addSessionKey, revokeSessionKey 등 owner 권한 트랜잭션을 서명해야 하므로
-     * ETH가 필요하다. 지갑 최초 생성 시 마스터 지갑에서 1회 지원한다.
-     * 지원량(0.002 ETH)은 세션키 등록/취소용 테스트 가스비를 충당하기 위한 최소 여유 금액이다.
+     * executeAIPayment()는 AI 에이전트 키로 서명해야 하므로,
+     * AI 에이전트 주소에 최소한의 ETH(가스비)가 있어야 한다.
+     * fundAiAgent()는 waitForReceipt()를 호출하여 트랜잭션 confirm을 기다리므로,
+     * 이 메서드 반환 시점에는 AI 에이전트가 ETH를 받은 상태가 보장된다.
+     *
+     * @param aiAgentAddress AI 에이전트 주소
+     * @param requiredEth    필요 가스비 (wei)
+     */
+    public void ensureAiAgentFunded(String aiAgentAddress, BigInteger requiredEth) {
+        try {
+            // AI 에이전트의 현재 ETH 잔액 조회 (PENDING 블록 기준으로 멤풀에 대기 중인 tx 포함)
+            BigInteger balance = web3j.ethGetBalance(aiAgentAddress, DefaultBlockParameterName.PENDING)
+                    .send().getBalance();
+
+            log.info("AI 에이전트 ETH 잔액 확인 - aiAgent: {}, balance: {} wei, required: {} wei",
+                    aiAgentAddress, balance, requiredEth);
+
+            // 잔액이 필요 가스비보다 부족하면 부족한 금액만 지원
+            if (balance.compareTo(requiredEth) < 0) {
+                BigInteger shortage = requiredEth.subtract(balance);
+                log.info("AI 에이전트 ETH 부족 - 잔액: {} wei, 필요: {} wei, 부족분: {} wei 지원 시작",
+                        balance, requiredEth, shortage);
+                fundAiAgent(aiAgentAddress, shortage);
+            } else {
+                log.debug("AI 에이전트 ETH 잔액 충분 - aiAgent: {}, balance: {} wei",
+                        aiAgentAddress, balance);
+            }
+        } catch (Exception e) {
+            log.warn("AI 에이전트 잔액 확인 실패, ETH 지원 시도 - aiAgent: {}, error: {}",
+                    aiAgentAddress, e.getMessage());
+            // 잔액 확인 실패 시에도 일단 기본 금액 지원 시도 (이미 잔액이 충분했을 수 있으므로 결제는 진행)
+            try {
+                fundAiAgent(aiAgentAddress);
+            } catch (Exception fundError) {
+                log.error("AI 에이전트 ETH 지원 실패 - aiAgent: {}, error: {}",
+                        aiAgentAddress, fundError.getMessage());
+                // ETH 지원 실패해도 결제는 시도 (이미 잔액이 충분했을 수 있음)
+            }
+        }
+    }
+
+    /**
+     * 사용자 EOA 주소에 고정 금액(0.002 ETH)의 가스비용 ETH를 지원한다.
+     * <p>
+     * 기존 호환성을 위한 메서드. 기본 지원 금액(0.002 ETH)으로
+     * {@link #fundUserAddress(String, BigInteger)}를 호출한다.
      *
      * @param userAddress ETH를 받을 사용자 EOA 주소
      * @return 트랜잭션 receipt
@@ -285,15 +406,31 @@ public class BlockchainService {
     public TransactionReceipt fundUserAddress(String userAddress) {
         // 0.002 ETH — 세션키 등록/취소 약 20회 가스비 (5 Gwei 기준)
         BigInteger fundAmount = BigInteger.valueOf(2_000_000_000_000_000L);
-        log.info("사용자 EOA ETH 지원(0.002 ETH) - userAddress: {}", userAddress);
+        return fundUserAddress(userAddress, fundAmount);
+    }
+
+    /**
+     * 사용자 EOA 주소에 지정된 금액의 ETH를 전송한다.
+     * <p>
+     * 사용자 EOA는 addSessionKey, revokeSessionKey 등 owner 권한 트랜잭션을 서명해야 하므로
+     * ETH가 필요하다. 부족분만 계산하여 전송할 때 사용한다.
+     * 이 메서드는 waitForReceipt()를 호출하여 트랜잭션 confirm을 기다리므로,
+     * 반환 시점에는 사용자 EOA가 ETH를 받은 상태가 보장된다.
+     *
+     * @param userAddress ETH를 받을 사용자 EOA 주소
+     * @param amount      전송할 ETH 금액 (wei)
+     * @return 트랜잭션 receipt
+     */
+    public TransactionReceipt fundUserAddress(String userAddress, BigInteger amount) {
+        log.info("사용자 EOA ETH 지원 - userAddress: {}, amount: {} wei", userAddress, amount);
 
         try {
             BigInteger nonce = getNonce(masterCredentials.getAddress());
             BigInteger gasPrice = getGasPrice(); // 네트워크 gas price 동적 조회
-            log.info("사용자 EOA ETH 전송 - nonce: {}, gasPrice: {} wei, fundAmount: {} wei, to: {}",
-                    nonce, gasPrice, fundAmount, userAddress);
+            log.info("사용자 EOA ETH 전송 - nonce: {}, gasPrice: {} wei, amount: {} wei, to: {}",
+                    nonce, gasPrice, amount, userAddress);
             RawTransaction rawTx = RawTransaction.createEtherTransaction(
-                    nonce, gasPrice, BigInteger.valueOf(21_000L), userAddress, fundAmount
+                    nonce, gasPrice, BigInteger.valueOf(21_000L), userAddress, amount
             );
             byte[] signed = TransactionEncoder.signMessage(rawTx, CHAIN_ID, masterCredentials);
             EthSendTransaction sent = web3j.ethSendRawTransaction(Numeric.toHexString(signed)).send();
@@ -312,6 +449,50 @@ public class BlockchainService {
         }
     }
 
+    /**
+     * 사용자 EOA 주소의 ETH 잔액을 확인하고 필요 가스비보다 부족하면 부족한 금액만큼 ETH를 지원한다.
+     * <p>
+     * addSessionKey(), revokeSessionKey() 등 사용자 EOA 키로 서명해야 하는
+     * 트랜잭션 실행 전에 호출하여 가스비를 확보한다.
+     * fundUserAddress()는 waitForReceipt()를 호출하여 트랜잭션 confirm을 기다리므로,
+     * 이 메서드 반환 시점에는 사용자 EOA가 ETH를 받은 상태가 보장된다.
+     *
+     * @param userAddress  사용자 EOA 주소
+     * @param requiredGas  필요 가스비 (wei)
+     */
+    public void ensureUserEoaFunded(String userAddress, BigInteger requiredGas) {
+        try {
+            // 사용자 EOA의 현재 ETH 잔액 조회 (PENDING 블록 기준으로 멤풀에 대기 중인 tx 포함)
+            BigInteger balance = web3j.ethGetBalance(userAddress, DefaultBlockParameterName.PENDING)
+                    .send().getBalance();
+
+            log.info("사용자 EOA ETH 잔액 확인 - userAddress: {}, balance: {} wei, required: {} wei",
+                    userAddress, balance, requiredGas);
+
+            // 잔액이 필요 가스비보다 부족하면 부족한 금액만 지원
+            if (balance.compareTo(requiredGas) < 0) {
+                BigInteger shortage = requiredGas.subtract(balance);
+                log.info("사용자 EOA ETH 부족 - 잔액: {} wei, 필요: {} wei, 부족분: {} wei 지원 시작",
+                        balance, requiredGas, shortage);
+                fundUserAddress(userAddress, shortage);
+            } else {
+                log.debug("사용자 EOA ETH 잔액 충분 - userAddress: {}, balance: {} wei",
+                        userAddress, balance);
+            }
+        } catch (Exception e) {
+            log.warn("사용자 EOA 잔액 확인 실패, ETH 지원 시도 - userAddress: {}, error: {}",
+                    userAddress, e.getMessage());
+            // 잔액 확인 실패 시에도 일단 기본 금액 지원 시도 (이미 잔액이 충분했을 수 있으므로 트랜잭션은 진행)
+            try {
+                fundUserAddress(userAddress);
+            } catch (Exception fundError) {
+                log.error("사용자 EOA ETH 지원 실패 - userAddress: {}, error: {}",
+                        userAddress, fundError.getMessage());
+                // ETH 지원 실패해도 트랜잭션은 시도 (이미 잔액이 충분했을 수 있음)
+            }
+        }
+    }
+
     // ──────────────────────────────────────────────────────────────────
     // PBM 결제 실행 (Paymaster 연동)
     // ──────────────────────────────────────────────────────────────────
@@ -320,6 +501,7 @@ public class BlockchainService {
      * PBMSmartAccount.executeAIPayment()를 호출하여 PBM 토큰 결제를 실행한다.
      * <p>
      * 결제 흐름:
+     * 0. ensureAiAgentFunded() → AI 에이전트 ETH 잔액 확인 및 부족 시 ETH 지원
      * 1. validatePaymasterUserOp() → 사용자 PBM 잔고 검증
      * 2. executeAIPayment() → AI 에이전트 키로 서명하여 결제 실행
      * 3. 트랜잭션 receipt에서 실제 가스 사용량 계산
@@ -329,9 +511,9 @@ public class BlockchainService {
      * @param aiAgentPrivateKey AI 에이전트 개인키
      * @param recipientAddress  PBM 토큰 수신 주소
      * @param amountKrw         결제 금액 (KRW)
-     * @return 트랜잭션 해시
+     * @return 결제 실행 결과 (트랜잭션 해시 + 실제 가스비 ETH wei)
      */
-    public String executePayment(String walletAddress, String aiAgentPrivateKey,
+    public PaymentExecutionResult executePayment(String walletAddress, String aiAgentPrivateKey,
                                  String recipientAddress, long amountKrw) {
         Credentials aiAgent = Credentials.create(aiAgentPrivateKey);
         BigInteger amountInWei = BigInteger.valueOf(amountKrw).multiply(TOKEN_DECIMALS);
@@ -342,8 +524,12 @@ public class BlockchainService {
         // 네트워크 gas price 동적 조회 — 조회 실패 시 5 Gwei fallback
         BigInteger gasPrice = getGasPrice();
 
+        // 0. AI 에이전트 ETH 잔액 확인 및 부족 시 지원
+        //    executeAIPayment()는 AI 에이전트 키로 서명하므로 AI 에이전트 주소에 가스비 ETH가 있어야 한다.
+        BigInteger estimatedGasEth = GAS_LIMIT.multiply(gasPrice);
+        ensureAiAgentFunded(aiAgent.getAddress(), estimatedGasEth);
+
         // 1. 결제 전 사용자 PBM 잔고 검증 (예상 가스비 기준)
-        BigInteger estimatedGasEth = GAS_LIMIT.multiply(gasPrice); // 최대 예상 가스비 (wei)
         validatePaymasterUserOp(walletAddress, estimatedGasEth);
 
         // 2. PBMSmartAccount.executeAIPayment(address targetService, uint256 amount)
@@ -370,9 +556,17 @@ public class BlockchainService {
         // 4. postOp() → 실제 가스비를 사용자 PBM으로 차감
         deductGasCostFromWallet(walletAddress, actualGasEth);
 
-        log.info("PBM 결제 완료 - wallet: {}, txHash: {}", walletAddress, txHash);
-        return txHash;
+        log.info("PBM 결제 완료 - wallet: {}, txHash: {}, actualGasEth: {} wei", walletAddress, txHash, actualGasEth);
+        return new PaymentExecutionResult(txHash, actualGasEth);
     }
+
+    /**
+     * 결제 실행 결과 DTO.
+     *
+     * @param txHash           블록체인 트랜잭션 해시
+     * @param actualGasEthWei  실제 소모된 가스비 (ETH wei 단위)
+     */
+    public record PaymentExecutionResult(String txHash, BigInteger actualGasEthWei) {}
 
     // ──────────────────────────────────────────────────────────────────
     // Paymaster 연동
@@ -425,22 +619,7 @@ public class BlockchainService {
      * @param actualEthFee  실제 가스 사용량 (wei 단위 ETH, receipt.gasUsed * gasPrice)
      */
     public void deductGasCostFromWallet(String walletAddress, BigInteger actualEthFee) {
-        log.info("가스비 PBM 차감 시작 - wallet: {}, actualEthFee: {} wei", walletAddress, actualEthFee);
-
-        // PBMPaymasterWithOracle.postOp(address user, uint256 actualEthFee)
-        Function fn = new Function(
-                "postOp",
-                Arrays.asList(
-                        new Address(walletAddress),
-                        new Uint256(actualEthFee)
-                ),
-                List.of()
-        );
-
-        String txHash = sendTransaction(masterCredentials, web3Config.getPaymasterAddress(), fn, BigInteger.ZERO);
-        // 확정까지 대기 — 다음 트랜잭션과 nonce 충돌 방지
-        waitForReceipt(txHash);
-        log.info("가스비 PBM 차감 완료 - wallet: {}, txHash: {}", walletAddress, txHash);
+        deductGasCostFromWallet(walletAddress, actualEthFee, null);
     }
 
     /**
@@ -497,6 +676,107 @@ public class BlockchainService {
     }
 
     // ──────────────────────────────────────────────────────────────────
+    // 토큰 충전
+    // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * 마스터 지갑에서 사용자 PBMSmartAccount로 PBM 토큰을 전송한다 (충전).
+     * <p>
+     * ERC-20 표준 transfer(address to, uint256 amount)를 호출한다.
+     * 마스터 지갑이 서명자이므로 마스터 지갑에 충분한 PBM 잔액이 있어야 한다.
+     *
+     * @param toAddress 수신 주소 (사용자 PBMSmartAccount 컨트랙트 주소)
+     * @param amountWei 전송할 토큰 수량 (wei 단위, 18 decimals)
+     * @return 온체인 확정된 TransactionReceipt (txHash, gasUsed, effectiveGasPrice 포함)
+     */
+    public TransactionReceipt transferPbmToken(String toAddress, BigInteger amountWei) {
+        return transferPbmToken(toAddress, amountWei, null);
+    }
+
+    /**
+     * 마스터 지갑에서 사용자 PBMSmartAccount로 PBM 토큰을 전송한다 (충전).
+     * progressCallback을 통해 TX_SENT / TX_CONFIRMED 단계 알림을 받을 수 있다.
+     *
+     * @param toAddress        수신 주소 (사용자 PBMSmartAccount 컨트랙트 주소)
+     * @param amountWei        전송할 토큰 수량 (wei 단위, 18 decimals)
+     * @param progressCallback 진행 단계 콜백 (null 허용) — "TX_SENT:{txHash}" / "TX_CONFIRMED:{blockNumber}" 형태
+     * @return 온체인 확정된 TransactionReceipt
+     */
+    public TransactionReceipt transferPbmToken(String toAddress, BigInteger amountWei,
+                                               Consumer<String> progressCallback) {
+        log.info("PBM 토큰 충전 시작 - to: {}, amount: {} wei", toAddress, amountWei);
+
+        // 명령어를 블록체인이 알아들을 수 있는 형태로 포장함
+        Function fn = new Function(
+                "transfer",
+                Arrays.asList(new Address(toAddress), new Uint256(amountWei)),
+                List.of(new TypeReference<Bool>() {})
+        );
+
+        // 포장한 명령을 블록체인 네트워크로 쏜다.
+        String txHash = sendTransaction(masterCredentials, web3Config.getPbmTokenAddress(), fn, BigInteger.ZERO);
+        if (progressCallback != null) progressCallback.accept("TX_SENT:" + txHash);
+
+        // 블록체인 네트워크에서 거래가 완전히 승인(채굴)될 때까지 기다린다.
+        TransactionReceipt receipt = waitForReceipt(txHash);
+        if (progressCallback != null) progressCallback.accept("TX_CONFIRMED:" + receipt.getBlockNumber());
+
+        log.info("PBM 토큰 충전 완료 - to: {}, amount: {} wei, txHash: {}", toAddress, amountWei, txHash);
+        return receipt;
+    }
+
+    /**
+     * 가스비 PBM 차감 — progressCallback 지원 버전.
+     *
+     * @param walletAddress    사용자 PBMSmartAccount 주소
+     * @param actualEthFee     실제 소모된 ETH 가스비 (wei)
+     * @param progressCallback 진행 단계 콜백 (null 허용) — "GAS_TX_SENT:{txHash}" / "GAS_TX_CONFIRMED" 형태
+     */
+    public void deductGasCostFromWallet(String walletAddress, BigInteger actualEthFee,
+                                        Consumer<String> progressCallback) {
+        log.info("가스비 PBM 차감 시작 - wallet: {}, actualEthFee: {} wei", walletAddress, actualEthFee);
+
+        // 수수료 정산을 담당하는 Paymaster에게 postOp(사후 정산) 명령을 내린다.
+        Function fn = new Function(
+                "postOp",
+                Arrays.asList(new Address(walletAddress), new Uint256(actualEthFee)),
+                List.of()
+        );
+
+        String txHash = sendTransaction(masterCredentials, web3Config.getPaymasterAddress(), fn, BigInteger.ZERO);
+        if (progressCallback != null) progressCallback.accept("GAS_TX_SENT:" + txHash);
+
+        waitForReceipt(txHash);
+        if (progressCallback != null) progressCallback.accept("GAS_TX_CONFIRMED");
+
+        log.info("가스비 PBM 차감 완료 - wallet: {}, txHash: {}", walletAddress, txHash);
+    }
+
+    /**
+     * TransactionReceipt에서 실제 소모된 ETH 가스비를 계산한다.
+     * <p>
+     * actualEthFee = gasUsed × effectiveGasPrice (EIP-1559 기준)
+     *
+     * @param receipt 온체인 확정된 트랜잭션 receipt
+     * @return 실제 소모된 ETH 가스비 (wei 단위)
+     */
+    public BigInteger calculateEthFee(TransactionReceipt receipt) {
+        BigInteger gasUsed = receipt.getGasUsed();
+        String effectiveGasPriceHex = receipt.getEffectiveGasPrice();
+        BigInteger effectiveGasPrice;
+        if (effectiveGasPriceHex != null && !effectiveGasPriceHex.isBlank()) {
+            effectiveGasPrice = Numeric.decodeQuantity(effectiveGasPriceHex);
+        } else {
+            // EIP-1559 미지원 네트워크 폴백: 현재 가스 가격 사용
+            effectiveGasPrice = getGasPrice();
+        }
+        BigInteger ethFee = gasUsed.multiply(effectiveGasPrice);
+        log.info("가스비 계산 - gasUsed: {}, effectiveGasPrice: {} wei, totalEthFee: {} wei",
+                gasUsed, effectiveGasPrice, ethFee);
+        return ethFee;
+    }
+
+    // ──────────────────────────────────────────────────────────────────
     // 공통 유틸리티
     // ──────────────────────────────────────────────────────────────────
 
@@ -527,7 +807,26 @@ public class BlockchainService {
                                    Function function, BigInteger value, BigInteger gasLimit, BigInteger gasPrice) {
         try {
             String encoded = FunctionEncoder.encode(function);
-            BigInteger nonce = getNonce(credentials.getAddress());
+            String signerAddress = credentials.getAddress();
+
+            // nonce gap 감지: LATEST와 PENDING이 다르면 stuck tx가 있다는 의미
+            BigInteger latestNonce = getNonce(signerAddress, true);
+            BigInteger pendingNonce = getNonce(signerAddress, false);
+            BigInteger nonce;
+
+            if (!latestNonce.equals(pendingNonce)) {
+                // pending tx가 있지만 체인에 포함 안 됨 → LATEST nonce로 덮어쓴다.
+                // 같은 nonce + 더 높은 gasPrice로 보내면 기존 pending tx를 replacement한다.
+                log.warn("[BlockchainService] nonce gap 감지 → LATEST nonce 사용 (replacement tx) - "
+                        + "address={}, latest={}, pending={}, fn={}",
+                        signerAddress, latestNonce, pendingNonce, function.getName());
+                nonce = latestNonce;
+                // replacement tx는 기존 tx보다 gasPrice가 높아야 함 → 2배로 상향
+                gasPrice = gasPrice.multiply(BigInteger.TWO);
+                log.info("[BlockchainService] replacement gasPrice 상향 - {} wei", gasPrice);
+            } else {
+                nonce = pendingNonce;
+            }
 
             log.info("트랜잭션 전송 - fn: {}, nonce: {}, gasPrice: {} wei, gasLimit: {}, to: {}",
                     function.getName(), nonce, gasPrice, gasLimit, toAddress);
@@ -576,6 +875,17 @@ public class BlockchainService {
     }
 
     /**
+     * 트랜잭션 receipt를 폴링하여 확정될 때까지 대기한다 (외부 호출용).
+     *
+     * @param txHash 대기할 트랜잭션 해시
+     * @return 확정된 TransactionReceipt
+     * @throws RuntimeException 타임아웃 시
+     */
+    public TransactionReceipt waitForReceiptPublic(String txHash) {
+        return waitForReceipt(txHash);
+    }
+
+    /**
      * 트랜잭션 receipt를 폴링하여 확정될 때까지 대기한다.
      *
      * @param txHash 대기할 트랜잭션 해시
@@ -611,7 +921,7 @@ public class BlockchainService {
                 log.warn("Receipt 조회 중 오류 (재시도 {}/{}): {}", i + 1, RECEIPT_MAX_RETRIES, e.getMessage());
             }
         }
-        throw new RuntimeException("트랜잭션 확정 타임아웃 (60초) - txHash: " + txHash);
+        throw new RuntimeException("트랜잭션 확정 타임아웃 (120초) - txHash: " + txHash);
     }
 
     /**
@@ -626,10 +936,11 @@ public class BlockchainService {
      *
      * @return gas price (wei 단위, 20% buffer 적용)
      */
-    private BigInteger getGasPrice() {
+    public BigInteger getGasPrice() {
         try {
             BigInteger baseGasPrice = web3j.ethGasPrice().send().getGasPrice();
-            return baseGasPrice.multiply(BigInteger.valueOf(120)).divide(BigInteger.valueOf(100));
+            // 50% buffer: Sepolia 네트워크 혼잡 시 빠른 블록 포함을 위해 여유 확보
+            return baseGasPrice.multiply(BigInteger.valueOf(150)).divide(BigInteger.valueOf(100));
         } catch (Exception e) {
             log.warn("네트워크 gas price 조회 실패, 기본값(5 Gwei) + 20% buffer 사용: {}", e.getMessage());
             return BigInteger.valueOf(6_000_000_000L); // 5 Gwei + 20% = 6 Gwei fallback
@@ -642,10 +953,103 @@ public class BlockchainService {
      * PENDING 기준으로 조회하여 멤풀에 대기 중인 트랜잭션의 nonce도 포함한다.
      * LATEST 기준이면 pending tx를 무시해 nonce 충돌("replacement transaction underpriced")이 발생한다.
      */
+    /**
+     * 주어진 주소의 nonce를 조회한다.
+     * <p>
+     * LATEST(체인 확정)와 PENDING(멤풀 포함)을 모두 조회하여 nonce gap을 감지한다.
+     * gap이 있으면 self-transfer(0 ETH)로 빈 nonce를 채운 뒤 정상 nonce를 반환한다.
+     *
+     * @param address 조회할 주소
+     * @return 사용할 nonce (gap이 없으면 PENDING 값, gap 복구 후에는 복구 완료된 다음 nonce)
+     */
     private BigInteger getNonce(String address) throws Exception {
-        EthGetTransactionCount response = web3j
+        BigInteger latestNonce = web3j
+                .ethGetTransactionCount(address, DefaultBlockParameterName.LATEST)
+                .send().getTransactionCount();
+        BigInteger pendingNonce = web3j
                 .ethGetTransactionCount(address, DefaultBlockParameterName.PENDING)
-                .send();
-        return response.getTransactionCount();
+                .send().getTransactionCount();
+
+        if (!latestNonce.equals(pendingNonce)) {
+            log.warn("[BlockchainService] nonce gap 감지 - address={}, latest={}, pending={}, gap={}",
+                    address, latestNonce, pendingNonce, pendingNonce.subtract(latestNonce));
+
+            // gap이 있으면 LATEST nonce부터 self-transfer로 빈 nonce를 채운다.
+            // 이 주소의 Credentials가 필요하므로, master/user 구분 없이 처리한다.
+            resolveNonceGap(address, latestNonce, pendingNonce);
+
+            // gap 복구 후 최신 nonce를 다시 조회한다.
+            BigInteger resolvedNonce = web3j
+                    .ethGetTransactionCount(address, DefaultBlockParameterName.PENDING)
+                    .send().getTransactionCount();
+            log.info("[BlockchainService] nonce gap 복구 완료 - address={}, resolvedNonce={}", address, resolvedNonce);
+            return resolvedNonce;
+        }
+
+        return pendingNonce;
+    }
+
+    /**
+     * nonce gap을 self-transfer(자기 자신에게 0 ETH 전송)로 메운다.
+     * <p>
+     * 체인이 기대하는 nonce(latest)부터 mempool에 걸린 nonce(pending) 직전까지
+     * 빈 트랜잭션을 전송하여 후속 트랜잭션이 처리될 수 있도록 한다.
+     *
+     * @param address      gap이 발생한 주소
+     * @param latestNonce  체인 확정 nonce (다음으로 기대하는 nonce)
+     * @param pendingNonce 멤풀 포함 nonce (이미 전송된 pending tx 이후 nonce)
+     */
+    private void resolveNonceGap(String address, BigInteger latestNonce, BigInteger pendingNonce) {
+        // 해당 주소의 Credentials 결정: master 주소면 masterCredentials, 아니면 user Credentials
+        Credentials credentials;
+        if (address.equalsIgnoreCase(masterCredentials.getAddress())) {
+            credentials = masterCredentials;
+        } else {
+            // 사용자 EOA의 경우 — 호출자가 이미 sendTransaction에서 credentials를 전달하므로
+            // getNonce 시점에서는 credentials를 알 수 없다.
+            // self-transfer 대신 LATEST nonce를 사용하도록 fallback한다.
+            log.warn("[BlockchainService] 사용자 EOA nonce gap - LATEST nonce({})로 fallback. "
+                    + "pending tx({})는 mempool에서 자동 만료될 때까지 대기", latestNonce, pendingNonce);
+            return;
+        }
+
+        BigInteger gasPrice = getGasPrice();
+        for (BigInteger nonce = latestNonce; nonce.compareTo(pendingNonce) < 0; nonce = nonce.add(BigInteger.ONE)) {
+            try {
+                log.info("[BlockchainService] nonce gap 복구 self-transfer - address={}, nonce={}", address, nonce);
+                RawTransaction rawTx = RawTransaction.createEtherTransaction(
+                        nonce, gasPrice, BigInteger.valueOf(21_000L), address, BigInteger.ZERO
+                );
+                byte[] signed = TransactionEncoder.signMessage(rawTx, CHAIN_ID, credentials);
+                EthSendTransaction sent = web3j.ethSendRawTransaction(Numeric.toHexString(signed)).send();
+                if (sent.hasError()) {
+                    log.error("[BlockchainService] nonce gap 복구 실패 - nonce={}, error={}", nonce, sent.getError().getMessage());
+                    break;
+                }
+                String txHash = sent.getTransactionHash();
+                log.info("[BlockchainService] nonce gap 복구 tx 전송 - nonce={}, txHash={}", nonce, txHash);
+                waitForReceipt(txHash);
+            } catch (Exception e) {
+                log.error("[BlockchainService] nonce gap 복구 중 예외 - nonce={}, error={}", nonce, e.getMessage());
+                break;
+            }
+        }
+    }
+
+    /**
+     * 주어진 주소의 nonce를 조회한다 (gap 복구 없이 단순 조회).
+     * <p>
+     * gap 복구가 불가능한 상황(사용자 EOA 등)에서 LATEST nonce를 반환하여
+     * pending에 걸린 실패 tx를 덮어쓰도록 한다.
+     *
+     * @param address 조회할 주소
+     * @param useLatest true면 LATEST(체인 확정) 기준, false면 PENDING 기준
+     * @return nonce 값
+     */
+    private BigInteger getNonce(String address, boolean useLatest) throws Exception {
+        DefaultBlockParameterName param = useLatest
+                ? DefaultBlockParameterName.LATEST
+                : DefaultBlockParameterName.PENDING;
+        return web3j.ethGetTransactionCount(address, param).send().getTransactionCount();
     }
 }

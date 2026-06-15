@@ -25,6 +25,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -53,6 +54,10 @@ public class CommandExecutionService {
     private static final Logger log = LoggerFactory.getLogger(CommandExecutionService.class);
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /** commandText 내 URL 추출용 정규식 */
+    private static final java.util.regex.Pattern URL_PATTERN =
+            java.util.regex.Pattern.compile("https?://\\S+");
 
     private final CommandParsingService commandParsingService;
     private final PriceRequestService priceRequestService;
@@ -86,37 +91,25 @@ public class CommandExecutionService {
     public CommandParseResponse parseAndPublishIfReady(CommandParseRequest request, Long userId) {
         CommandParseResponse response = commandParsingService.parse(request);
 
-        // AUTO_PURCHASE: 필수조건 누락 여부와 상관없이 항상 PRE_SEARCH_CLARIFICATION 단계로 보낸다.
-        // 프론트는 productName, platform, maxPrice 3개 필드를 항상 보여주고, parsedCommand로 prefill한다.
-        if (response.intent() == CommandIntent.AUTO_PURCHASE) {
-            List<String> requiredFields = List.of(
-                    CommandFieldType.PRODUCT_NAME.fieldKey(),
-                    CommandFieldType.PLATFORM.fieldKey(),
-                    CommandFieldType.MAX_PRICE.fieldKey()
-            );
-
-            log.info("AUTO_PURCHASE 필수 보완 시작 - userId: {}, 필수 필드: {}", userId, requiredFields);
-
-            CommandSessionResponse sessionResponse = commandSessionService.createPreSearchClarificationSession(
-                    userId,
-                    request.commandText(),
-                    requiredFields,
-                    "자동 결제를 위해 상품명, 플랫폼, 최대 가격을 모두 입력해주세요.",
-                    resolvePrimaryPlatform(response.parsedCommand())
-            );
-
-            return new CommandParseResponse(
-                    response.intent(),
-                    response.parsedCommand(),
-                    requiredFields,
-                    List.of(),
-                    true,
-                    response.confidence(),
-                    sessionResponse.commandId()
-            );
+        // URL_MONITOR: 사용자가 직접 URL을 제공한 경우 → 검색 없이 바로 URL 모니터링 태스크 생성
+        if (response.intent() == CommandIntent.URL_MONITOR) {
+            return handleUrlMonitorIntent(request, response, userId);
         }
 
-        // 기존 로직: PRICE_CHECK / PRICE_TRACK 등 AUTO_PURCHASE가 아닌 경우 needsClarification 여부에 따라 분기
+        // URL 안전장치: GPT가 URL이 포함된 명령어를 AUTO_PURCHASE 등으로 잘못 파싱한 경우 강제 오버라이드
+        // (긴 쿼리파라미터 URL은 GPT가 URL로 인식하지 못하는 경우가 있어 백엔드에서 2차 검증)
+        if (containsHttpUrl(request.commandText())) {
+            List<String> extractedUrls = extractUrlsFromText(request.commandText());
+            if (!extractedUrls.isEmpty()) {
+                log.info("URL 감지 → URL_MONITOR 강제 오버라이드 - userId: {}, urlCount: {}, 원래 intent: {}",
+                        userId, extractedUrls.size(), response.intent());
+                CommandParseResponse urlResponse = buildUrlMonitorResponse(response, extractedUrls);
+                return handleUrlMonitorIntent(request, urlResponse, userId);
+            }
+        }
+
+        // PRICE_CHECK / PRICE_TRACK / AUTO_PURCHASE: needsClarification 여부에 따라 분기
+        // AUTO_PURCHASE도 동일하게 처리 - 필드가 모두 있으면 즉시 검색, 없으면 PRE_SEARCH_CLARIFICATION
         if (!response.needsClarification()) {
             log.info("파싱 결과 추가 확인 불필요 - userId: {} 즉시 가격 요청 발행", userId);
 
@@ -127,6 +120,12 @@ public class CommandExecutionService {
                     request.commandText(),
                     resolvePrimaryPlatform(response.parsedCommand()));
             String commandId = sessionResponse.commandId();
+
+            // GPT가 추출한 상품 옵션(색상, 사이즈)을 세션에 저장
+            commandSessionService.updateParsedOptions(
+                    commandId,
+                    response.parsedCommand().color(),
+                    response.parsedCommand().size());
 
             // 확보한 commandId를 Kafka 이벤트에 포함시켜 발행
             priceRequestService.publishParsedCommandRequest(
@@ -158,6 +157,12 @@ public class CommandExecutionService {
                     resolvePrimaryPlatform(response.parsedCommand())
             );
             String commandId = sessionResponse.commandId();
+
+            // GPT가 추출한 상품 옵션(색상, 사이즈)을 세션에 저장
+            commandSessionService.updateParsedOptions(
+                    commandId,
+                    response.parsedCommand().color(),
+                    response.parsedCommand().size());
 
             return new CommandParseResponse(
                     response.intent(),
@@ -401,6 +406,87 @@ public class CommandExecutionService {
      * @param parsedCommand GPT가 추출한 구조화 결과 (null 허용)
      * @return 대표 플랫폼 이름 문자열 또는 null
      */
+    /**
+     * URL_MONITOR intent 처리: 검색 없이 URL 모니터링 태스크를 직접 생성한다.
+     * <p>
+     * 동작:
+     * 1. productUrls 또는 maxPrice가 없으면 PRE_SEARCH_CLARIFICATION으로 보완 요청
+     * 2. 세션을 MONITORING_STARTED로 바로 전환
+     * 3. UrlMonitoringTaskService로 URL별 태스크 생성
+     * 4. Kafka → price-service: URL 기반 MonitoringSubscription 등록 요청
+     */
+    @Transactional
+    public CommandParseResponse handleUrlMonitorIntent(
+            CommandParseRequest request,
+            CommandParseResponse response,
+            Long userId
+    ) {
+        ParsedCommand parsed = response.parsedCommand();
+
+        // 필수 필드 검사: productUrls 또는 maxPrice 없으면 보완 요청
+        if (response.needsClarification()) {
+            log.info("URL_MONITOR 보완 필요 - userId: {}, missing: {}", userId, response.missingRequiredFields());
+            CommandSessionResponse sessionResponse = commandSessionService.createPreSearchClarificationSession(
+                    userId,
+                    request.commandText(),
+                    response.missingRequiredFields(),
+                    "모니터링할 URL과 목표 가격을 입력해주세요.",
+                    null
+            );
+            return new CommandParseResponse(
+                    response.intent(),
+                    parsed,
+                    response.missingRequiredFields(),
+                    List.of(),
+                    true,
+                    response.confidence(),
+                    sessionResponse.commandId()
+            );
+        }
+
+        // 세션 생성 (MONITORING_STARTED로 바로 전환)
+        CommandSessionResponse sessionResponse = commandSessionService.createSearchingSession(
+                userId, request.commandText(), null
+        );
+        String commandId = sessionResponse.commandId();
+        commandSessionService.updateToMonitoringStarted(commandId);
+
+        // 조건 결정: ALL(전부 충족) 또는 ANY(하나라도 충족)
+        String condition = "ANY".equalsIgnoreCase(parsed.monitorCondition()) ? "ANY" : "ALL";
+
+        // 구매/추적 의도 결정: GPT가 parsed.purchaseIntent()로 반환, 없으면 AUTO_PURCHASE 기본값
+        String effectiveIntent = (parsed.purchaseIntent() != null && !parsed.purchaseIntent().isBlank())
+                ? parsed.purchaseIntent()
+                : "AUTO_PURCHASE";
+
+        // Kafka → price-service: URL별 MonitoringSubscription 생성 요청
+        // url_monitoring_tasks 테이블 제거 후, price-service의 monitoring_subscriptions가 단일 진실 공급원이다.
+        // currentPrice: 익스텐션이 현재 페이지 DOM에서 추출한 가격 (즉시 충족 판단용)
+        priceRequestService.publishUrlMonitoringRequest(
+                userId,
+                commandId,
+                parsed.productUrls(),
+                parsed.maxPrice(),
+                parsed.currency() != null ? parsed.currency() : "KRW",
+                condition,
+                effectiveIntent,
+                request.currentPrice()
+        );
+
+        log.info("URL_MONITOR 등록 완료 - commandId: {}, urlCount: {}, condition: {}, targetPrice: {}",
+                commandId, parsed.productUrls().size(), condition, parsed.maxPrice());
+
+        return new CommandParseResponse(
+                response.intent(),
+                parsed,
+                List.of(),
+                List.of(),
+                false,
+                response.confidence(),
+                commandId
+        );
+    }
+
     private String resolvePrimaryPlatform(ParsedCommand parsedCommand) {
         if (parsedCommand == null
                 || parsedCommand.platforms() == null
@@ -508,7 +594,73 @@ public class CommandExecutionService {
                 maxPrice,
                 original.minPrice(),
                 original.currency(),
-                original.searchCategoryHint()
+                original.searchCategoryHint(),
+                original.productUrls(),
+                original.monitorCondition(),
+                original.purchaseIntent()
+        );
+    }
+
+    /**
+     * commandText에 http:// 또는 https://가 포함되어 있는지 확인한다.
+     */
+    private boolean containsHttpUrl(String text) {
+        return text != null && (text.contains("http://") || text.contains("https://"));
+    }
+
+    /**
+     * commandText에서 URL 목록을 추출한다.
+     */
+    private List<String> extractUrlsFromText(String text) {
+        if (text == null) return List.of();
+        java.util.regex.Matcher matcher = URL_PATTERN.matcher(text);
+        List<String> urls = new ArrayList<>();
+        while (matcher.find()) {
+            urls.add(matcher.group());
+        }
+        return urls;
+    }
+
+    /**
+     * 기존 GPT 파싱 응답을 URL_MONITOR 응답으로 변환한다.
+     * <p>
+     * maxPrice, currency 등 가격 관련 정보는 그대로 유지하고,
+     * productUrls를 추출된 URL 목록으로 교체한다.
+     * purchaseIntent는 기존 intent에서 유추한다 (AUTO_PURCHASE → AUTO_PURCHASE).
+     */
+    private CommandParseResponse buildUrlMonitorResponse(CommandParseResponse original, List<String> urls) {
+        ParsedCommand orig = original.parsedCommand();
+
+        // AUTO_PURCHASE intent였으면 purchaseIntent도 AUTO_PURCHASE 유지
+        String purchaseIntent = (orig != null && orig.purchaseIntent() != null)
+                ? orig.purchaseIntent()
+                : (original.intent() == CommandIntent.AUTO_PURCHASE ? "AUTO_PURCHASE" : "PRICE_TRACK");
+
+        ParsedCommand urlParsed = new ParsedCommand(
+                orig != null ? orig.productCategory() : null,
+                null,               // productName - URL 방식에서는 페이지 크롤링으로 수집
+                null, null, null, null, null,
+                List.of(),          // platforms
+                orig != null ? orig.maxPrice() : null,
+                orig != null ? orig.minPrice() : null,
+                orig != null ? orig.currency() : null,
+                null,               // searchCategoryHint
+                urls,               // productUrls
+                null,               // monitorCondition → ALL (기본값)
+                purchaseIntent
+        );
+
+        // maxPrice > 0 이면 즉시 등록 가능
+        boolean urlReady = urlParsed.maxPrice() != null && urlParsed.maxPrice() > 0;
+
+        return new CommandParseResponse(
+                CommandIntent.URL_MONITOR,
+                urlParsed,
+                urlReady ? List.of() : List.of("maxPrice"),
+                List.of(),
+                !urlReady,
+                original.confidence(),
+                null
         );
     }
 

@@ -1,14 +1,17 @@
 package com.pbm.command.service;
 
+import com.pbm.command.client.PriceServiceClient;
 import com.pbm.command.config.BrowserAgentTokenUtil;
 import com.pbm.command.domain.BrowserDevice;
 import com.pbm.command.domain.BrowserDeviceStatus;
 import com.pbm.command.dto.request.BrowserDeviceRegisterRequest;
 import com.pbm.command.dto.response.AssignedRunResponse;
+import com.pbm.command.dto.response.BrowserSearchTaskResponse;
 import com.pbm.command.dto.response.BrowserDeviceRegisterResponse;
 import com.pbm.command.dto.response.BrowserHeartbeatResponse;
 import com.pbm.command.dto.response.MyDeviceResponse;
 import com.pbm.command.dto.response.MyDevicesResponse;
+import com.pbm.command.dto.response.UrlMonitoringTaskResponse;
 import com.pbm.command.exception.BrowserDeviceNotFoundException;
 import com.pbm.command.exception.InvalidBrowserAgentTokenException;
 import com.pbm.command.repository.BrowserDeviceRepository;
@@ -43,17 +46,20 @@ public class BrowserDeviceService {
     private final BrowserAgentTokenUtil browserAgentTokenUtil;
     private final AgentRunService agentRunService;
     private final StringRedisTemplate stringRedisTemplate;
+    private final PriceServiceClient priceServiceClient;
 
     public BrowserDeviceService(
             BrowserDeviceRepository browserDeviceRepository,
             BrowserAgentTokenUtil browserAgentTokenUtil,
             AgentRunService agentRunService,
-            StringRedisTemplate stringRedisTemplate
+            StringRedisTemplate stringRedisTemplate,
+            PriceServiceClient priceServiceClient
     ) {
         this.browserDeviceRepository = browserDeviceRepository;
         this.browserAgentTokenUtil = browserAgentTokenUtil;
         this.agentRunService = agentRunService;
         this.stringRedisTemplate = stringRedisTemplate;
+        this.priceServiceClient = priceServiceClient;
     }
 
     /**
@@ -131,7 +137,14 @@ public class BrowserDeviceService {
         // heartbeat 직후 online 상태가 최신으로 반영되므로,
         // 이 시점에 현재 디바이스에 할당된 run 또는 새로 할당 가능한 queued run을 함께 내려준다.
         AssignedRunResponse assignedRun = agentRunService.getPendingRunForDevice(saved.getDeviceId());
-        return BrowserHeartbeatResponse.from(saved, assignedRun);
+
+        // price-service에서 크롤링 기한 도래한 URL 모니터링 태스크를 조회하여 heartbeat 응답에 포함한다.
+        // next_check_at 필터링은 price-service DB 기준으로 수행되어 과도한 크롤링을 방지한다.
+        List<UrlMonitoringTaskResponse> urlTasks = priceServiceClient.getActiveUrlTasks(saved.getUserId());
+        List<BrowserSearchTaskResponse> browserSearchTasks =
+                priceServiceClient.getActiveBrowserSearchTasks(saved.getUserId());
+
+        return BrowserHeartbeatResponse.from(saved, assignedRun, urlTasks, browserSearchTasks);
     }
 
     /**

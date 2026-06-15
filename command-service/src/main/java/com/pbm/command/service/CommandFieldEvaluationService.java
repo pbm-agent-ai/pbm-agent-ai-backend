@@ -15,7 +15,8 @@ import java.util.List;
  *
  * 역할: GPT가 추출한 ParsedCommand를 공통 필수 필드 정책과 비교하여
  *       프론트 모달에 보여줄 missingRequiredFields, ambiguousFields를 계산한다.
- * 동작: 필수 필드(PRODUCT_NAME, MAX_PRICE, PLATFORM)는 null/빈값 여부를 검사하고,
+ * 동작: 필수 필드(PRODUCT_NAME, MAX_PRICE)는 null/빈값 여부를 검사하고,
+ *       PLATFORM은 선택 필드이므로 누락되어도 clarification을 요청하지 않는다.
  *       자동 결제 또는 상품명 모호성 상황에서는 추가 확인 필드를 별도로 수집한다.
  *       (현재 모든 카테고리 공통 정책이며, 카테고리별 size/color/model 의존 로직은 제거됨)
  * 연관: CommandFieldPolicyService, ParsedCommand, FieldEvaluationResult.
@@ -37,6 +38,22 @@ public class CommandFieldEvaluationService {
      * @return 누락/모호 필드 계산 결과
      */
     public FieldEvaluationResult evaluate(CommandIntent intent, ParsedCommand parsedCommand) {
+        // URL_MONITOR: productUrls가 있고 maxPrice가 있으면 바로 진행, 없으면 maxPrice만 요구
+        if (intent == CommandIntent.URL_MONITOR) {
+            List<String> missing = new java.util.ArrayList<>();
+            if (parsedCommand == null
+                    || parsedCommand.productUrls() == null
+                    || parsedCommand.productUrls().isEmpty()) {
+                missing.add("productUrls");
+            }
+            if (parsedCommand == null
+                    || parsedCommand.maxPrice() == null
+                    || parsedCommand.maxPrice() <= 0) {
+                missing.add("maxPrice");
+            }
+            return new FieldEvaluationResult(List.copyOf(missing), List.of(), false);
+        }
+
         // 필수인데 비어있는 필드 계산
         List<String> missingRequiredFields = calculateMissingRequiredFields(intent, parsedCommand);
         // 값은 있지만 더 확인해야 하는 필드 계산

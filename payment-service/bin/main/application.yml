@@ -5,6 +5,9 @@ server:
 spring:
   application:
     name: payment-service
+  sql:
+    init:
+      mode: always
 
   datasource:
     url: ${PAYMENT_DB_URL}
@@ -69,6 +72,15 @@ blockchain:
     account-factory: ${CONTRACT_ACCOUNT_FACTORY:0x6477a82Ba2C7a02c3D59f4253347A0b9d82FC290}
     pbm-token: ${CONTRACT_PBM_TOKEN:0xB409DD3e4500f0A8E3cAca67abDec41Fc8E962Ca}
     paymaster: ${CONTRACT_PAYMASTER:0xf0E64F414640A8a4df285FF20C40c73798b33ccA}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
 
 logging:
   level:

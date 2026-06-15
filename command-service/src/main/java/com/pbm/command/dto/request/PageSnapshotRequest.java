@@ -16,6 +16,7 @@ public record PageSnapshotRequest(
         String visibleTextSummary,
         List<InteractiveElementRequest> interactiveElements,
         List<OptionGroupRequest> optionGroups,
+        LoginFormRequest loginForm,
         List<String> priceCandidates,
         List<String> currencyCandidates,
         /** 전체 페이지 HTML (전처리 없이 AI에게 직접 전달, 최대 80KB) */

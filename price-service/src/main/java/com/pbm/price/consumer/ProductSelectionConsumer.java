@@ -1,5 +1,6 @@
 package com.pbm.price.consumer;
 
+import com.pbm.price.client.PaymentServiceClient;
 import com.pbm.price.common.PriceCurrencyConverter;
 import com.pbm.price.domain.MonitoringSubscription;
 import com.pbm.price.dto.event.PriceValidationResultEvent;
@@ -7,8 +8,10 @@ import com.pbm.price.dto.event.PriceValidationResultEventPayload;
 import com.pbm.price.dto.event.ProductCandidateDto;
 import com.pbm.price.dto.event.ProductSelectionEvent;
 import com.pbm.price.publisher.PriceValidationResultEventPublisher;
+import com.pbm.price.domain.MonitoringSubscriptionStatus;
 import com.pbm.price.service.MonitoringSubscriptionService;
 import com.pbm.price.service.SubscriptionMonitoringService;
+import com.pbm.price.service.UrlMonitoringService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -30,8 +33,9 @@ import java.util.UUID;
  *   1. product-selection 토픽에서 ProductSelectionEvent 수신
  *   2. 선택된 상품 각각을 단건 재조회하여 현재 가격을 검증
  *   3. intent에 따라 즉시 구매 후보 / 모니터링 등록 후보를 분리
- *   4. 결과를 price-validation-result 토픽으로 command-service에 반환
- * 연관: ProductSelectionEvent, MonitoringSubscriptionService, SubscriptionMonitoringService.
+ *   4. 즉시 충족 시 동기적으로 세션키 등록
+ *   5. 결과를 price-validation-result 토픽으로 command-service에 반환
+ * 연관: ProductSelectionEvent, MonitoringSubscriptionService, SubscriptionMonitoringService, PaymentServiceClient.
  */
 @Slf4j
 @Component
@@ -39,19 +43,25 @@ public class ProductSelectionConsumer {
 
     private final MonitoringSubscriptionService monitoringSubscriptionService;
     private final SubscriptionMonitoringService subscriptionMonitoringService;
+    private final UrlMonitoringService urlMonitoringService;
     private final PriceValidationResultEventPublisher priceValidationResultEventPublisher;
     private final PriceCurrencyConverter priceCurrencyConverter;
+    private final PaymentServiceClient paymentServiceClient;
 
     public ProductSelectionConsumer(
             MonitoringSubscriptionService monitoringSubscriptionService,
             SubscriptionMonitoringService subscriptionMonitoringService,
+            UrlMonitoringService urlMonitoringService,
             PriceValidationResultEventPublisher priceValidationResultEventPublisher,
-            PriceCurrencyConverter priceCurrencyConverter
+            PriceCurrencyConverter priceCurrencyConverter,
+            PaymentServiceClient paymentServiceClient
     ) {
         this.monitoringSubscriptionService = monitoringSubscriptionService;
         this.subscriptionMonitoringService = subscriptionMonitoringService;
+        this.urlMonitoringService = urlMonitoringService;
         this.priceValidationResultEventPublisher = priceValidationResultEventPublisher;
         this.priceCurrencyConverter = priceCurrencyConverter;
+        this.paymentServiceClient = paymentServiceClient;
     }
 
     /**
@@ -146,6 +156,8 @@ public class ProductSelectionConsumer {
                 "PRICE_CHECK_COMPLETED",
                 false,
                 List.of(),
+                null,
+                null,
                 null
         );
     }
@@ -168,7 +180,10 @@ public class ProductSelectionConsumer {
                     triggeredProduct,
                     event.payload().scheduledEndAt()
             );
-            subscriptionMonitoringService.process(subscription.getId());
+            // AliExpress: API 재검증 불가 → process() 스킵
+            if (!"ALIEXPRESS".equals(triggeredProduct.platform())) {
+                subscriptionMonitoringService.process(subscription.getId());
+            }
         }
 
         List<ProductCandidateDto> registeredMonitoringProducts = registerMonitoringProducts(event, monitoringProducts);
@@ -180,6 +195,8 @@ public class ProductSelectionConsumer {
                 "MONITORING_STARTED",
                 false,
                 List.of(),
+                null,
+                null,
                 null
         );
     }
@@ -191,6 +208,8 @@ public class ProductSelectionConsumer {
     ) {
         List<ProductCandidateDto> triggeredProducts = new ArrayList<>();
         String purchasedProductId = null;
+        Integer triggerPrice = null;
+        String aiAgentPrivateKey = null;
 
         // 즉시 구매 조건을 만족하는 상품이 있을 경우 그중 최저가 1건을 실제 브라우저 구매 진행 대상으로 잡음
         if (!matchedProducts.isEmpty()) {
@@ -199,17 +218,60 @@ public class ProductSelectionConsumer {
                     .orElseThrow();
             triggeredProducts.add(cheapest.candidate());
             purchasedProductId = cheapest.candidate().productId();
+            triggerPrice = cheapest.currentPrice().intValue();  // 현재 가격을 triggerPrice로 설정
 
             // 선택 시점의 상품 정보를 구독에도 반영. 이후 price-alert/payment/모니터링 공통 흐름과 연결하기 위함.
+            // immediateFullfillment=true: 즉시 충족이므로 Kafka 세션키 이벤트 발행 생략 (동기 REST로 등록)
             MonitoringSubscription subscription = monitoringSubscriptionService.createOrUpdateFromSelection(
                     event.payload().userId(),
                     event.payload().commandId(),
                     event.payload().targetPrice(),
                     event.payload().intent(),
                     cheapest.candidate(),
-                    event.payload().scheduledEndAt()
+                    event.payload().scheduledEndAt(),
+                    true  // immediateFullfillment: Kafka 이벤트 발행 생략
             );
-            subscriptionMonitoringService.process(subscription.getId());
+
+            // 즉시 충족 시 동기적으로 세션키 등록
+            if (subscription.getAiAgentPrivateKey() != null) {
+                boolean sessionKeyRegistered = paymentServiceClient.registerSessionKey(
+                        event.payload().userId(),
+                        subscription.getId(),
+                        subscription.getAiAgentAddress(),
+                        subscription.getAiAgentPrivateKey(),
+                        subscription.getTargetPrice().longValue(),
+                        calculateValidSeconds(subscription.getScheduledEndAt()),
+                        subscription.getPlatform().name()
+                );
+                if (sessionKeyRegistered) {
+                    aiAgentPrivateKey = subscription.getAiAgentPrivateKey();
+                    log.info("즉시 충족 - 세션키 등록 성공 (동기) - subscriptionId: {}", subscription.getId());
+                } else {
+                    log.warn("즉시 충족 - 세션키 등록 실패 - subscriptionId: {}", subscription.getId());
+                }
+            }
+
+            // AliExpress: API가 깨져있으므로 process()(API 재검증) 건너뛰고 직접 TRIGGERED 전환
+            // 다른 플랫폼: 기존 process()로 API 재검증 수행
+            if ("ALIEXPRESS".equals(cheapest.candidate().platform())) {
+                subscription.changeStatus(MonitoringSubscriptionStatus.TRIGGERED);
+                subscriptionMonitoringService.publishAutoPaymentStartAlert(
+                        subscription,
+                        new SubscriptionMonitoringService.NormalizedProductSnapshot(
+                                true,
+                                cheapest.candidate().productId(),
+                                cheapest.candidate().productUrl(),
+                                cheapest.candidate().title(),
+                                cheapest.currentPrice(),
+                                com.pbm.price.domain.CurrencyType.KRW
+                        ),
+                        cheapest.currentPrice()
+                );
+                log.info("AliExpress 즉시 충족 - process() 스킵, 직접 TRIGGERED 전환 - subscriptionId: {}",
+                        subscription.getId());
+            } else {
+                subscriptionMonitoringService.process(subscription.getId());
+            }
         }
 
         // 최저가로 선택되지 않은 즉시 충족 상품도 결과 응답에는 남겨두어 사용자가 확인할 수 있게 한다.
@@ -245,8 +307,21 @@ public class ProductSelectionConsumer {
                 nextStatus,
                 false,
                 List.of(),
-                null
+                null,
+                triggerPrice,
+                aiAgentPrivateKey
         );
+    }
+
+    /**
+     * 모니터링 종료 예정 시각까지의 유효 기간(초)을 계산한다.
+     */
+    private long calculateValidSeconds(java.time.Instant scheduledEndAt) {
+        if (scheduledEndAt != null) {
+            return Math.max(0, scheduledEndAt.getEpochSecond() - java.time.Instant.now().getEpochSecond());
+        }
+        // 기본값: 7일
+        return 7L * 24 * 3600;
     }
 
     private List<ProductCandidateDto> registerMonitoringProducts(
@@ -255,16 +330,42 @@ public class ProductSelectionConsumer {
     ) {
         List<ProductCandidateDto> registered = new ArrayList<>();
         for (ProductCandidateDto monitoringProduct : monitoringProducts) {
-            MonitoringSubscription subscription = monitoringSubscriptionService.createOrUpdateFromSelection(
-                    event.payload().userId(),
-                    event.payload().commandId(),
-                    event.payload().targetPrice(),
-                    event.payload().intent(),
-                    monitoringProduct,
-                    event.payload().scheduledEndAt()
-            );
-            log.info("모니터링 구독 생성/갱신 완료 - subscriptionId: {}, commandId: {}, productId: {}",
-                    subscription.getId(), subscription.getCommandId(), monitoringProduct.productId());
+            MonitoringSubscription subscription;
+
+            if ("ALIEXPRESS".equals(monitoringProduct.platform())) {
+                // AliExpress → URL 모니터링으로 전환 (기존 URL 인프라 재활용)
+                subscription = urlMonitoringService.createSubscription(
+                        event.payload().userId(),
+                        event.payload().commandId(),
+                        monitoringProduct.productUrl(),
+                        event.payload().targetPrice(),
+                        monitoringProduct.currency(),
+                        "ALL",  // 단일 상품이므로 ALL
+                        event.payload().intent()
+                );
+                // AUTO_PURCHASE면 세션키 등록 (URL 구독은 기본적으로 세션키 미등록)
+                if ("AUTO_PURCHASE".equals(event.payload().intent())) {
+                    monitoringSubscriptionService.registerSessionKeyForSubscription(
+                            subscription,
+                            event.payload().scheduledEndAt()
+                    );
+                }
+                log.info("AliExpress 모니터링 → URL 타입 구독 생성 완료 - subscriptionId: {}, url: {}",
+                        subscription.getId(), monitoringProduct.productUrl());
+            } else {
+                // NAVER 등 기존 플랫폼 로직
+                subscription = monitoringSubscriptionService.createOrUpdateFromSelection(
+                        event.payload().userId(),
+                        event.payload().commandId(),
+                        event.payload().targetPrice(),
+                        event.payload().intent(),
+                        monitoringProduct,
+                        event.payload().scheduledEndAt()
+                );
+                log.info("모니터링 구독 생성/갱신 완료 - subscriptionId: {}, commandId: {}, productId: {}",
+                        subscription.getId(), subscription.getCommandId(), monitoringProduct.productId());
+            }
+
             registered.add(monitoringProduct);
         }
         return registered;
@@ -277,6 +378,7 @@ public class ProductSelectionConsumer {
                 Instant.now(),
                 "price-service",
                 new PriceValidationResultEventPayload(
+                        null,
                         event.payload().commandId(),
                         result.nextStatus(),
                         result.triggeredProducts(),
@@ -285,7 +387,9 @@ public class ProductSelectionConsumer {
                         result.summaryMessage(),
                         result.confirmationRequired(),
                         result.duplicateProducts(),
-                        result.confirmationMessage()
+                        result.confirmationMessage(),
+                        result.triggerPrice(),      // 즉시 충족 시 현재 가격, 아니면 null
+                        result.aiAgentPrivateKey()  // 즉시 충족 시 세션키 등록 후 개인키, 아니면 null
                 )
         );
         priceValidationResultEventPublisher.publish(validationResultEvent);
@@ -309,7 +413,9 @@ public class ProductSelectionConsumer {
                 "RESUBSCRIBE_CONFIRMATION_REQUIRED",
                 true,
                 duplicateProducts,
-                confirmationMessage
+                confirmationMessage,
+                null,
+                null
         );
     }
 
@@ -324,7 +430,9 @@ public class ProductSelectionConsumer {
             String nextStatus,
             boolean confirmationRequired,
             List<ProductCandidateDto> duplicateProducts,
-            String confirmationMessage
+            String confirmationMessage,
+            Integer triggerPrice,
+            String aiAgentPrivateKey
     ) {
     }
 }

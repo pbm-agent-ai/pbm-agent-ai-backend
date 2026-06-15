@@ -15,6 +15,8 @@ class VisionPlannerRequest(BaseModel):
     screenshot_data_url: str = Field(..., description="data:image/...;base64,... 형식 스크린샷")
     error_code: Optional[str] = Field(None, description="직전 액션 실패 코드")
     error_message: Optional[str] = Field(None, description="직전 액션 실패 메시지")
+    mode: Optional[str] = Field(None, description="vision planner 동작 모드")
+    target_option: Optional[str] = Field(None, description="Smartstore 옵션 선택 시 목표 옵션 값")
 
 
 class _GeminiRawResponse(BaseModel):

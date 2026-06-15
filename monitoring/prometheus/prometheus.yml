@@ -1,0 +1,42 @@
+# Prometheus 스크레이핑 설정
+# 각 Spring Boot 서비스의 /actuator/prometheus 엔드포인트에서 메트릭을 15초마다 수집한다.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'eureka-server'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['eureka-server:8761']
+
+  - job_name: 'gateway'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['gateway:8080']
+
+  - job_name: 'auth-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['auth-service:8081']
+
+  - job_name: 'command-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['command-service:8082']
+
+  - job_name: 'price-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['price-service:8083']
+
+  - job_name: 'payment-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['payment-service:8084']
+
+  - job_name: 'notification-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['notification-service:8085']

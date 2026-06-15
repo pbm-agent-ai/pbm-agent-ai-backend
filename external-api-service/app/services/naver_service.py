@@ -43,16 +43,31 @@ def _get_naver_credentials() -> tuple[str, str]:
     return client_id, client_secret
 
 
+def _is_catalog_link(link: str | None) -> bool:
+    """네이버 카탈로그 페이지 링크인지 확인한다."""
+    normalized = (link or "").lower()
+    return "/catalog/" in normalized
+
+
 def _normalize_items(raw_items: list[dict]) -> list[NaverShoppingItem]:
-    """네이버 API 원본 응답을 정규화된 스키마로 변환"""
+    """네이버 API 원본 응답을 정규화된 스키마로 변환한다.
+
+    네이버 카탈로그 페이지 링크는 실제 상품 상세 페이지가 아니므로 제외한다.
+    """
     normalized = []
+    filtered_catalog_count = 0
     for item in raw_items:
+        link = item.get("link", "")
+        if _is_catalog_link(link):
+            filtered_catalog_count += 1
+            continue
+
         normalized.append(NaverShoppingItem(
             title=item.get("title", ""),
             lprice=item.get("lprice", "0"),
             hprice=item.get("hprice", ""),
             mallName=item.get("mallName", ""),
-            link=item.get("link", ""),
+            link=link,
             productId=item.get("productId", ""),
             image=item.get("image", ""),
             maker=item.get("maker", ""),
@@ -62,6 +77,10 @@ def _normalize_items(raw_items: list[dict]) -> list[NaverShoppingItem]:
             category3=item.get("category3", ""),
             category4=item.get("category4", ""),
         ))
+
+    if filtered_catalog_count > 0:
+        logger.info("네이버 쇼핑 검색 결과에서 카탈로그 링크 %d건 제외", filtered_catalog_count)
+
     return normalized
 
 

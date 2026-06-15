@@ -20,6 +20,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
+import java.util.List;
+import java.util.stream.Collectors;
+
 /**
  * DOM snapshot 기반 AI planner 클라이언트.
  *
@@ -65,6 +68,41 @@ public class AiDomPlannerClient {
     @Retry(name = "openAiProxyService")
     @CircuitBreaker(name = "openAiProxyService", fallbackMethod = "planFallbackWithAgentType")
     public DomPlannerInstructionPayload plan(CommandSession commandSession, PageSnapshotRequest snapshot, ProductCandidateResponse targetProduct, String platform, String navigationStrategy, String agentType) {
+        return plan(commandSession, snapshot, targetProduct, platform, navigationStrategy, agentType, null);
+    }
+
+    /**
+     * triggerPrice 포함 버전.
+     * <p>
+     * 모니터링 후 결제 시 CATALOG_NAVIGATOR가 lprice(선택 당시 가격) 대신
+     * triggerPrice(실제 조건 충족 가격)를 기준가로 사용하도록 external-api-service에 전달한다.
+     */
+    @Retry(name = "openAiProxyService")
+    @CircuitBreaker(name = "openAiProxyService", fallbackMethod = "planFallbackWithTriggerPrice")
+    public DomPlannerInstructionPayload plan(CommandSession commandSession, PageSnapshotRequest snapshot, ProductCandidateResponse targetProduct, String platform, String navigationStrategy, String agentType, Integer triggerPrice) {
+        log.info(
+                "[AiDomPlannerClient] DOM planner 요청 요약 - commandText={}, intent={}, status={}, currentUrl={}, title={}, visibleTextLen={}, interactiveCount={}, optionGroupCount={}, rawHtmlLen={}, platform={}, navigationStrategy={}, agentType={}, triggerPrice={}, targetProduct={}",
+                abbreviate(commandSession.getOriginalCommand(), 120),
+                commandSession.getCommandIntent(),
+                commandSession.getStatus(),
+                snapshot == null ? null : snapshot.currentUrl(),
+                snapshot == null ? null : snapshot.title(),
+                snapshot == null || snapshot.visibleTextSummary() == null ? 0 : snapshot.visibleTextSummary().length(),
+                snapshot == null || snapshot.interactiveElements() == null ? 0 : snapshot.interactiveElements().size(),
+                snapshot == null || snapshot.optionGroups() == null ? 0 : snapshot.optionGroups().size(),
+                snapshot == null || snapshot.rawHtml() == null ? 0 : snapshot.rawHtml().length(),
+                platform,
+                navigationStrategy,
+                agentType,
+                triggerPrice,
+                summarizeTargetProduct(targetProduct)
+        );
+        log.info("[AiDomPlannerClient] DOM planner 전처리 interactive 샘플={}", summarizeInteractiveElements(snapshot));
+        log.info("[AiDomPlannerClient] DOM planner 전처리 optionGroups={}", summarizeOptionGroups(snapshot));
+        log.info("[AiDomPlannerClient] DOM planner 전처리 visibleText={}", abbreviate(snapshot == null ? null : snapshot.visibleTextSummary(), 300));
+        log.info("[AiDomPlannerClient] DOM planner 전처리 rawHtml prefix={}", rawHtmlPreview(snapshot == null ? null : snapshot.rawHtml(), true));
+        log.info("[AiDomPlannerClient] DOM planner 전처리 rawHtml suffix={}", rawHtmlPreview(snapshot == null ? null : snapshot.rawHtml(), false));
+
         DomPlannerProxyRequest proxyRequest = new DomPlannerProxyRequest(
                 commandSession.getOriginalCommand(),
                 commandSession.getCommandIntent(),
@@ -78,7 +116,8 @@ public class AiDomPlannerClient {
                 platform,
                 navigationStrategy,
                 agentType,
-                snapshot == null ? null : snapshot.rawHtml()
+                snapshot == null ? null : snapshot.rawHtml(),
+                triggerPrice
         );
 
         DomPlannerInstructionPayload response;
@@ -116,9 +155,96 @@ public class AiDomPlannerClient {
         throw new ExternalApiProxyException("external-api-service DOM planner를 사용할 수 없습니다.", t);
     }
 
+    DomPlannerInstructionPayload planFallbackWithTriggerPrice(CommandSession commandSession, PageSnapshotRequest snapshot, ProductCandidateResponse targetProduct, String platform, String navigationStrategy, String agentType, Integer triggerPrice, Throwable t) {
+        throw new ExternalApiProxyException("external-api-service DOM planner를 사용할 수 없습니다.", t);
+    }
+
     private String buildPlannerUrl(String baseUrl) {
         String normalizedBaseUrl = baseUrl == null ? "http://localhost:8090" : baseUrl.replaceAll("/+$", "");
         return normalizedBaseUrl + "/api/v1/planner/analyze-dom";
+    }
+
+    private String summarizeTargetProduct(ProductCandidateResponse targetProduct) {
+        if (targetProduct == null) {
+            return "null";
+        }
+
+        return String.format(
+                "{productId=%s, title=%s, lprice=%s, mallName=%s, productUrl=%s, searchKeyword=%s, platform=%s}",
+                abbreviate(targetProduct.productId(), 80),
+                abbreviate(targetProduct.title(), 80),
+                abbreviate(targetProduct.lprice(), 40),
+                abbreviate(targetProduct.mallName(), 60),
+                abbreviate(targetProduct.productUrl(), 120),
+                abbreviate(targetProduct.searchKeyword(), 80),
+                abbreviate(targetProduct.platform(), 40)
+        );
+    }
+
+    private String summarizeInteractiveElements(PageSnapshotRequest snapshot) {
+        if (snapshot == null || snapshot.interactiveElements() == null || snapshot.interactiveElements().isEmpty()) {
+            return "[]";
+        }
+
+        return snapshot.interactiveElements().stream()
+                .limit(10)
+                .map(element -> String.format(
+                        "{nodeId=%s, role=%s, label=%s, selector=%s, href=%s, visible=%s, disabled=%s}",
+                        abbreviate(element.nodeId(), 40),
+                        abbreviate(element.role(), 20),
+                        abbreviate(element.labelText(), 80),
+                        abbreviate(element.selector(), 120),
+                        abbreviate(element.href(), 120),
+                        element.isVisible(),
+                        Boolean.TRUE.equals(element.disabled())
+                ))
+                .collect(Collectors.joining(", ", "[", "]"));
+    }
+
+    private String summarizeOptionGroups(PageSnapshotRequest snapshot) {
+        if (snapshot == null || snapshot.optionGroups() == null || snapshot.optionGroups().isEmpty()) {
+            return "[]";
+        }
+
+        return snapshot.optionGroups().stream()
+                .limit(10)
+                .map(group -> String.format(
+                        "{groupName=%s, nodeId=%s, selector=%s, options=%s, selected=%s}",
+                        abbreviate(group.groupName(), 60),
+                        abbreviate(group.nodeId(), 40),
+                        abbreviate(group.selector(), 120),
+                        group.options(),
+                        abbreviate(group.selectedOption(), 60)
+                ))
+                .collect(Collectors.joining(", ", "[", "]"));
+    }
+
+    private String rawHtmlPreview(String rawHtml, boolean prefix) {
+        if (rawHtml == null || rawHtml.isBlank()) {
+            return "null";
+        }
+
+        int previewLength = 400;
+        if (rawHtml.length() <= previewLength) {
+            return rawHtml;
+        }
+
+        return prefix
+                ? rawHtml.substring(0, previewLength)
+                : rawHtml.substring(Math.max(0, rawHtml.length() - previewLength));
+    }
+
+    private String abbreviate(String value, int maxLength) {
+        if (value == null) {
+            return null;
+        }
+
+        String normalized = value.replaceAll("\\s+", " ").trim();
+        if (normalized.length() <= maxLength) {
+            return normalized;
+        }
+
+        return normalized.substring(0, Math.max(0, maxLength - 1)) + "…";
     }
 
     private record DomPlannerProxyRequest(
@@ -134,7 +260,8 @@ public class AiDomPlannerClient {
             String platform,
             @JsonProperty("navigation_strategy") String navigationStrategy,
             @JsonProperty("agent_type") String agentType,
-            @JsonProperty("raw_html") String rawHtml
+            @JsonProperty("raw_html") String rawHtml,
+            @JsonProperty("trigger_price") Integer triggerPrice
     ) {
     }
 

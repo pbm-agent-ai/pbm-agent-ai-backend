@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * 플랫폼 설정 컨트롤러.
@@ -19,6 +20,14 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/v1/platforms")
 public class PlatformConfigController {
+    private static final List<String> EXTRA_SUPPORTED_DOMAINS = List.of(
+            "coupang.com",
+            "auction.co.kr",
+            "gmarket.co.kr",
+            "11st.co.kr",
+            "tmon.co.kr",
+            "wemakeprice.com"
+    );
 
     private final PlatformConfigService platformConfigService;
 
@@ -36,9 +45,13 @@ public class PlatformConfigController {
      */
     @GetMapping("/supported-domains")
     public ResponseEntity<ApiResponse<List<String>>> getSupportedDomains() {
-        List<String> domains = platformConfigService.findAllActive()
-                .stream()
-                .map(config -> config.getDomainPattern())
+        List<String> domains = Stream.concat(
+                        platformConfigService.findAllActive()
+                                .stream()
+                                .map(config -> config.getDomainPattern()),
+                        EXTRA_SUPPORTED_DOMAINS.stream()
+                )
+                .distinct()
                 .toList();
 
         return ResponseEntity.ok(ApiResponse.success(domains));

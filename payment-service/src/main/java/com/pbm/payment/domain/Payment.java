@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
@@ -32,7 +33,10 @@ import java.time.Instant;
         uniqueConstraints = @UniqueConstraint(
                 name = "uk_payments_payment_id",
                 columnNames = {"payment_id"}
-        )
+        ),
+        indexes = {
+                @Index(name = "idx_payments_subscription_id", columnList = "subscription_id")
+        }
 )
 // 파라미터 없는 생성자를 자동 생성하되, 접근 범위를 protected로 제한
 // JPA 내부에서 객체 복원할 때 필요하지만, 외부 new Payment()는 못 하게 막음
@@ -51,10 +55,15 @@ public class Payment {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
-    @Column(name = "product_name", nullable = false, length = 255)
+    /** 모니터링 구독 ID. 상품별 수수료와 결제 내역을 연결하는 데 사용한다. */
+    @Column(name = "subscription_id")
+    private Long subscriptionId;
+
+    // 상품명 또는 원본 명령어 (URL 포함 명령어는 255자를 초과할 수 있으므로 TEXT 타입)
+    @Column(name = "product_name", nullable = false, columnDefinition = "TEXT")
     private String productName;
 
-    @Column(name = "product_url", length = 500)
+    @Column(name = "product_url", columnDefinition = "TEXT")
     private String productUrl;
 
     @Column(name = "amount", nullable = false)
@@ -77,6 +86,10 @@ public class Payment {
     @Column(name = "failure_reason", length = 500)
     private String failureReason;
 
+    /** 결제 가스비 (KRW 단위 정수, 결제 성공 시에만 값이 채워짐) */
+    @Column(name = "gas_fee_krw")
+    private Integer gasFeeKrw;
+
     /**
      * AI 에이전트 개인키 (조건별 세션키 서명용).
      * executeAIPayment 호출 시 이 키로 트랜잭션에 서명한다.
@@ -92,10 +105,11 @@ public class Payment {
     private Instant updatedAt;
 
     // private 생성자로 클래스 내부에서만 호출 가능하도록 만듦
-    private Payment(String paymentId, Long userId, String productName, String productUrl,
+    private Payment(String paymentId, Long userId, Long subscriptionId, String productName, String productUrl,
                     Integer amount, String currency, String aiAgentPrivateKey) {
         this.paymentId = paymentId;
         this.userId = userId;
+        this.subscriptionId = subscriptionId;
         this.productName = productName;
         this.productUrl = productUrl;
         this.amount = amount;
@@ -122,9 +136,9 @@ public class Payment {
      * @return 생성된 Payment 엔티티
      */
     // public 정적 팩토리 메서드로 외부에서 객체 만들 때 이걸 사용하도록 만듦
-    public static Payment create(String paymentId, Long userId, String productName, String productUrl,
+    public static Payment create(String paymentId, Long userId, Long subscriptionId, String productName, String productUrl,
                                  Integer amount, String currency, String aiAgentPrivateKey) {
-        return new Payment(paymentId, userId, productName, productUrl, amount, currency, aiAgentPrivateKey);
+        return new Payment(paymentId, userId, subscriptionId, productName, productUrl, amount, currency, aiAgentPrivateKey);
     }
 
     /**
@@ -135,6 +149,19 @@ public class Payment {
     public void markSuccess(String transactionHash) {
         this.status = PaymentStatus.SUCCESS;
         this.transactionHash = transactionHash;
+        this.failureReason = null;
+    }
+
+    /**
+     * 블록체인 결제 성공 시 상태를 SUCCESS로 전이하고 트랜잭션 해시와 가스비를 기록한다.
+     *
+     * @param transactionHash 블록체인에서 반환된 트랜잭션 해시
+     * @param gasFeeKrw       결제 가스비 (KRW 단위 정수, null이면 기록하지 않음)
+     */
+    public void markSuccess(String transactionHash, Integer gasFeeKrw) {
+        this.status = PaymentStatus.SUCCESS;
+        this.transactionHash = transactionHash;
+        this.gasFeeKrw = gasFeeKrw;
         this.failureReason = null;
     }
 

@@ -1,5 +1,8 @@
 package com.pbm.command.config;
 
+import com.pbm.command.dto.event.CheckoutPaymentEvent;
+import com.pbm.command.dto.event.LoginCredentialRequestEvent;
+import com.pbm.command.dto.event.OptionSelectionRequestEvent;
 import com.pbm.command.dto.event.PriceRequestEvent;
 import com.pbm.command.dto.event.ProductCandidateDto;
 import com.pbm.command.dto.event.ProductSelectionEvent;
@@ -99,6 +102,48 @@ public class KafkaProducerConfig {
         props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
 
         DefaultKafkaProducerFactory<String, ProductSelectionEvent> factory =
+                new DefaultKafkaProducerFactory<>(props);
+        return new KafkaTemplate<>(factory);
+    }
+
+    /**
+     * payment-topic(CheckoutPaymentEvent) 전용 KafkaTemplate.
+     * 결제 페이지 도달 시 PBM 토큰 차감 요청 이벤트를 발행한다.
+     */
+    @Bean
+    public KafkaTemplate<String, CheckoutPaymentEvent> checkoutPaymentKafkaTemplate() {
+        Map<String, Object> props = baseProducerProps();
+        props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
+
+        DefaultKafkaProducerFactory<String, CheckoutPaymentEvent> factory =
+                new DefaultKafkaProducerFactory<>(props);
+        return new KafkaTemplate<>(factory);
+    }
+
+    /**
+     * option-selection-request 토픽 전용 KafkaTemplate.
+     * 상품 옵션 선택 요청 이벤트를 notification-service로 발행한다.
+     */
+    @Bean
+    public KafkaTemplate<String, OptionSelectionRequestEvent> optionSelectionRequestKafkaTemplate() {
+        Map<String, Object> props = baseProducerProps();
+        props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
+
+        DefaultKafkaProducerFactory<String, OptionSelectionRequestEvent> factory =
+                new DefaultKafkaProducerFactory<>(props);
+        return new KafkaTemplate<>(factory);
+    }
+
+    /**
+     * login-credential-request 토픽 전용 KafkaTemplate.
+     * 로그인 자격증명 요청 이벤트를 notification-service로 발행한다.
+     */
+    @Bean
+    public KafkaTemplate<String, LoginCredentialRequestEvent> loginCredentialRequestKafkaTemplate() {
+        Map<String, Object> props = baseProducerProps();
+        props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
+
+        DefaultKafkaProducerFactory<String, LoginCredentialRequestEvent> factory =
                 new DefaultKafkaProducerFactory<>(props);
         return new KafkaTemplate<>(factory);
     }

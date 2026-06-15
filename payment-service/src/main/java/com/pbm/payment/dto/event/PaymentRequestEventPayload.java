@@ -8,6 +8,7 @@ package com.pbm.payment.dto.event;
  * 연관: PaymentRequestEvent, PaymentService.
  *
  * @param userId            사용자 식별자
+ * @param subscriptionId    모니터링 구독 ID (상품별 수수료/결제 이력 연결용, null 가능)
  * @param productName       결제 상품명
  * @param productUrl        상품 상세 페이지 URL
  * @param amount            결제 금액 (KRW 기준 정수)
@@ -17,6 +18,7 @@ package com.pbm.payment.dto.event;
  */
 public record PaymentRequestEventPayload(
         Long userId,
+        Long subscriptionId,
         String productName,
         String productUrl,
         Integer amount,

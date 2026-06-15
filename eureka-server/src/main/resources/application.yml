@@ -9,6 +9,15 @@ spring:
       - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration       # DB 연결 설정 자동화 끄기
       - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration  # JPA/Hibernate 자동화 끄기
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
 eureka:
   client:
     register-with-eureka: false # 자기 자신은 등록 안함

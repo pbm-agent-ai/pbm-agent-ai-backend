@@ -6,6 +6,7 @@ import com.pbm.command.domain.AgentRunStatus;
 import com.pbm.command.domain.BrowserActionType;
 import com.pbm.command.domain.BrowserDevice;
 import com.pbm.command.domain.CommandSession;
+import com.pbm.command.domain.ExternalStoreVisionStage;
 import com.pbm.command.dto.request.AgentRunActionResultRequest;
 import com.pbm.command.dto.request.AgentRunStepRequest;
 import com.pbm.command.dto.request.PageSnapshotRequest;
@@ -283,7 +284,7 @@ class AgentRunServiceTest {
 
         given(agentRunRepository.findByRunId(run.getRunId())).willReturn(Optional.of(run));
         given(commandSessionRepository.findByCommandId("cmd-1")).willReturn(Optional.of(session));
-        given(agentStepPlannerService.planNextAction(run.getRunId(), 0, session, request.snapshot(), null)).willReturn(instruction);
+        given(agentStepPlannerService.planNextAction(run.getRunId(), 0, session, request.snapshot(), null, null, null, ExternalStoreVisionStage.NONE, 0)).willReturn(instruction);
 
         AgentRunStepResponse response = agentRunService.processStep(run.getRunId(), "device-1", request);
 
@@ -320,7 +321,7 @@ class AgentRunServiceTest {
 
         given(agentRunRepository.findByRunId(run.getRunId())).willReturn(Optional.of(run));
         given(commandSessionRepository.findByCommandId("cmd-1")).willReturn(Optional.of(session));
-        given(agentStepPlannerService.planNextAction(run.getRunId(), 1, session, request.snapshot(), request.previousActionResult())).willReturn(instruction);
+        given(agentStepPlannerService.planNextAction(run.getRunId(), 1, session, request.snapshot(), request.previousActionResult(), null, null, ExternalStoreVisionStage.NONE, 0)).willReturn(instruction);
 
         AgentRunStepResponse response = agentRunService.processStep(run.getRunId(), "device-1", request);
 

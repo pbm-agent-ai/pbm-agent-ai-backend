@@ -2,6 +2,18 @@ dependencies {
     // Eureka Client (서비스 디스커버리)
     implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
 
+    // 이메일 발송 (Gmail SMTP)
+    implementation 'org.springframework.boot:spring-boot-starter-mail'
+
+    // Swagger/OpenAPI 문서화
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.3.0'
+
+    // Resilience4j (외부 API 호출 Circuit Breaker)
+    implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j'
+
     // Spring Kafka 테스트 지원 (Embedded Kafka 등)
     testImplementation 'org.springframework.kafka:spring-kafka-test'
+
+    // H2 인메모리 DB (테스트용)
+    testRuntimeOnly 'com.h2database:h2'
 }

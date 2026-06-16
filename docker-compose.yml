@@ -196,8 +196,8 @@ services:
       - NOTIFICATION_DB_URL=jdbc:postgresql://postgres:5432/notification_db
       - NOTIFICATION_DB_USERNAME=${NOTIFICATION_DB_USERNAME:-postgres}
       - NOTIFICATION_DB_PASSWORD=${NOTIFICATION_DB_PASSWORD:-password}
-      # IPv4가 차단된 네트워크에서 Telegram API 접속을 위해 IPv6 우선 사용
-      - JAVA_OPTS=-Djava.net.preferIPv6Addresses=true
+      # 외부 SMTP/Telegram 연결 안정성을 위해 IPv4 우선 사용
+      - JAVA_OPTS=-Djava.net.preferIPv4Stack=true
 
   # ─── 외부 API 래핑 서비스 (네이버 쇼핑 등) ────────────────
   external-api-service:

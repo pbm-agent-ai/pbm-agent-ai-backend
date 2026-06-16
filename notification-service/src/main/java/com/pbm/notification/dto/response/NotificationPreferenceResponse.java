@@ -10,12 +10,14 @@ import com.pbm.notification.domain.NotificationPreference;
  *
  * @param email            알림 수신용 이메일 주소
  * @param emailEnabled     이메일 알림 활성화 여부
+ * @param telegramChatId   텔레그램 chat ID
  * @param telegramLinked   텔레그램 봇 연동 완료 여부 (chatId 존재 여부)
  * @param telegramEnabled  텔레그램 알림 활성화 여부
  */
 public record NotificationPreferenceResponse(
         String email,
         boolean emailEnabled,
+        String telegramChatId,
         boolean telegramLinked,
         boolean telegramEnabled
 ) {
@@ -30,6 +32,7 @@ public record NotificationPreferenceResponse(
         return new NotificationPreferenceResponse(
                 preference.getEmail(),
                 preference.isEmailEnabled(),
+                preference.getTelegramChatId(),
                 preference.isTelegramLinked(),
                 preference.isTelegramEnabled()
         );

@@ -1,0 +1,30 @@
+{
+  "runId": "a97bf176-12a1-4c36-ae6e-500738391a2f",
+  "stepIndex": 5,
+  "currentUrl": "https://smartstore.naver.com/judigital/products/13104671730?NaPm=ct%3Dmqgp175s%7Cci%3D4580e2e2ddd69605d9ce18056a3e76257de62e49%7Ctr%3Dslsf%7Csn%3D160912%7Chk%3D945b0c9cbd10436851af0788813b5289d09818a2&nl-query=%5B%EA%B3%B5%EC%8B%9D%5D+%EC%82%BC%EC%84%B1%EC%A0%84%EC%9E%90+%EA%B0%A4%EB%9F%AD%EC%8B%9C+%EB%B2%84%EC%A6%884+%EB%B8%94%EB%A3%A8%ED%88%AC%EC%8A%A4+%EC%9D%B4%EC%96%B4%ED%8F%B0+SM-R540",
+  "action": "CLICK",
+  "imageWidth": 2266,
+  "imageHeight": 1544,
+  "rawX": 750.0,
+  "rawY": 959.0,
+  "normalizedX": 0.75,
+  "normalizedY": 0.959,
+  "pixelInterpretation": {
+    "x": 750,
+    "y": 959
+  },
+  "grid1000Interpretation": {
+    "x": 1699,
+    "y": 1480
+  },
+  "targetLabel": "N 바로구매",
+  "confidence": 1.0,
+  "reason": "옵션 선택이 반영된 후의 바로구매 버튼을 클릭합니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "mode": "SMARTSTORE_PURCHASE_BUTTON",
+  "targetOption": "화이트",
+  "savedAtUtc": "20260616T134507",
+  "rawPath": "/app/vision-debug/20260616T134507_a97bf176-12a1-4c36-ae6e-500738391a2f_step5_raw.png",
+  "annotatedPath": "/app/vision-debug/20260616T134507_a97bf176-12a1-4c36-ae6e-500738391a2f_step5_annotated.png"
+}

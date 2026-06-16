@@ -1,0 +1,30 @@
+{
+  "runId": "3de5130a-0393-4242-b423-fe89b75c531f",
+  "stepIndex": 6,
+  "currentUrl": "https://smartstore.naver.com/judigital/products/13104659249",
+  "action": "CLICK",
+  "imageWidth": 2266,
+  "imageHeight": 1544,
+  "rawX": 750.0,
+  "rawY": 959.0,
+  "normalizedX": 0.75,
+  "normalizedY": 0.959,
+  "pixelInterpretation": {
+    "x": 750,
+    "y": 959
+  },
+  "grid1000Interpretation": {
+    "x": 1699,
+    "y": 1480
+  },
+  "targetLabel": "N 바로구매",
+  "confidence": 0.9,
+  "reason": "스마트스토어 구매 버튼 'N 바로구매' 클릭",
+  "errorCode": null,
+  "errorMessage": null,
+  "mode": "SMARTSTORE_PURCHASE_BUTTON",
+  "targetOption": "블랙",
+  "savedAtUtc": "20260616T140827",
+  "rawPath": "/app/vision-debug/20260616T140827_3de5130a-0393-4242-b423-fe89b75c531f_step6_raw.png",
+  "annotatedPath": "/app/vision-debug/20260616T140827_3de5130a-0393-4242-b423-fe89b75c531f_step6_annotated.png"
+}

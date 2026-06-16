@@ -76,10 +76,13 @@ public class BlockchainService {
     /** PBM 토큰 소수점: 18자리 */
     private static final BigInteger TOKEN_DECIMALS = BigInteger.TEN.pow(18);
 
-    /** 트랜잭션 receipt 대기 최대 횟수 (1회당 5초, 최대 120초 = 2분) */
-    private static final int RECEIPT_MAX_RETRIES = 24;
-    private static final long RECEIPT_POLL_INTERVAL_MS = 5_000L;
-    private static final int RECOVERY_RECEIPT_MAX_RETRIES = 12;
+    /** 트랜잭션 receipt 대기 설정 (기본 60초, 복구 폴링 30초) */
+    private static final int RECEIPT_TIMEOUT_SECONDS = 60;
+    private static final int RECOVERY_TIMEOUT_SECONDS = 30;
+    private static final int RECEIPT_POLL_INTERVAL_SECONDS = 5;
+    private static final long RECEIPT_POLL_INTERVAL_MS = RECEIPT_POLL_INTERVAL_SECONDS * 1_000L;
+    private static final int RECEIPT_MAX_RETRIES = RECEIPT_TIMEOUT_SECONDS / RECEIPT_POLL_INTERVAL_SECONDS;
+    private static final int RECOVERY_RECEIPT_MAX_RETRIES = RECOVERY_TIMEOUT_SECONDS / RECEIPT_POLL_INTERVAL_SECONDS;
 
     private final Web3j web3j;
     private final Web3j fallbackWeb3j;
@@ -1016,7 +1019,7 @@ public class BlockchainService {
             return recovered;
         }
 
-        throw new RuntimeException("트랜잭션 확정 타임아웃 (120초) - txHash: " + txHash);
+        throw new RuntimeException("트랜잭션 확정 타임아웃 (" + RECEIPT_TIMEOUT_SECONDS + "초) - txHash: " + txHash);
     }
 
     private Optional<TransactionReceipt> findReceiptAcrossClients(String txHash) throws Exception {
@@ -1109,7 +1112,8 @@ public class BlockchainService {
         }
 
         throw new RuntimeException(
-                "트랜잭션 확정 타임아웃 (120초) - txHash: " + context.txHash()
+                "트랜잭션 확정 타임아웃 (" + RECEIPT_TIMEOUT_SECONDS + "초 + 복구 "
+                        + RECOVERY_TIMEOUT_SECONDS + "초) - txHash: " + context.txHash()
                         + " (primary/fallback RPC 모두 receipt 미확인, signer=" + context.signerAddress() + ")");
     }
 

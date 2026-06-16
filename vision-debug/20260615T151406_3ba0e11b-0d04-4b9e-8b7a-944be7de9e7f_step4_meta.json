@@ -1,0 +1,30 @@
+{
+  "runId": "3ba0e11b-0d04-4b9e-8b7a-944be7de9e7f",
+  "stepIndex": 4,
+  "currentUrl": "https://smartstore.naver.com/judigital/products/13104659249",
+  "action": "CLICK",
+  "imageWidth": 2266,
+  "imageHeight": 1544,
+  "rawX": 846.0,
+  "rawY": 950.0,
+  "normalizedX": 0.846,
+  "normalizedY": 0.95,
+  "pixelInterpretation": {
+    "x": 846,
+    "y": 950
+  },
+  "grid1000Interpretation": {
+    "x": 1917,
+    "y": 1466
+  },
+  "targetLabel": "구매하기",
+  "confidence": 1.0,
+  "reason": "사용자가 상품을 구매하고자 하므로, 화면 하단의 '구매하기' 버튼을 클릭합니다. '블랙' 옵션이 이미 선택되어 있거나 화면에 명확하게 표시되어 있습니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "mode": "GENERAL",
+  "targetOption": "블랙",
+  "savedAtUtc": "20260615T151406",
+  "rawPath": "/app/vision-debug/20260615T151406_3ba0e11b-0d04-4b9e-8b7a-944be7de9e7f_step4_raw.png",
+  "annotatedPath": "/app/vision-debug/20260615T151406_3ba0e11b-0d04-4b9e-8b7a-944be7de9e7f_step4_annotated.png"
+}

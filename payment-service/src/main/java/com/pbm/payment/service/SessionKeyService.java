@@ -35,6 +35,7 @@ public class SessionKeyService {
     private final WalletService walletService;
     private final SessionKeyRepository sessionKeyRepository;
     private final TokenChargeService tokenChargeService;
+    private final SessionKeyProgressService sessionKeyProgressService;
 
     /**
      * 세션키를 동기적으로 등록한다.
@@ -67,81 +68,93 @@ public class SessionKeyService {
         log.info("세션키 등록 시작 (동기) - userId: {}, subscriptionId: {}, aiAgent: {}",
                 userId, subscriptionId, aiAgentAddress);
 
-        // 1. 사용자 지갑 조회 — 지갑이 없으면 명확한 예외를 발생시킨다.
-        //    AUTO_PURCHASE 조건 등록 전에 반드시 지갑을 먼저 생성해야 한다.
-        UserWallet wallet = walletService.findByUserId(userId)
-                .orElseThrow(() -> new IllegalStateException(
-                        "PBM 지갑이 존재하지 않습니다. AUTO_PURCHASE 조건 등록 전에 " +
-                        "POST /api/v1/wallet 으로 지갑을 먼저 생성해주세요. userId=" + userId));
+        try {
+            // 1. 사용자 지갑 조회
+            sessionKeyProgressService.emit(userId, "WALLET_CHECK", "사용자 지갑 조회 중");
+            UserWallet wallet = walletService.findByUserId(userId)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "PBM 지갑이 존재하지 않습니다. AUTO_PURCHASE 조건 등록 전에 " +
+                            "POST /api/v1/wallet 으로 지갑을 먼저 생성해주세요. userId=" + userId));
 
-        // 2. 지갑 한도 검증 — 세션키 한도가 지갑 전체 한도를 초과하면 등록 거부
-        if (limitKrw > wallet.getWalletLimit().longValue()) {
-            throw new IllegalArgumentException(
-                    String.format("세션키 한도(%d KRW)가 지갑 한도(%s KRW)를 초과합니다.",
-                            limitKrw, wallet.getWalletLimit().toPlainString()));
+            // 2. 지갑 한도 검증
+            sessionKeyProgressService.emit(userId, "LIMIT_VALIDATED", "세션키 한도 검증 중");
+            if (limitKrw > wallet.getWalletLimit().longValue()) {
+                throw new IllegalArgumentException(
+                        String.format("세션키 한도(%d KRW)가 지갑 한도(%s KRW)를 초과합니다.",
+                                limitKrw, wallet.getWalletLimit().toPlainString()));
+            }
+
+            String walletAddress = wallet.getWalletAddress();
+
+            // 3. AI 에이전트 ETH 지원 (부족분만)
+            sessionKeyProgressService.emit(userId, "AI_AGENT_FUNDING", "AI 에이전트 ETH 지원 중");
+            BigInteger currentGasPrice = blockchainService.getGasPrice();
+            BigInteger requiredGasForAiAgent = BlockchainService.GAS_LIMIT.multiply(currentGasPrice)
+                    .multiply(BigInteger.TWO);
+            blockchainService.ensureAiAgentFunded(aiAgentAddress, requiredGasForAiAgent);
+            sessionKeyProgressService.emit(userId, "AI_AGENT_FUNDED", "AI 에이전트 ETH 지원 완료", aiAgentAddress);
+
+            // 4. 사용자 EOA ETH 지원 (부족분만)
+            sessionKeyProgressService.emit(userId, "USER_EOA_FUNDING", "사용자 EOA ETH 지원 중");
+            BigInteger requiredGasForUserEoa = BlockchainService.GAS_LIMIT.multiply(currentGasPrice)
+                    .multiply(BigInteger.TWO);
+            blockchainService.ensureUserEoaFunded(wallet.getUserAddress(), requiredGasForUserEoa);
+            sessionKeyProgressService.emit(userId, "USER_EOA_FUNDED", "사용자 EOA ETH 지원 완료", wallet.getUserAddress());
+
+            // 5. addSessionKey() 호출
+            sessionKeyProgressService.emit(userId, "BLOCKCHAIN_REGISTERING", "블록체인 세션키 등록 중");
+            Credentials userCredentials = walletService.getUserCredentials(userId);
+            TransactionReceipt addKeyReceipt = blockchainService.addSessionKey(
+                    walletAddress,
+                    aiAgentAddress,
+                    limitKrw,
+                    validSeconds,
+                    platform,
+                    userCredentials
+            );
+            log.info("세션키 블록체인 등록 완료 - subscriptionId: {}, txHash: {}",
+                    subscriptionId, addKeyReceipt.getTransactionHash());
+            sessionKeyProgressService.emit(userId, "BLOCKCHAIN_REGISTERED",
+                    "블록체인 세션키 등록 완료", addKeyReceipt.getTransactionHash());
+
+            // 6. DB에 세션키 저장
+            sessionKeyProgressService.emit(userId, "DB_SAVING", "세션키 DB 저장 중");
+            SessionKey sessionKey = SessionKey.create(
+                    userId,
+                    subscriptionId,
+                    walletAddress,
+                    aiAgentAddress,
+                    aiAgentPrivateKey,
+                    limitKrw,
+                    validSeconds,
+                    platform,
+                    addKeyReceipt.getTransactionHash()
+            );
+            sessionKeyRepository.save(sessionKey);
+            log.info("세션키 DB 저장 완료 - subscriptionId: {}, sessionKeyId: {}",
+                    subscriptionId, sessionKey.getId());
+            sessionKeyProgressService.emit(userId, "DB_SAVED", "세션키 DB 저장 완료",
+                    String.valueOf(sessionKey.getId()));
+
+            // 7. 가스비 수수료 차감
+            sessionKeyProgressService.emit(userId, "GAS_FEE_CHARGING", "가스비 수수료 차감 중");
+            tokenChargeService.chargeGasFee(userId, subscriptionId, walletAddress, addKeyReceipt, "세션키 등록");
+            sessionKeyProgressService.emit(userId, "GAS_FEE_CHARGED", "가스비 수수료 차감 완료");
+
+            SessionKeyRegistrationResult result = new SessionKeyRegistrationResult(
+                    sessionKey.getId(),
+                    addKeyReceipt.getTransactionHash(),
+                    walletAddress,
+                    aiAgentAddress
+            );
+
+            sessionKeyProgressService.complete(userId, addKeyReceipt.getTransactionHash());
+            return result;
+
+        } catch (Exception e) {
+            sessionKeyProgressService.error(userId, e.getMessage());
+            throw e;
         }
-
-        String walletAddress = wallet.getWalletAddress();
-
-        // 3. AI 에이전트 ETH 지원 (부족분만)
-        //    executeAIPayment()는 AI 에이전트 키로 서명해야 하므로,
-        //    AI 에이전트 주소에 최소한의 가스비 ETH가 필요하다.
-        //    2배 buffer: 충전~사용 시점 사이 gasPrice 변동에 대비
-        BigInteger currentGasPrice = blockchainService.getGasPrice();
-        BigInteger requiredGasForAiAgent = BlockchainService.GAS_LIMIT.multiply(currentGasPrice)
-                .multiply(BigInteger.TWO);  // 2배 buffer
-        blockchainService.ensureAiAgentFunded(aiAgentAddress, requiredGasForAiAgent);
-
-        // 4. 사용자 EOA ETH 지원 (부족분만)
-        //    addSessionKey()는 사용자 EOA 키로 서명해야 하므로,
-        //    사용자 EOA 주소에 가스비 ETH가 필요하다.
-        //    2배 buffer: 충전~사용 시점 사이 gasPrice 변동에 대비
-        BigInteger requiredGasForUserEoa = BlockchainService.GAS_LIMIT.multiply(currentGasPrice)
-                .multiply(BigInteger.TWO);  // 2배 buffer
-        blockchainService.ensureUserEoaFunded(wallet.getUserAddress(), requiredGasForUserEoa);
-
-        // 5. addSessionKey() 호출 — 블록체인에 세션키 등록
-        //    PBMSmartAccount.addSessionKey()는 require(msg.sender == owner) 조건이 있으므로
-        //    사용자 EOA Credentials(DB에 저장된 개인키)로 서명해야 한다.
-        Credentials userCredentials = walletService.getUserCredentials(userId);
-        TransactionReceipt addKeyReceipt = blockchainService.addSessionKey(
-                walletAddress,
-                aiAgentAddress,
-                limitKrw,
-                validSeconds,
-                platform,
-                userCredentials
-        );
-        log.info("세션키 블록체인 등록 완료 - subscriptionId: {}, txHash: {}",
-                subscriptionId, addKeyReceipt.getTransactionHash());
-
-        // 6. DB에 세션키 저장 — 등록 이력을 DB에 기록한다.
-        //    aiAgentPrivateKey는 추후 executeAIPayment() 서명에 사용된다.
-        SessionKey sessionKey = SessionKey.create(
-                userId,
-                subscriptionId,
-                walletAddress,
-                aiAgentAddress,
-                aiAgentPrivateKey,
-                limitKrw,
-                validSeconds,
-                platform,
-                addKeyReceipt.getTransactionHash()
-        );
-        sessionKeyRepository.save(sessionKey);
-        log.info("세션키 DB 저장 완료 - subscriptionId: {}, sessionKeyId: {}",
-                subscriptionId, sessionKey.getId());
-
-        // 7. 가스비 수수료 차감 — 사용자 지갑 PBM에서 ETH→PBM 환산 차감
-        //    지갑에 PBM이 없으면 차감 실패 → 경고 로그만 남기고 세션키는 유지
-        tokenChargeService.chargeGasFee(userId, subscriptionId, walletAddress, addKeyReceipt, "세션키 등록");
-
-        return new SessionKeyRegistrationResult(
-                sessionKey.getId(),
-                addKeyReceipt.getTransactionHash(),
-                walletAddress,
-                aiAgentAddress
-        );
     }
 
     /**

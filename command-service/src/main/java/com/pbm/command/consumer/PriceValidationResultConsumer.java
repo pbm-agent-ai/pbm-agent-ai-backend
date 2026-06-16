@@ -88,13 +88,19 @@ public class PriceValidationResultConsumer {
             String aiAgentPrivateKey = event.payload().aiAgentPrivateKey();
             log.info("BROWSER_PURCHASE_IN_PROGRESS - AgentRun 생성 시작 - commandId: {}, userId: {}, triggerPrice: {}",
                     event.payload().commandId(), sessionResponse.userId(), triggerPrice);
+            // 상품 이미지 URL 추출 (트리거된 첫 번째 상품의 imageUrl 사용)
+            String productImageUrl = null;
+            if (event.payload().triggeredProducts() != null && !event.payload().triggeredProducts().isEmpty()) {
+                productImageUrl = event.payload().triggeredProducts().get(0).imageUrl();
+            }
             try {
                 var agentRunResponse = agentRunService.createRun(
                         sessionResponse.userId(),
                         event.payload().subscriptionId(),
                         event.payload().commandId(),
                         triggerPrice,
-                        aiAgentPrivateKey
+                        aiAgentPrivateKey,
+                        productImageUrl
                 );
                 log.info("AgentRun 생성 완료 - runId: {}, status: {}, commandId: {}, triggerPrice: {}",
                         agentRunResponse.runId(), agentRunResponse.status(), agentRunResponse.commandId(), triggerPrice);

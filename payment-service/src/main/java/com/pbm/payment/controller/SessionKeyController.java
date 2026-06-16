@@ -1,11 +1,14 @@
 package com.pbm.payment.controller;
 
 import com.pbm.payment.common.ApiResponse;
+import com.pbm.payment.dto.response.SessionKeyProgressEvent;
+import com.pbm.payment.service.SessionKeyProgressService;
 import com.pbm.payment.service.SessionKeyService;
 import com.pbm.payment.service.SessionKeyService.SessionKeyRegistrationResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -32,6 +35,25 @@ import org.springframework.web.bind.annotation.RestController;
 public class SessionKeyController {
 
     private final SessionKeyService sessionKeyService;
+    private final SessionKeyProgressService sessionKeyProgressService;
+
+    /**
+     * 세션키 등록 진행 상태를 폴링으로 조회한다.
+     * DONE/FAILED 상태는 조회 후 자동 제거된다.
+     *
+     * @param userId JWT에서 추출된 사용자 ID
+     * @return 현재 진행 상태 (없으면 null)
+     */
+    @GetMapping("/registration/progress")
+    public ResponseEntity<ApiResponse<SessionKeyProgressEvent>> getRegistrationProgress(
+            @RequestHeader("X-User-Id") Long userId
+    ) {
+        SessionKeyProgressEvent event = sessionKeyProgressService.poll(userId);
+        if (event == null) {
+            return ResponseEntity.ok(ApiResponse.success(null, "진행 중인 세션키 등록 없음"));
+        }
+        return ResponseEntity.ok(ApiResponse.success(event, event.message()));
+    }
 
     /**
      * 세션키를 동기적으로 등록한다.

@@ -1,0 +1,30 @@
+{
+  "runId": "2b31aa42-1df3-4d7d-85dd-26f9e1bf2a3a",
+  "stepIndex": 8,
+  "currentUrl": "https://smartstore.naver.com/judigital/products/13104671730?NaPm=ct%3Dmqgfjs9k%7Cci%3D114f2ca16978747115ba803aab46fdb1e783b1c7%7Ctr%3Dslsf%7Csn%3D160912%7Chk%3D76f2211335053aafa0afa93a864515f89c16f4c9&nl-query=%5B%EA%B3%B5%EC%8B%9D%5D+%EC%82%BC%EC%84%B1%EC%A0%84%EC%9E%90+%EA%B0%A4%EB%9F%AD%EC%8B%9C+%EB%B2%84%EC%A6%884+%EB%B8%94%EB%A3%A8%ED%88%AC%EC%8A%A4+%EC%9D%B4%EC%96%B4%ED%8F%B0+SM-R540",
+  "action": "CLICK",
+  "imageWidth": 1541,
+  "imageHeight": 929,
+  "rawX": 866.0,
+  "rawY": 440.0,
+  "normalizedX": 0.866,
+  "normalizedY": 0.44,
+  "pixelInterpretation": {
+    "x": 866,
+    "y": 440
+  },
+  "grid1000Interpretation": {
+    "x": 1334,
+    "y": 408
+  },
+  "targetLabel": "N 구매하기",
+  "confidence": 0.9,
+  "reason": "Smartstore purchase button found.",
+  "errorCode": null,
+  "errorMessage": null,
+  "mode": "SMARTSTORE_PURCHASE_BUTTON",
+  "targetOption": "화이트",
+  "savedAtUtc": "20260616T091959",
+  "rawPath": "/app/vision-debug/20260616T091959_2b31aa42-1df3-4d7d-85dd-26f9e1bf2a3a_step8_raw.png",
+  "annotatedPath": "/app/vision-debug/20260616T091959_2b31aa42-1df3-4d7d-85dd-26f9e1bf2a3a_step8_annotated.png"
+}

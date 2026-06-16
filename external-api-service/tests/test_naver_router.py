@@ -13,6 +13,7 @@ from app.main import app
 from app.schemas.naver import NaverSearchResponse, NaverShoppingItem
 from app.services.naver_service import (
     _normalize_items,
+    _strip_html_tags,
     _search_shopping_mock,
     _is_mock_enabled,
     search_shopping,
@@ -187,6 +188,28 @@ def test_search_naver_shopping_empty_results(mock_search):
 
 
 # --- 서비스 레이어 정규화 테스트 ---
+
+def test_strip_html_tags():
+    """네이버 API 응답의 <b> 태그가 제거되는지 확인"""
+    assert _strip_html_tags("삼성전자 <b>갤럭시</b> 버즈4") == "삼성전자 갤럭시 버즈4"
+    assert _strip_html_tags("<b>아이폰</b> 15 <b>프로</b>") == "아이폰 15 프로"
+    assert _strip_html_tags("태그없는 상품명") == "태그없는 상품명"
+    assert _strip_html_tags("") == ""
+
+
+def test_normalize_items_strips_html_from_title():
+    """_normalize_items가 title에서 HTML 태그를 제거하는지 확인"""
+    raw_items = [
+        {
+            "title": "테스트<b>상품</b> 1",
+            "lprice": "15000",
+            "mallName": "쇼핑몰",
+            "link": "https://example.com",
+        }
+    ]
+    result = _normalize_items(raw_items)
+    assert result[0].title == "테스트상품 1"
+
 
 def test_normalize_items_handles_empty_strings():
     """빈 문자열 필드가 정상적으로 처리되는지 확인"""

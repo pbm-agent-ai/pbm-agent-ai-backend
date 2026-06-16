@@ -10,6 +10,8 @@ import com.pbm.command.dto.event.CheckoutPaymentEventPayload;
 import com.pbm.command.dto.response.AgentRunCreatedResponse;
 import com.pbm.command.dto.response.AssignedRunResponse;
 import com.pbm.command.dto.response.AgentRunResponse;
+import com.pbm.command.dto.response.ProductCandidateResponse;
+import com.pbm.command.dto.response.SelectionValidationResultResponse;
 import com.pbm.command.dto.request.AgentRunActionResultRequest;
 import com.pbm.command.dto.request.AgentRunStepRequest;
 import com.pbm.command.dto.request.PageSnapshotRequest;
@@ -175,6 +177,12 @@ public class AgentRunService {
 
     @Transactional
     public AgentRunCreatedResponse createRun(Long userId, Long subscriptionId, String commandId, Integer triggerPrice, String aiAgentPrivateKey) {
+        return createRun(userId, subscriptionId, commandId, triggerPrice, aiAgentPrivateKey, null);
+    }
+
+    @Transactional
+    public AgentRunCreatedResponse createRun(Long userId, Long subscriptionId, String commandId,
+                                             Integer triggerPrice, String aiAgentPrivateKey, String productImageUrl) {
         commandSessionRepository.findByCommandId(commandId)
                 .orElseThrow(() -> new CommandSessionNotFoundException("세션을 찾을 수 없습니다. commandId: " + commandId));
 
@@ -205,7 +213,7 @@ public class AgentRunService {
 
         // triggerPrice가 있으면 모니터링 트리거 후 결제용 AgentRun 생성 (CATALOG_NAVIGATOR에 triggerPrice 전달됨)
         AgentRun agentRun = triggerPrice != null
-                ? AgentRun.createQueuedWithTriggerPrice(userId, subscriptionId, commandId, triggerPrice, aiAgentPrivateKey)
+                ? AgentRun.createQueuedWithTriggerPrice(userId, subscriptionId, commandId, triggerPrice, aiAgentPrivateKey, productImageUrl)
                 : AgentRun.createQueued(userId, subscriptionId, commandId);
         assignLatestOnlineDeviceIfPossible(agentRun);   // 온라인 디바이스가 있으면 바로 할당, 없으면 그냥 패스함
 
@@ -482,7 +490,8 @@ public class AgentRunService {
                 run.getSelectedOptionValue(),
                 null,
                 run.getExternalStoreVisionStage(),
-                run.getOptionPresenceScrollCount()
+                run.getOptionPresenceScrollCount(),
+                run.getNaverPurchaseVisionAttemptCount()
         );
 
         boolean searchResultsPage = isSearchResultsPage(request.snapshot());
@@ -523,6 +532,19 @@ public class AgentRunService {
             int updatedScrollCount = run.incrementOptionPresenceScrollCount();
             log.info("[AgentRunService] 옵션 영역 탐색 스크롤 카운트 증가 - runId={}, scrollCount={}",
                     run.getRunId(), updatedScrollCount);
+        }
+
+        // 네이버 PRODUCT_DETAIL Vision 구매버튼 탐색: 스크린샷 기반 분석 후 SCROLL 반환 시 시도 카운터 증가
+        boolean naverVisionScrolled = instruction != null
+                && instruction.action() == BrowserActionType.SCROLL
+                && request.previousActionResult() != null
+                && request.previousActionResult().toolResult() != null
+                && request.previousActionResult().toolResult().screenshot() != null
+                && isNaverProductDetailUrl(request.snapshot());
+        if (naverVisionScrolled) {
+            int visionAttempt = run.incrementNaverPurchaseVisionAttemptCount();
+            log.info("[AgentRunService] 네이버 구매버튼 Vision 스크롤 카운터 증가 - runId={}, attemptCount={}",
+                    run.getRunId(), visionAttempt);
         }
 
         // 옵션 매칭 실패 또는 옵션 미지정: 텔레그램 옵션 요청 Kafka 발행 + 상태 전환
@@ -763,6 +785,73 @@ public class AgentRunService {
         return ASSIGNED_AGENT_TOKEN_KEY_PREFIX + runId;
     }
 
+    private String resolveSelectedProductName(CommandSession commandSession) {
+        List<ProductCandidateResponse> candidates = parseCandidates(commandSession.getCandidatesJson());
+        List<String> selectedProductIds = parseSelectedProductIds(commandSession.getSelectedProductIdsJson());
+
+        if (!selectedProductIds.isEmpty()) {
+            return candidates.stream()
+                    .filter(candidate -> selectedProductIds.contains(candidate.productId()))
+                    .map(ProductCandidateResponse::title)
+                    .filter(title -> title != null && !title.isBlank())
+                    .findFirst()
+                    .orElse(null);
+        }
+
+        return firstNonBlankTitle(candidates);
+    }
+
+    private String firstNonBlankTitle(List<ProductCandidateResponse> products) {
+        if (products == null || products.isEmpty()) {
+            return null;
+        }
+
+        return products.stream()
+                .map(ProductCandidateResponse::title)
+                .filter(title -> title != null && !title.isBlank())
+                .findFirst()
+                .orElse(null);
+    }
+
+    private List<ProductCandidateResponse> parseCandidates(String candidatesJson) {
+        if (candidatesJson == null || candidatesJson.isBlank()) {
+            return List.of();
+        }
+
+        try {
+            return objectMapper.readValue(candidatesJson, new TypeReference<List<ProductCandidateResponse>>() {});
+        } catch (JsonProcessingException e) {
+            log.warn("candidatesJson 파싱 실패 - reason={}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    private List<String> parseSelectedProductIds(String selectedProductIdsJson) {
+        if (selectedProductIdsJson == null || selectedProductIdsJson.isBlank()) {
+            return List.of();
+        }
+
+        try {
+            return objectMapper.readValue(selectedProductIdsJson, new TypeReference<List<String>>() {});
+        } catch (JsonProcessingException e) {
+            log.warn("selectedProductIdsJson 파싱 실패 - reason={}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    private SelectionValidationResultResponse parseValidationResult(String validationResultJson) {
+        if (validationResultJson == null || validationResultJson.isBlank()) {
+            return null;
+        }
+
+        try {
+            return objectMapper.readValue(validationResultJson, SelectionValidationResultResponse.class);
+        } catch (JsonProcessingException e) {
+            log.warn("validationResultJson 파싱 실패 - reason={}", e.getMessage());
+            return null;
+        }
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // 결제 페이지 감지 + PBM 토큰 차감 이벤트 발행
     // ──────────────────────────────────────────────────────────────────────────
@@ -796,8 +885,8 @@ public class AgentRunService {
         // 결제 금액: triggerPrice(모니터링 조건 충족가) 우선, 없으면 0
         int amount = run.getTriggerPrice() != null ? run.getTriggerPrice() : 0;
 
-        // 상품명: 세션의 원본 명령어를 사용 (상품명 추출 로직은 추후 개선 가능)
-        String productName = commandSession.getOriginalCommand();
+        // 상품명: 실제 선택된 상품명을 우선 사용하고, 없으면 원본 명령어로 fallback
+        String productName = resolveCheckoutProductName(commandSession);
 
         // AI 에이전트 개인키: AgentRun에 저장된 값 사용 (모니터링 조건 충족 시 price-service에서 전달받음)
         String aiAgentPrivateKey = run.getAiAgentPrivateKey();
@@ -811,7 +900,8 @@ public class AgentRunService {
                 amount,
                 "KRW",
                 aiAgentPrivateKey,  // AgentRun에 저장된 AI 에이전트 개인키
-                null                // recipientAddress: 기본값 사용
+                null,               // recipientAddress: 기본값 사용
+                run.getProductImageUrl()
         );
 
         CheckoutPaymentEvent event = new CheckoutPaymentEvent(
@@ -825,6 +915,27 @@ public class AgentRunService {
         checkoutPaymentEventPublisher.publish(event);
         log.info("결제 이벤트 발행 완료 - runId={}, userId={}, subscriptionId={}, amount={}, aiAgentPrivateKey={}",
                 run.getRunId(), run.getUserId(), subscriptionId, amount, aiAgentPrivateKey != null ? "있음" : "없음");
+    }
+
+    String resolveCheckoutProductName(CommandSession commandSession) {
+        if (commandSession == null) {
+            return null;
+        }
+
+        SelectionValidationResultResponse validationResult = parseValidationResult(commandSession.getValidationResultJson());
+        String triggeredProductName = firstNonBlankTitle(
+                validationResult == null ? List.of() : validationResult.triggeredProducts()
+        );
+        if (triggeredProductName != null) {
+            return triggeredProductName;
+        }
+
+        String selectedProductName = resolveSelectedProductName(commandSession);
+        if (selectedProductName != null) {
+            return selectedProductName;
+        }
+
+        return commandSession.getOriginalCommand();
     }
 
     /**
@@ -1068,6 +1179,14 @@ public class AgentRunService {
                 run.getRunId(), run.getOptionPresenceScrollCount());
         run.updateExternalStoreVisionStage(ExternalStoreVisionStage.NONE);
         run.resetOptionPresenceScrollCount();
+    }
+
+    private boolean isNaverProductDetailUrl(PageSnapshotRequest snapshot) {
+        if (snapshot == null || snapshot.currentUrl() == null) {
+            return false;
+        }
+        String url = snapshot.currentUrl().toLowerCase();
+        return url.contains("smartstore.naver.com") && url.contains("/products/");
     }
 
     private boolean isSearchResultsPage(PageSnapshotRequest snapshot) {

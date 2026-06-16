@@ -1,0 +1,30 @@
+{
+  "runId": "e297841f-319c-4cd0-b53a-fe830d2c0eda",
+  "stepIndex": 9,
+  "currentUrl": "https://smartstore.naver.com/judigital/products/13104659249",
+  "action": "CLICK",
+  "imageWidth": 1541,
+  "imageHeight": 797,
+  "rawX": 820.0,
+  "rawY": 940.0,
+  "normalizedX": 0.82,
+  "normalizedY": 0.94,
+  "pixelInterpretation": {
+    "x": 820,
+    "y": 940
+  },
+  "grid1000Interpretation": {
+    "x": 1263,
+    "y": 749
+  },
+  "targetLabel": "구매하기",
+  "confidence": 1.0,
+  "reason": "사용자가 버즈4를 30만원 이하에 구매하라고 요청했으며, 현재 상품 가격이 259,000원으로 조건에 부합하고, 구매하기 버튼이 명확하게 보임.",
+  "errorCode": null,
+  "errorMessage": null,
+  "mode": "GENERAL",
+  "targetOption": "블랙",
+  "savedAtUtc": "20260616T054946",
+  "rawPath": "/app/vision-debug/20260616T054946_e297841f-319c-4cd0-b53a-fe830d2c0eda_step9_raw.png",
+  "annotatedPath": "/app/vision-debug/20260616T054946_e297841f-319c-4cd0-b53a-fe830d2c0eda_step9_annotated.png"
+}

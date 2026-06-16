@@ -1,0 +1,30 @@
+{
+  "runId": "e297841f-319c-4cd0-b53a-fe830d2c0eda",
+  "stepIndex": 7,
+  "currentUrl": "https://smartstore.naver.com/judigital/products/13104659249",
+  "action": "CLICK",
+  "imageWidth": 1541,
+  "imageHeight": 797,
+  "rawX": 829.0,
+  "rawY": 949.0,
+  "normalizedX": 0.829,
+  "normalizedY": 0.949,
+  "pixelInterpretation": {
+    "x": 829,
+    "y": 949
+  },
+  "grid1000Interpretation": {
+    "x": 1277,
+    "y": 756
+  },
+  "targetLabel": "N 구매하기",
+  "confidence": 0.9,
+  "reason": "버즈4를 30만원 이하 가격에 블랙 옵션으로 구매하라는 지시를 따르기 위해 구매하기 버튼을 클릭합니다. 현재 가격은 259,000원으로 조건에 부합합니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "mode": "GENERAL",
+  "targetOption": "블랙",
+  "savedAtUtc": "20260616T054925",
+  "rawPath": "/app/vision-debug/20260616T054925_e297841f-319c-4cd0-b53a-fe830d2c0eda_step7_raw.png",
+  "annotatedPath": "/app/vision-debug/20260616T054925_e297841f-319c-4cd0-b53a-fe830d2c0eda_step7_annotated.png"
+}

@@ -1,0 +1,30 @@
+{
+  "runId": "66a1e42c-7c15-40e2-a464-cf4c188ad775",
+  "stepIndex": 5,
+  "currentUrl": "https://smartstore.naver.com/judigital/products/13104671730?NaPm=ct%3Dmqfapu20%7Cci%3D62a040b2fd35534e818d1ba8ee4e622103920dd8%7Ctr%3Dslsf%7Csn%3D160912%7Chk%3D64d611abca8789dabbc3cdaa6efd331792c5012b&nl-query=%5B%EA%B3%B5%EC%8B%9D%5D+%EC%82%BC%EC%84%B1%EC%A0%84%EC%9E%90+%EA%B0%A4%EB%9F%AD%EC%8B%9C+%EB%B2%84%EC%A6%884+%EB%B8%94%EB%A3%A8%ED%88%AC%EC%8A%A4+%EC%9D%B4%EC%96%B4%ED%8F%B0+SM-R540",
+  "action": "CLICK",
+  "imageWidth": 2266,
+  "imageHeight": 1544,
+  "rawX": 769.0,
+  "rawY": 958.0,
+  "normalizedX": 0.769,
+  "normalizedY": 0.958,
+  "pixelInterpretation": {
+    "x": 769,
+    "y": 958
+  },
+  "grid1000Interpretation": {
+    "x": 1742,
+    "y": 1479
+  },
+  "targetLabel": "구매하기",
+  "confidence": 1.0,
+  "reason": "버즈4 가격이 30만원 이하이므로 구매하기 버튼을 클릭합니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "mode": "GENERAL",
+  "targetOption": "화이트",
+  "savedAtUtc": "20260615T141633",
+  "rawPath": "/app/vision-debug/20260615T141633_66a1e42c-7c15-40e2-a464-cf4c188ad775_step5_raw.png",
+  "annotatedPath": "/app/vision-debug/20260615T141633_66a1e42c-7c15-40e2-a464-cf4c188ad775_step5_annotated.png"
+}

@@ -1,0 +1,30 @@
+{
+  "runId": "31f27dd0-97be-477d-9f9c-ecc1ea3cef8d",
+  "stepIndex": 4,
+  "currentUrl": "https://smartstore.naver.com/judigital/products/13104659249",
+  "action": "CLICK",
+  "imageWidth": 1541,
+  "imageHeight": 797,
+  "rawX": 816.0,
+  "rawY": 938.0,
+  "normalizedX": 0.816,
+  "normalizedY": 0.938,
+  "pixelInterpretation": {
+    "x": 816,
+    "y": 938
+  },
+  "grid1000Interpretation": {
+    "x": 1257,
+    "y": 747
+  },
+  "targetLabel": "N 구매하기",
+  "confidence": 0.9,
+  "reason": "사용자가 30만원 이하일 경우 구매를 요청했고, 현재 상품의 가격이 259,000원이며, 선택된 옵션이 블랙으로 일치하므로 구매하기 버튼을 클릭합니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "mode": "GENERAL",
+  "targetOption": "블랙",
+  "savedAtUtc": "20260616T060418",
+  "rawPath": "/app/vision-debug/20260616T060418_31f27dd0-97be-477d-9f9c-ecc1ea3cef8d_step4_raw.png",
+  "annotatedPath": "/app/vision-debug/20260616T060418_31f27dd0-97be-477d-9f9c-ecc1ea3cef8d_step4_annotated.png"
+}

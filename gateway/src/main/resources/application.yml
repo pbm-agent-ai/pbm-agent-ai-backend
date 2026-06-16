@@ -76,7 +76,7 @@ spring:
         - id: payment-service
           uri: lb://payment-service
           predicates:
-            - Path=/api/v1/payments/**, /api/v1/wallet/**
+            - Path=/api/v1/payments/**, /api/v1/wallet/**, /api/v1/session-keys/**
 
         - id: notification-service
           uri: lb://notification-service

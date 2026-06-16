@@ -17,6 +17,7 @@ import java.util.List;
  * @param userId          사용자 ID
  * @param subscriptionId  모니터링 구독 ID (상품/수수료 연결용, null 가능)
  * @param productName     상품명
+ * @param productImageUrl 상품 이미지 URL (null 가능)
  * @param productUrl      상품 URL (없을 수 있음)
  * @param amount          결제 금액
  * @param currency        통화 코드 (KRW, USD 등)
@@ -33,6 +34,7 @@ public record PaymentDetailResponse(
         Long userId,
         Long subscriptionId,
         String productName,
+        String productImageUrl,
         String productUrl,
         Integer amount,
         String currency,
@@ -60,6 +62,7 @@ public record PaymentDetailResponse(
                 payment.getUserId(),
                 payment.getSubscriptionId(),
                 payment.getProductName(),
+                payment.getProductImageUrl(),
                 payment.getProductUrl(),
                 payment.getAmount(),
                 payment.getCurrency(),

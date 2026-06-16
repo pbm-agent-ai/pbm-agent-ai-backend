@@ -7,6 +7,12 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
+class VisionPlannerOptionGroupResponse(BaseModel):
+    group_name: str = Field(..., description="옵션 그룹명")
+    options: list[str] = Field(default_factory=list, description="옵션 후보")
+    selected_option: Optional[str] = Field(None, description="현재 선택된 옵션")
+
+
 class VisionPlannerRequest(BaseModel):
     run_id: Optional[str] = Field(None, description="AgentRun ID")
     step_index: Optional[int] = Field(None, description="현재 step index")
@@ -40,5 +46,7 @@ class VisionPlannerResponse(BaseModel):
     viewport_x: Optional[float] = Field(None, ge=0.0, le=1.0, description="뷰포트 기준 x 비율 (0.0~1.0)")
     viewport_y: Optional[float] = Field(None, ge=0.0, le=1.0, description="뷰포트 기준 y 비율 (0.0~1.0)")
     target_label: Optional[str] = Field(None, description="찾은 버튼/영역 레이블")
+    option_present: Optional[bool] = Field(None, description="옵션 UI 존재 여부")
+    option_groups: list[VisionPlannerOptionGroupResponse] = Field(default_factory=list, description="식별된 옵션 그룹")
     confidence: float = Field(..., ge=0.0, le=1.0, description="vision planner confidence")
     reason: str = Field(..., description="vision planner 판단 근거")

@@ -1,0 +1,30 @@
+{
+  "runId": "fc1dd4b5-7f8e-4414-8eff-f8de376e42d7",
+  "stepIndex": 5,
+  "currentUrl": "https://smartstore.naver.com/judigital/products/13104671730?NaPm=ct%3Dmqgaifps%7Cci%3Db71fd0e8eedfab6c70039aa29fe65fa613e24b0e%7Ctr%3Dslsf%7Csn%3D160912%7Chk%3D313b7d13d54391dc8f51db29356b16b215acd116&nl-query=%5B%EA%B3%B5%EC%8B%9D%5D+%EC%82%BC%EC%84%B1%EC%A0%84%EC%9E%90+%EA%B0%A4%EB%9F%AD%EC%8B%9C+%EB%B2%84%EC%A6%884+%EB%B8%94%EB%A3%A8%ED%88%AC%EC%8A%A4+%EC%9D%B4%EC%96%B4%ED%8F%B0+SM-R540",
+  "action": "CLICK",
+  "imageWidth": 1541,
+  "imageHeight": 797,
+  "rawX": 499.0,
+  "rawY": 599.0,
+  "normalizedX": 0.499,
+  "normalizedY": 0.599,
+  "pixelInterpretation": {
+    "x": 499,
+    "y": 599
+  },
+  "grid1000Interpretation": {
+    "x": 768,
+    "y": 477
+  },
+  "targetLabel": "나의 할인가 적용 쿠폰 모두받기",
+  "confidence": 0.9,
+  "reason": "쿠폰을 적용하여 상품을 구매하기 위해 나의 할인가 적용 쿠폰 모두받기 버튼을 클릭합니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "mode": "GENERAL",
+  "targetOption": "화이트",
+  "savedAtUtc": "20260616T065838",
+  "rawPath": "/app/vision-debug/20260616T065838_fc1dd4b5-7f8e-4414-8eff-f8de376e42d7_step5_raw.png",
+  "annotatedPath": "/app/vision-debug/20260616T065838_fc1dd4b5-7f8e-4414-8eff-f8de376e42d7_step5_annotated.png"
+}

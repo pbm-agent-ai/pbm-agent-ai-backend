@@ -90,6 +90,10 @@ public class Payment {
     @Column(name = "gas_fee_krw")
     private Integer gasFeeKrw;
 
+    /** 상품 이미지 URL (모니터링 구독의 snapshotImageUrl에서 전달받음) */
+    @Column(name = "product_image_url", columnDefinition = "TEXT")
+    private String productImageUrl;
+
     /**
      * AI 에이전트 개인키 (조건별 세션키 서명용).
      * executeAIPayment 호출 시 이 키로 트랜잭션에 서명한다.
@@ -106,7 +110,7 @@ public class Payment {
 
     // private 생성자로 클래스 내부에서만 호출 가능하도록 만듦
     private Payment(String paymentId, Long userId, Long subscriptionId, String productName, String productUrl,
-                    Integer amount, String currency, String aiAgentPrivateKey) {
+                    Integer amount, String currency, String aiAgentPrivateKey, String productImageUrl) {
         this.paymentId = paymentId;
         this.userId = userId;
         this.subscriptionId = subscriptionId;
@@ -115,6 +119,7 @@ public class Payment {
         this.amount = amount;
         this.currency = currency;
         this.aiAgentPrivateKey = aiAgentPrivateKey;
+        this.productImageUrl = productImageUrl;
         // 초기 상태는 PENDING, 트랜잭션 해시와 실패 사유는 null로 둔다.
         this.status = PaymentStatus.PENDING;
         this.transactionHash = null;
@@ -133,12 +138,13 @@ public class Payment {
      * @param amount            결제 금액
      * @param currency          통화 코드 (예: KRW)
      * @param aiAgentPrivateKey AI 에이전트 개인키 (세션키 서명용, null이면 스텁 처리)
+     * @param productImageUrl   상품 이미지 URL (null 가능)
      * @return 생성된 Payment 엔티티
      */
     // public 정적 팩토리 메서드로 외부에서 객체 만들 때 이걸 사용하도록 만듦
     public static Payment create(String paymentId, Long userId, Long subscriptionId, String productName, String productUrl,
-                                 Integer amount, String currency, String aiAgentPrivateKey) {
-        return new Payment(paymentId, userId, subscriptionId, productName, productUrl, amount, currency, aiAgentPrivateKey);
+                                 Integer amount, String currency, String aiAgentPrivateKey, String productImageUrl) {
+        return new Payment(paymentId, userId, subscriptionId, productName, productUrl, amount, currency, aiAgentPrivateKey, productImageUrl);
     }
 
     /**

@@ -130,6 +130,11 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
 
         if ("DEVICE".equals(role)) {
             headers.set("X-Device-Id", jwtUtil.getSubject(token));
+            // device token에 포함된 userId도 전달 (payment-service 폴링 등에서 사용)
+            Object deviceUserId = jwtUtil.getClaim(token, "userId");
+            if (deviceUserId != null) {
+                headers.set("X-User-Id", String.valueOf(deviceUserId));
+            }
             return;
         }
 

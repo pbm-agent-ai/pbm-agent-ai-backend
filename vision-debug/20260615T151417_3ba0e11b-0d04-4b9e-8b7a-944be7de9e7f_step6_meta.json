@@ -1,0 +1,30 @@
+{
+  "runId": "3ba0e11b-0d04-4b9e-8b7a-944be7de9e7f",
+  "stepIndex": 6,
+  "currentUrl": "https://smartstore.naver.com/judigital/products/13104659249",
+  "action": "CLICK",
+  "imageWidth": 2266,
+  "imageHeight": 1544,
+  "rawX": 769.0,
+  "rawY": 959.0,
+  "normalizedX": 0.769,
+  "normalizedY": 0.959,
+  "pixelInterpretation": {
+    "x": 769,
+    "y": 959
+  },
+  "grid1000Interpretation": {
+    "x": 1742,
+    "y": 1480
+  },
+  "targetLabel": "N 구매하기",
+  "confidence": 0.9,
+  "reason": "사용자가 버즈4를 구매하라고 지시했고, 현재 상품 페이지에서 블랙 색상이 선택되어 있으며, 구매하기 버튼이 명확하게 보임.",
+  "errorCode": null,
+  "errorMessage": null,
+  "mode": "GENERAL",
+  "targetOption": "블랙",
+  "savedAtUtc": "20260615T151417",
+  "rawPath": "/app/vision-debug/20260615T151417_3ba0e11b-0d04-4b9e-8b7a-944be7de9e7f_step6_raw.png",
+  "annotatedPath": "/app/vision-debug/20260615T151417_3ba0e11b-0d04-4b9e-8b7a-944be7de9e7f_step6_annotated.png"
+}

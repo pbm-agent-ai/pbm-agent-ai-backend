@@ -69,7 +69,8 @@ public class PaymentService {
                 payload.productUrl(),
                 payload.amount(),
                 payload.currency(),
-                payload.aiAgentPrivateKey()
+                payload.aiAgentPrivateKey(),
+                payload.productImageUrl()
         );
         paymentRepository.save(payment);
         log.info("결제 엔티티 생성 완료: paymentId={}, userId={}, subscriptionId={}, amount={} {}",

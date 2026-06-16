@@ -47,7 +47,7 @@ class PaymentControllerTest {
     private Payment createTestPayment(String paymentId, Long userId, String productName) {
         Payment payment = Payment.create(paymentId, userId, 123L, productName,
                 "https://example.com/product/" + paymentId,
-                15000, "KRW", null);
+                15000, "KRW", null, "https://example.com/img/" + paymentId + ".jpg");
         payment.markSuccess("0xtxhash" + paymentId);
         return payment;
     }
@@ -56,7 +56,7 @@ class PaymentControllerTest {
     private Payment createFailedPayment(String paymentId, Long userId, String productName) {
         Payment payment = Payment.create(paymentId, userId, 456L, productName,
                 "https://example.com/product/" + paymentId,
-                8900, "USD", null);
+                8900, "USD", null, null);
         payment.markFailed("잔액 부족");
         return payment;
     }
@@ -72,6 +72,8 @@ class PaymentControllerTest {
 
         List<Payment> mockPayments = List.of(pay1, pay2);
         when(paymentService.getPaymentsByUserId(1L)).thenReturn(mockPayments);
+        when(tokenTransactionRepository.findByUserIdAndTypeOrderByCreatedAtDesc(1L, TokenTransactionType.FEE))
+                .thenReturn(List.of());
 
         // when & then - HTTP 상태코드와 ApiResponse JSON 형식 검증
         mockMvc.perform(get("/api/v1/payments")
@@ -86,13 +88,15 @@ class PaymentControllerTest {
                 .andExpect(jsonPath("$.data[0].paymentId").value("pay-aa111111"))
                 .andExpect(jsonPath("$.data[0].userId").value(1))
                 .andExpect(jsonPath("$.data[0].productName").value("에어팟 프로 2세대"))
+                .andExpect(jsonPath("$.data[0].productImageUrl").value("https://example.com/img/pay-aa111111.jpg"))
                 .andExpect(jsonPath("$.data[0].amount").value(15000))
                 .andExpect(jsonPath("$.data[0].currency").value("KRW"))
                 .andExpect(jsonPath("$.data[0].status").value("SUCCESS"))
                 // 두 번째 결제 건 검증 (FAILED 상태)
                 .andExpect(jsonPath("$.data[1].paymentId").value("pay-bb222222"))
                 .andExpect(jsonPath("$.data[1].status").value("FAILED"))
-                .andExpect(jsonPath("$.data[1].currency").value("USD"));
+                .andExpect(jsonPath("$.data[1].currency").value("USD"))
+                .andExpect(jsonPath("$.data[1].productImageUrl").doesNotExist());
     }
 
     @Test
@@ -100,6 +104,8 @@ class PaymentControllerTest {
     void getPaymentsByUserId_emptyList_returns200WithEmptyArray() throws Exception {
         // given - 결제 내역이 없는 사용자
         when(paymentService.getPaymentsByUserId(99L)).thenReturn(List.of());
+        when(tokenTransactionRepository.findByUserIdAndTypeOrderByCreatedAtDesc(99L, TokenTransactionType.FEE))
+                .thenReturn(List.of());
 
         // when & then - 빈 배열이 정상 반환되는지 검증
         mockMvc.perform(get("/api/v1/payments")

@@ -15,6 +15,7 @@ package com.pbm.payment.dto.event;
  * @param currency          통화 구분 ("KRW" 등)
  * @param aiAgentPrivateKey AI 에이전트 개인키 (executeAIPayment 서명용, 조건별 고유 키)
  * @param recipientAddress  PBM 토큰 수신 주소 (판매자 or 서비스 결제 주소)
+ * @param productImageUrl   상품 이미지 URL (결제 내역 표시용, null 가능)
  */
 public record PaymentRequestEventPayload(
         Long userId,
@@ -24,6 +25,7 @@ public record PaymentRequestEventPayload(
         Integer amount,
         String currency,
         String aiAgentPrivateKey,
-        String recipientAddress
+        String recipientAddress,
+        String productImageUrl
 ) {
 }

@@ -99,6 +99,10 @@ public class AgentRun {
     @Column(name = "ai_agent_private_key", length = 128)
     private String aiAgentPrivateKey;
 
+    /** 상품 이미지 URL (결제 내역 표시용, 모니터링 구독의 snapshotImageUrl에서 전달받음) */
+    @Column(name = "product_image_url", columnDefinition = "TEXT")
+    private String productImageUrl;
+
     /** 텔레그램으로 전송한 옵션 목록 JSON (AWAITING_OPTION_SELECTION 상태에서 사용) */
     @Column(name = "pending_option_groups_json", columnDefinition = "TEXT")
     private String pendingOptionGroupsJson;
@@ -128,6 +132,13 @@ public class AgentRun {
     @Column(name = "option_presence_scroll_count", nullable = false)
     private int optionPresenceScrollCount = 0;
 
+    /**
+     * 네이버 PRODUCT_DETAIL에서 Vision AI로 구매버튼을 찾는 시도 횟수.
+     * 캡처 → Vision → 못 찾으면 스크롤 → 재캡처 → Vision 사이클을 최대 2회 반복한다.
+     */
+    @Column(name = "naver_purchase_vision_attempt_count", nullable = false)
+    private int naverPurchaseVisionAttemptCount = 0;
+
     @CreatedDate
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -150,6 +161,7 @@ public class AgentRun {
             String abortReason,
             Integer triggerPrice,
             String aiAgentPrivateKey,
+            String productImageUrl,
             ExternalStoreVisionStage externalStoreVisionStage
     ) {
         this.runId = runId;
@@ -164,6 +176,7 @@ public class AgentRun {
         this.abortReason = abortReason;
         this.triggerPrice = triggerPrice;
         this.aiAgentPrivateKey = aiAgentPrivateKey;
+        this.productImageUrl = productImageUrl;
         this.externalStoreVisionStage = externalStoreVisionStage == null
                 ? ExternalStoreVisionStage.NONE
                 : externalStoreVisionStage;
@@ -220,6 +233,11 @@ public class AgentRun {
     }
 
     public static AgentRun createQueuedWithTriggerPrice(Long userId, Long subscriptionId, String commandId, Integer triggerPrice, String aiAgentPrivateKey) {
+        return createQueuedWithTriggerPrice(userId, subscriptionId, commandId, triggerPrice, aiAgentPrivateKey, null);
+    }
+
+    public static AgentRun createQueuedWithTriggerPrice(Long userId, Long subscriptionId, String commandId,
+                                                         Integer triggerPrice, String aiAgentPrivateKey, String productImageUrl) {
         return AgentRun.builder()
                 .runId(UUID.randomUUID().toString())
                 .userId(userId)
@@ -229,6 +247,7 @@ public class AgentRun {
                 .currentStepIndex(0)
                 .triggerPrice(triggerPrice)
                 .aiAgentPrivateKey(aiAgentPrivateKey)
+                .productImageUrl(productImageUrl)
                 .externalStoreVisionStage(ExternalStoreVisionStage.NONE)
                 .build();
     }
@@ -349,6 +368,19 @@ public class AgentRun {
 
     public void resetOptionPresenceScrollCount() {
         this.optionPresenceScrollCount = 0;
+    }
+
+    /** 네이버 구매버튼 Vision 시도 횟수를 1 증가시키고 현재 값을 반환한다. */
+    public int incrementNaverPurchaseVisionAttemptCount() {
+        return ++this.naverPurchaseVisionAttemptCount;
+    }
+
+    public int getNaverPurchaseVisionAttemptCount() {
+        return this.naverPurchaseVisionAttemptCount;
+    }
+
+    public void resetNaverPurchaseVisionAttemptCount() {
+        this.naverPurchaseVisionAttemptCount = 0;
     }
 
     /** 옵션 선택 타임아웃 시 호출한다 (3분 초과). */

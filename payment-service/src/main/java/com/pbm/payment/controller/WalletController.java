@@ -408,4 +408,32 @@ public class WalletController {
         log.info("지갑 리셋 완료 - userId: {}, revoked: {}, newLimit: {} KRW", userId, revokedCount, newLimitKrw);
         return ApiResponse.success(result, "세션키 전체 revoke + 지갑 한도 변경 완료");
     }
+
+    /**
+     * 마스터 지갑의 pending nonce 상태를 조회한다.
+     */
+    @GetMapping("/admin/master-nonce")
+    public ApiResponse<Map<String, Object>> getMasterNonce() {
+        java.math.BigInteger[] info = blockchainService.getMasterNonceInfo();
+        return ApiResponse.success(Map.of(
+                "latestNonce", info[0].longValue(),
+                "pendingNonce", info[1].longValue(),
+                "hasStuckTx", !info[0].equals(info[1])
+        ), "마스터 지갑 nonce 조회 완료");
+    }
+
+    /**
+     * 마스터 지갑의 stuck된 nonce를 빈 replacement tx로 해소한다.
+     *
+     * @param body { "nonce": 520 }
+     */
+    @PostMapping("/admin/unstick-nonce")
+    public ApiResponse<Map<String, String>> unstickNonce(@RequestBody Map<String, Long> body) {
+        Long nonce = body.get("nonce");
+        if (nonce == null) {
+            throw new IllegalArgumentException("nonce를 입력해주세요.");
+        }
+        String txHash = blockchainService.unstickMasterNonce(java.math.BigInteger.valueOf(nonce));
+        return ApiResponse.success(Map.of("txHash", txHash), "unstick tx 전송 완료 (nonce: " + nonce + ")");
+    }
 }

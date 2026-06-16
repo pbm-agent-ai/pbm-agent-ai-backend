@@ -251,27 +251,23 @@ public class ProductSelectionConsumer {
                 }
             }
 
-            // AliExpress: API가 깨져있으므로 process()(API 재검증) 건너뛰고 직접 TRIGGERED 전환
-            // 다른 플랫폼: 기존 process()로 API 재검증 수행
-            if ("ALIEXPRESS".equals(cheapest.candidate().platform())) {
-                subscription.changeStatus(MonitoringSubscriptionStatus.TRIGGERED);
-                subscriptionMonitoringService.publishAutoPaymentStartAlert(
-                        subscription,
-                        new SubscriptionMonitoringService.NormalizedProductSnapshot(
-                                true,
-                                cheapest.candidate().productId(),
-                                cheapest.candidate().productUrl(),
-                                cheapest.candidate().title(),
-                                cheapest.currentPrice(),
-                                com.pbm.price.domain.CurrencyType.KRW
-                        ),
-                        cheapest.currentPrice()
-                );
-                log.info("AliExpress 즉시 충족 - process() 스킵, 직접 TRIGGERED 전환 - subscriptionId: {}",
-                        subscription.getId());
-            } else {
-                subscriptionMonitoringService.process(subscription.getId());
-            }
+            // 즉시 충족 시 process() 재검증 스킵 → 직접 TRIGGERED 전환
+            // process()가 내부에서 PriceValidationResultEvent를 발행하면 publishValidationResult()와 이중 발행됨
+            subscription.changeStatus(MonitoringSubscriptionStatus.TRIGGERED);
+            subscriptionMonitoringService.publishAutoPaymentStartAlert(
+                    subscription,
+                    new SubscriptionMonitoringService.NormalizedProductSnapshot(
+                            true,
+                            cheapest.candidate().productId(),
+                            cheapest.candidate().productUrl(),
+                            cheapest.candidate().title(),
+                            cheapest.currentPrice(),
+                            com.pbm.price.domain.CurrencyType.KRW
+                    ),
+                    cheapest.currentPrice()
+            );
+            log.info("즉시 충족 - process() 스킵, 직접 TRIGGERED 전환 - subscriptionId: {}, platform: {}",
+                    subscription.getId(), cheapest.candidate().platform());
         }
 
         // 최저가로 선택되지 않은 즉시 충족 상품도 결과 응답에는 남겨두어 사용자가 확인할 수 있게 한다.

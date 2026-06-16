@@ -41,6 +41,10 @@ public class JwtUtil {
         return getClaims(token).get(claimName, String.class);
     }
 
+    public Object getClaim(String token, String claimName) {
+        return getClaims(token).get(claimName);
+    }
+
     public String getRole(String token) {
         String role = getClaims(token).get("role", String.class);
         if (role == null || role.isBlank()) {

@@ -1,8 +1,8 @@
 package com.pbm.payment.service;
 
 import com.pbm.payment.config.Web3Config;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.web3j.abi.FunctionEncoder;
 import org.web3j.abi.FunctionReturnDecoder;
@@ -23,13 +23,16 @@ import org.web3j.protocol.core.methods.response.EthCall;
 import org.web3j.protocol.core.methods.response.EthGetTransactionCount;
 import org.web3j.protocol.core.methods.response.EthGetTransactionReceipt;
 import org.web3j.protocol.core.methods.response.EthSendTransaction;
+import org.web3j.protocol.core.methods.response.EthTransaction;
 import org.web3j.protocol.core.methods.response.TransactionReceipt;
 import org.web3j.utils.Numeric;
 
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
@@ -48,7 +51,6 @@ import java.util.function.Consumer;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class BlockchainService {
 
     /** 일반 함수 호출용 가스 리밋 */
@@ -77,10 +79,40 @@ public class BlockchainService {
     /** 트랜잭션 receipt 대기 최대 횟수 (1회당 5초, 최대 120초 = 2분) */
     private static final int RECEIPT_MAX_RETRIES = 24;
     private static final long RECEIPT_POLL_INTERVAL_MS = 5_000L;
+    private static final int RECOVERY_RECEIPT_MAX_RETRIES = 12;
 
     private final Web3j web3j;
+    private final Web3j fallbackWeb3j;
     private final Credentials masterCredentials;
     private final Web3Config web3Config;
+    private final Map<String, SubmittedTransactionContext> submittedTransactions = new ConcurrentHashMap<>();
+
+    private record SubmittedTransactionContext(
+            String txHash,
+            String rawTransactionHex,
+            String signerAddress,
+            Credentials signerCredentials,
+            BigInteger nonce,
+            BigInteger gasPrice,
+            BigInteger gasLimit,
+            String toAddress,
+            BigInteger value,
+            String encodedData,
+            String functionName
+    ) {
+    }
+
+    public BlockchainService(
+            Web3j web3j,
+            @Qualifier("fallbackWeb3j") Web3j fallbackWeb3j,
+            Credentials masterCredentials,
+            Web3Config web3Config
+    ) {
+        this.web3j = web3j;
+        this.fallbackWeb3j = fallbackWeb3j;
+        this.masterCredentials = masterCredentials;
+        this.web3Config = web3Config;
+    }
 
     // ──────────────────────────────────────────────────────────────────
     // 지갑 생성
@@ -835,7 +867,8 @@ public class BlockchainService {
             );
             // EIP-155: 체인 ID 포함 서명으로 다른 네트워크(메인넷 등) 재사용 공격 방지
             byte[] signed = TransactionEncoder.signMessage(rawTx, CHAIN_ID, credentials);
-            EthSendTransaction sent = web3j.ethSendRawTransaction(Numeric.toHexString(signed)).send();
+            String rawTransactionHex = Numeric.toHexString(signed);
+            EthSendTransaction sent = web3j.ethSendRawTransaction(rawTransactionHex).send();
 
             if (sent.hasError()) {
                 throw new RuntimeException("트랜잭션 오류: " + sent.getError().getMessage());
@@ -844,6 +877,19 @@ public class BlockchainService {
             if (txHash == null || txHash.isBlank()) {
                 throw new RuntimeException("트랜잭션 해시 없음 (제출 실패 가능)");
             }
+            submittedTransactions.put(txHash, new SubmittedTransactionContext(
+                    txHash,
+                    rawTransactionHex,
+                    signerAddress,
+                    credentials,
+                    nonce,
+                    gasPrice,
+                    gasLimit,
+                    toAddress,
+                    value,
+                    encoded,
+                    function.getName()
+            ));
             log.info("트랜잭션 전송 완료 - fn: {}, txHash: {}, nonce: {}, gasPrice: {} wei",
                     function.getName(), txHash, nonce, gasPrice);
             return txHash;
@@ -886,6 +932,54 @@ public class BlockchainService {
     }
 
     /**
+     * 마스터 지갑의 stuck된 pending tx를 빈 replacement tx로 대체하여 해소한다.
+     * 지정된 nonce로 자기 자신에게 0 ETH를 높은 gasPrice로 전송한다.
+     *
+     * @param stuckNonce stuck된 nonce 값
+     * @return replacement 트랜잭션 해시
+     */
+    public String unstickMasterNonce(BigInteger stuckNonce) {
+        String masterAddress = masterCredentials.getAddress();
+        BigInteger gasPrice = getGasPrice().multiply(BigInteger.valueOf(5));
+        BigInteger gasLimit = BigInteger.valueOf(21_000);
+
+        log.info("마스터 지갑 nonce unstick 시도 - address: {}, nonce: {}, gasPrice: {} wei",
+                masterAddress, stuckNonce, gasPrice);
+
+        RawTransaction rawTx = RawTransaction.createEtherTransaction(
+                stuckNonce, gasPrice, gasLimit, masterAddress, BigInteger.ZERO
+        );
+        byte[] signed = TransactionEncoder.signMessage(rawTx, CHAIN_ID, masterCredentials);
+        try {
+            EthSendTransaction sent = web3j.ethSendRawTransaction(Numeric.toHexString(signed)).send();
+            if (sent.hasError()) {
+                throw new RuntimeException("unstick tx 오류: " + sent.getError().getMessage());
+            }
+            String txHash = sent.getTransactionHash();
+            log.info("unstick tx 전송 완료 - nonce: {}, txHash: {}", stuckNonce, txHash);
+            return txHash;
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("unstick tx 전송 실패", e);
+        }
+    }
+
+    /**
+     * 마스터 지갑의 latest/pending nonce 정보를 반환한다.
+     */
+    public BigInteger[] getMasterNonceInfo() {
+        try {
+            String masterAddress = masterCredentials.getAddress();
+            BigInteger latest = getNonce(masterAddress, true);
+            BigInteger pending = getNonce(masterAddress, false);
+            return new BigInteger[]{latest, pending};
+        } catch (Exception e) {
+            throw new RuntimeException("마스터 지갑 nonce 조회 실패", e);
+        }
+    }
+
+    /**
      * 트랜잭션 receipt를 폴링하여 확정될 때까지 대기한다.
      *
      * @param txHash 대기할 트랜잭션 해시
@@ -897,18 +991,11 @@ public class BlockchainService {
         for (int i = 0; i < RECEIPT_MAX_RETRIES; i++) {
             try {
                 Thread.sleep(RECEIPT_POLL_INTERVAL_MS);
-                EthGetTransactionReceipt response = web3j.ethGetTransactionReceipt(txHash).send();
-                Optional<TransactionReceipt> receipt = response.getTransactionReceipt();
+                Optional<TransactionReceipt> receipt = findReceiptAcrossClients(txHash);
                 if (receipt.isPresent()) {
-                    TransactionReceipt r = receipt.get();
-                    log.info("트랜잭션 확정 완료 - txHash: {}, blockNumber: {}, status: {}",
-                            txHash, r.getBlockNumber(), r.getStatus());
-                    // status "0x0" = revert → 재시도해도 소용없으므로 즉시 예외 발생
-                    if ("0x0".equals(r.getStatus())) {
-                        throw new RuntimeException("트랜잭션 revert - txHash: " + txHash
-                                + " (가스 부족 또는 컨트랙트 로직 실패)");
-                    }
-                    return r;
+                    TransactionReceipt resolved = validateReceipt(txHash, receipt.get());
+                    submittedTransactions.remove(txHash);
+                    return resolved;
                 }
             } catch (RuntimeException e) {
                 // revert 또는 대기 중단은 재시도 없이 즉시 상위로 전파
@@ -921,20 +1008,224 @@ public class BlockchainService {
                 log.warn("Receipt 조회 중 오류 (재시도 {}/{}): {}", i + 1, RECEIPT_MAX_RETRIES, e.getMessage());
             }
         }
+
+        SubmittedTransactionContext context = submittedTransactions.get(txHash);
+        if (context != null) {
+            TransactionReceipt recovered = attemptReceiptRecovery(context);
+            submittedTransactions.remove(txHash);
+            return recovered;
+        }
+
         throw new RuntimeException("트랜잭션 확정 타임아웃 (120초) - txHash: " + txHash);
     }
 
+    private Optional<TransactionReceipt> findReceiptAcrossClients(String txHash) throws Exception {
+        Optional<TransactionReceipt> primaryReceipt = getReceipt(web3j, txHash);
+        if (primaryReceipt.isPresent()) {
+            return primaryReceipt;
+        }
+
+        if (fallbackWeb3j != null && fallbackWeb3j != web3j) {
+            Optional<TransactionReceipt> fallbackReceipt = getReceipt(fallbackWeb3j, txHash);
+            if (fallbackReceipt.isPresent()) {
+                log.info("fallback RPC에서 receipt 확인 - txHash: {}", txHash);
+                return fallbackReceipt;
+            }
+        }
+
+        return Optional.empty();
+    }
+
+    private TransactionReceipt attemptReceiptRecovery(SubmittedTransactionContext context) {
+        try {
+            boolean primaryVisible = isTransactionVisible(web3j, context.txHash());
+            boolean fallbackVisible = fallbackWeb3j != null
+                    && fallbackWeb3j != web3j
+                    && isTransactionVisible(fallbackWeb3j, context.txHash());
+
+            BigInteger primaryLatestNonce = getNonce(web3j, context.signerAddress(), true);
+            BigInteger primaryPendingNonce = getNonce(web3j, context.signerAddress(), false);
+            BigInteger fallbackLatestNonce = null;
+            BigInteger fallbackPendingNonce = null;
+            if (fallbackWeb3j != null && fallbackWeb3j != web3j) {
+                fallbackLatestNonce = getNonce(fallbackWeb3j, context.signerAddress(), true);
+                fallbackPendingNonce = getNonce(fallbackWeb3j, context.signerAddress(), false);
+            }
+
+            log.warn("stuck tx 진단 - txHash: {}, fn: {}, signer: {}, nonce: {}, primaryVisible: {}, fallbackVisible: {}, primaryLatest: {}, primaryPending: {}, fallbackLatest: {}, fallbackPending: {}",
+                    context.txHash(),
+                    context.functionName(),
+                    context.signerAddress(),
+                    context.nonce(),
+                    primaryVisible,
+                    fallbackVisible,
+                    primaryLatestNonce,
+                    primaryPendingNonce,
+                    fallbackLatestNonce,
+                    fallbackPendingNonce);
+
+            if (primaryVisible && !fallbackVisible && fallbackWeb3j != null && fallbackWeb3j != web3j) {
+                log.warn("primary RPC local pending으로 판단되어 fallback RPC로 raw tx 재브로드캐스트 시도 - txHash: {}",
+                        context.txHash());
+                broadcastRawTransaction(fallbackWeb3j, context.rawTransactionHex(), context.txHash(), "fallback");
+                Optional<TransactionReceipt> rebroadcastReceipt = pollReceipt(context.txHash(), RECOVERY_RECEIPT_MAX_RETRIES);
+                if (rebroadcastReceipt.isPresent()) {
+                    return validateReceipt(context.txHash(), rebroadcastReceipt.get());
+                }
+            }
+
+            if (!primaryVisible && !fallbackVisible) {
+                log.warn("모든 RPC에서 tx가 보이지 않아 primary/fallback RPC로 재브로드캐스트 시도 - txHash: {}",
+                        context.txHash());
+                broadcastRawTransaction(web3j, context.rawTransactionHex(), context.txHash(), "primary");
+                if (fallbackWeb3j != null && fallbackWeb3j != web3j) {
+                    broadcastRawTransaction(fallbackWeb3j, context.rawTransactionHex(), context.txHash(), "fallback");
+                }
+                Optional<TransactionReceipt> rebroadcastReceipt = pollReceipt(context.txHash(), RECOVERY_RECEIPT_MAX_RETRIES);
+                if (rebroadcastReceipt.isPresent()) {
+                    return validateReceipt(context.txHash(), rebroadcastReceipt.get());
+                }
+            }
+
+            if (!isMasterAddress(context.signerAddress())
+                    && primaryPendingNonce.compareTo(primaryLatestNonce) > 0
+                    && primaryLatestNonce.compareTo(context.nonce()) <= 0) {
+                log.warn("사용자 EOA pending nonce 정체 감지 - replacement tx 시도 - signer: {}, nonce: {}, oldGasPrice: {}",
+                        context.signerAddress(), context.nonce(), context.gasPrice());
+
+                String replacementTxHash = submitReplacementTransaction(context);
+                Optional<TransactionReceipt> replacementReceipt = pollReceipt(replacementTxHash, RECOVERY_RECEIPT_MAX_RETRIES);
+                if (replacementReceipt.isPresent()) {
+                    return validateReceipt(replacementTxHash, replacementReceipt.get());
+                }
+                throw new RuntimeException(
+                        "replacement tx 전송 후에도 receipt를 찾지 못했습니다. originalTxHash=" + context.txHash()
+                                + ", replacementTxHash=" + replacementTxHash);
+            }
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("stuck tx 복구 중 오류 - txHash: " + context.txHash() + ", error: " + e.getMessage(), e);
+        }
+
+        throw new RuntimeException(
+                "트랜잭션 확정 타임아웃 (120초) - txHash: " + context.txHash()
+                        + " (primary/fallback RPC 모두 receipt 미확인, signer=" + context.signerAddress() + ")");
+    }
+
+    private Optional<TransactionReceipt> pollReceipt(String txHash, int maxRetries) throws Exception {
+        for (int i = 0; i < maxRetries; i++) {
+            Thread.sleep(RECEIPT_POLL_INTERVAL_MS);
+            Optional<TransactionReceipt> receipt = findReceiptAcrossClients(txHash);
+            if (receipt.isPresent()) {
+                return receipt;
+            }
+        }
+        return Optional.empty();
+    }
+
+    private Optional<TransactionReceipt> getReceipt(Web3j client, String txHash) throws Exception {
+        EthGetTransactionReceipt response = client.ethGetTransactionReceipt(txHash).send();
+        return response.getTransactionReceipt();
+    }
+
+    private boolean isTransactionVisible(Web3j client, String txHash) throws Exception {
+        EthTransaction response = client.ethGetTransactionByHash(txHash).send();
+        return response.getTransaction().isPresent();
+    }
+
+    private void broadcastRawTransaction(Web3j client, String rawTransactionHex, String expectedTxHash, String label) {
+        try {
+            EthSendTransaction sent = client.ethSendRawTransaction(rawTransactionHex).send();
+            if (sent.hasError()) {
+                String message = sent.getError().getMessage();
+                if (message != null && (message.contains("already known") || message.contains("known transaction"))) {
+                    log.info("{} RPC raw tx 이미 인지 - txHash: {}, message: {}", label, expectedTxHash, message);
+                    return;
+                }
+                log.warn("{} RPC raw tx 재브로드캐스트 실패 - txHash: {}, error: {}", label, expectedTxHash, message);
+                return;
+            }
+
+            String rebroadcastedHash = sent.getTransactionHash();
+            log.info("{} RPC raw tx 재브로드캐스트 성공 - expectedTxHash: {}, actualTxHash: {}",
+                    label, expectedTxHash, rebroadcastedHash);
+        } catch (Exception e) {
+            log.warn("{} RPC raw tx 재브로드캐스트 예외 - txHash: {}, error: {}", label, expectedTxHash, e.getMessage());
+        }
+    }
+
+    private String submitReplacementTransaction(SubmittedTransactionContext context) throws Exception {
+        BigInteger candidateGasPrice = getGasPrice().multiply(BigInteger.valueOf(2));
+        BigInteger replacementGasPrice = context.gasPrice().multiply(BigInteger.valueOf(2)).max(candidateGasPrice);
+
+        RawTransaction replacementTx = RawTransaction.createTransaction(
+                context.nonce(),
+                replacementGasPrice,
+                context.gasLimit(),
+                context.toAddress(),
+                context.value(),
+                context.encodedData()
+        );
+        byte[] signed = TransactionEncoder.signMessage(replacementTx, CHAIN_ID, context.signerCredentials());
+        String rawTransactionHex = Numeric.toHexString(signed);
+
+        EthSendTransaction sent = web3j.ethSendRawTransaction(rawTransactionHex).send();
+        if (sent.hasError()) {
+            throw new RuntimeException("replacement tx 오류: " + sent.getError().getMessage());
+        }
+
+        String replacementTxHash = sent.getTransactionHash();
+        submittedTransactions.remove(context.txHash());
+        submittedTransactions.put(replacementTxHash, new SubmittedTransactionContext(
+                replacementTxHash,
+                rawTransactionHex,
+                context.signerAddress(),
+                context.signerCredentials(),
+                context.nonce(),
+                replacementGasPrice,
+                context.gasLimit(),
+                context.toAddress(),
+                context.value(),
+                context.encodedData(),
+                context.functionName()
+        ));
+
+        log.info("replacement tx 전송 완료 - originalTxHash: {}, replacementTxHash: {}, nonce: {}, gasPrice: {}",
+                context.txHash(), replacementTxHash, context.nonce(), replacementGasPrice);
+
+        if (fallbackWeb3j != null && fallbackWeb3j != web3j) {
+            broadcastRawTransaction(fallbackWeb3j, rawTransactionHex, replacementTxHash, "fallback");
+        }
+
+        return replacementTxHash;
+    }
+
+    private TransactionReceipt validateReceipt(String txHash, TransactionReceipt receipt) {
+        log.info("트랜잭션 확정 완료 - txHash: {}, blockNumber: {}, status: {}",
+                txHash, receipt.getBlockNumber(), receipt.getStatus());
+        if ("0x0".equals(receipt.getStatus())) {
+            throw new RuntimeException("트랜잭션 revert - txHash: " + txHash
+                    + " (가스 부족 또는 컨트랙트 로직 실패)");
+        }
+        return receipt;
+    }
+
+    private boolean isMasterAddress(String address) {
+        return masterCredentials.getAddress().equalsIgnoreCase(address);
+    }
+
     /**
-     * 현재 Sepolia 네트워크의 gas price를 동적으로 조회하고 20% buffer를 추가한다.
+     * 현재 Sepolia 네트워크의 gas price를 동적으로 조회하고 50% buffer를 추가한다.
      * <p>
      * buffer를 두는 이유: 조회 시점과 트랜잭션이 블록에 포함되는 시점 사이에
      * gas price가 상승할 가능성이 있으므로, 일부러 여유를 둬서
      * "replacement transaction underpriced" 오류나 채굴 지연을 방지한다.
      * <p>
-     * 조회 실패 시 기본값 5 Gwei + 20% = 6 Gwei를 fallback으로 사용한다.
+     * 조회 실패 시 fallback 값 6 Gwei를 사용한다.
      * (5 Gwei는 Sepolia에서 트랜잭션이 정상 처리되는 최저 범위)
      *
-     * @return gas price (wei 단위, 20% buffer 적용)
+     * @return gas price (wei 단위, 50% buffer 적용)
      */
     public BigInteger getGasPrice() {
         try {
@@ -942,8 +1233,8 @@ public class BlockchainService {
             // 50% buffer: Sepolia 네트워크 혼잡 시 빠른 블록 포함을 위해 여유 확보
             return baseGasPrice.multiply(BigInteger.valueOf(150)).divide(BigInteger.valueOf(100));
         } catch (Exception e) {
-            log.warn("네트워크 gas price 조회 실패, 기본값(5 Gwei) + 20% buffer 사용: {}", e.getMessage());
-            return BigInteger.valueOf(6_000_000_000L); // 5 Gwei + 20% = 6 Gwei fallback
+            log.warn("네트워크 gas price 조회 실패, fallback 6 Gwei 사용: {}", e.getMessage());
+            return BigInteger.valueOf(6_000_000_000L); // fallback gas price
         }
     }
 
@@ -1047,9 +1338,13 @@ public class BlockchainService {
      * @return nonce 값
      */
     private BigInteger getNonce(String address, boolean useLatest) throws Exception {
+        return getNonce(web3j, address, useLatest);
+    }
+
+    private BigInteger getNonce(Web3j client, String address, boolean useLatest) throws Exception {
         DefaultBlockParameterName param = useLatest
                 ? DefaultBlockParameterName.LATEST
                 : DefaultBlockParameterName.PENDING;
-        return web3j.ethGetTransactionCount(address, param).send().getTransactionCount();
+        return client.ethGetTransactionCount(address, param).send().getTransactionCount();
     }
 }

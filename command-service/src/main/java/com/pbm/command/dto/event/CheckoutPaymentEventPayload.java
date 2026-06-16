@@ -16,6 +16,7 @@ package com.pbm.command.dto.event;
  * @param currency          통화 구분 ("KRW" 등)
  * @param aiAgentPrivateKey AI 에이전트 개인키 (null이면 스텁 처리)
  * @param recipientAddress  PBM 토큰 수신 주소 (null이면 기본값 사용)
+ * @param productImageUrl   상품 이미지 URL (결제 내역 표시용, null 가능)
  */
 public record CheckoutPaymentEventPayload(
         Long userId,
@@ -25,6 +26,7 @@ public record CheckoutPaymentEventPayload(
         Integer amount,
         String currency,
         String aiAgentPrivateKey,
-        String recipientAddress
+        String recipientAddress,
+        String productImageUrl
 ) {
 }

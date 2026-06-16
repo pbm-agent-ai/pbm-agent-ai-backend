@@ -65,6 +65,8 @@ eureka:
 blockchain:
   # Alchemy Sepolia RPC URL
   rpc-url: ${SEPOLIA_RPC_URL:https://eth-sepolia.g.alchemy.com/v2/your-api-key}
+  # Primary RPC에만 pending tx가 남는 경우를 진단/복구하기 위한 fallback RPC
+  fallback-rpc-url: ${SEPOLIA_FALLBACK_RPC_URL:https://ethereum-sepolia-rpc.publicnode.com}
   # AI 에이전트 개인키 (트랜잭션 서명용, 절대 하드코딩 금지)
   private-key: ${BLOCKCHAIN_PRIVATE_KEY}
   # 컨트랙트 주소

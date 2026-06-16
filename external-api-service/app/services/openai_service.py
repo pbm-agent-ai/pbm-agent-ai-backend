@@ -465,8 +465,8 @@ def _build_dom_planner_system_prompt() -> str:
 
 2. 상품 상세 페이지 (URL에 "/item/", "/product/", "/goods/" 등 포함):
    - 옵션 선택(색상/사이즈)이 필요하면 rawHtml에서 option/select 요소를 직접 찾아 SELECT/CLICK한다.
-   - "구매하기", "Buy Now", "지금 구매", "바로구매" 버튼을 rawHtml에서 찾아 CLICK한다.
-   - "장바구니", "Add to Cart" 버튼은 절대 클릭하지 않는다. 반드시 "구매하기" 또는 "바로구매" 버튼만 클릭한다.
+   - "구매하기", "Buy Now", "지금 구매", "바로구매", "바로 구매" 버튼을 rawHtml에서 찾아 CLICK한다.
+   - "장바구니", "Add to Cart" 버튼은 절대 클릭하지 않는다. 반드시 "구매하기" 또는 "바로구매/바로 구매" 버튼만 클릭한다.
    - target.selector에 CSS selector를, 또는 target.labelText에 버튼 텍스트를 넣는다.
    - 버튼이 보이지 않으면 SCROLL로 아래를 탐색한다.
 
@@ -620,7 +620,7 @@ def _build_purchase_executor_system_prompt() -> str:
 4. 옵션 선택 UI가 rawHtml에 없으면 (= 옵션 불필요한 상품) 즉시 구매 버튼 탐색으로 이동한다.
 
 [구매 버튼 CSS selector 추출 - rawHtml 직접 분석]
-1. "구매하기", "바로구매", "Buy Now", "지금 구매" 텍스트가 포함된 <button>, <a>, <span> 요소를 rawHtml에서 찾는다.
+1. "구매하기", "바로구매", "바로 구매", "Buy Now", "지금 구매" 텍스트가 포함된 <button>, <a>, <span> 요소를 rawHtml에서 찾는다.
    ⚠️ "장바구니", "Add to Cart" 버튼은 절대 클릭 대상이 아니다. 무시하라.
 2. 해당 요소의 CSS selector를 반드시 target.selector에 넣어야 한다.
    - id가 있으면: "#buyNow", "#purchaseBtn"
@@ -661,7 +661,7 @@ def _build_purchase_executor_system_prompt() -> str:
    - rawHtml에서 구매 버튼이 확인됐는데 WAIT를 반환하는 것은 금지한다.
 
 [절대 금지]
-- "장바구니", "Add to Cart", "카트에 담기" 버튼 클릭 절대 금지. 반드시 "구매하기" 또는 "바로구매" 버튼만 클릭.
+- "장바구니", "Add to Cart", "카트에 담기" 버튼 클릭 절대 금지. 반드시 "구매하기" 또는 "바로구매/바로 구매" 버튼만 클릭.
 - "결제하기", "주문하기", "결제 완료", "Pay Now", "주문완료", "결제" 등 최종 결제 버튼 클릭 절대 금지.
   (구매하기/바로구매까지만 허용. 결제 버튼은 사용자 최종 확인 단계임)
 - 아직 미선택 필수 옵션이 있는 상태에서 구매 버튼 클릭 금지."""
@@ -896,26 +896,79 @@ def _get_png_dimensions(data_url: str) -> tuple[int, int]:
 
 async def _analyze_screenshot_mock(request: VisionPlannerRequest) -> VisionPlannerResponse:
     logger.info("Vision planner 모킹 모드 활성화 - 고정 클릭 좌표 반환")
+    if request.mode == "EXTERNAL_OPTION_PRESENCE":
+        target_label = "옵션"
+        raw_x, raw_y = 500, 380
+        norm_x, norm_y = 0.5, 0.38
+        reason = "mock vision planner가 옵션 존재 여부를 반환함"
+        return VisionPlannerResponse(
+            action="CLICK",
+            viewport_x=norm_x,
+            viewport_y=norm_y,
+            target_label=target_label,
+            option_present=True,
+            option_groups=[],
+            confidence=0.74,
+            reason=reason,
+        )
+    if request.mode == "EXTERNAL_OPTION_SELECTION":
+        target_label = request.target_option or "옵션"
+        raw_x, raw_y = 500, 420
+        norm_x, norm_y = 0.5, 0.42
+        reason = "mock vision planner가 선택 대상 옵션을 반환함"
+        return VisionPlannerResponse(
+            action="CLICK",
+            viewport_x=norm_x,
+            viewport_y=norm_y,
+            target_label=target_label,
+            option_present=True,
+            option_groups=[
+                {"group_name": "색상", "options": ["블랙", "화이트"], "selected_option": None},
+            ],
+            confidence=0.74,
+            reason=reason,
+        )
+    if request.mode == "SMARTSTORE_OPTION_PRESENCE":
+        target_label = "옵션"
+        raw_x, raw_y = 500, 380
+        norm_x, norm_y = 0.5, 0.38
+        reason = "mock vision planner가 옵션 영역을 선택함"
+    elif request.mode == "SMARTSTORE_OPTION_SELECTION":
+        target_label = request.target_option or "옵션"
+        raw_x, raw_y = 500, 420
+        norm_x, norm_y = 0.5, 0.42
+        reason = "mock vision planner가 선택 대상 옵션을 선택함"
+    elif request.mode == "SMARTSTORE_PURCHASE_BUTTON":
+        target_label = "구매하기"
+        raw_x, raw_y = 500, 820
+        norm_x, norm_y = 0.5, 0.82
+        reason = "mock vision planner가 구매 버튼을 선택함"
+    else:
+        target_label = "mock primary button"
+        raw_x, raw_y = 500, 800
+        norm_x, norm_y = 0.5, 0.8
+        reason = "mock vision planner가 화면 하단 주요 버튼을 선택함"
+
     _save_vision_debug_artifacts(
         request=request,
         raw_action="CLICK",
-        raw_x=500,
-        raw_y=800,
-        norm_x=0.5,
-        norm_y=0.8,
+        raw_x=raw_x,
+        raw_y=raw_y,
+        norm_x=norm_x,
+        norm_y=norm_y,
         img_w=1280,
         img_h=800,
-        target_label="mock primary button",
+        target_label=target_label,
         confidence=0.74,
-        reason="mock vision planner가 화면 하단 주요 버튼을 선택함",
+        reason=reason,
     )
     return VisionPlannerResponse(
         action="CLICK",
-        viewport_x=0.5,
-        viewport_y=0.8,
-        target_label="mock primary button",
+        viewport_x=norm_x,
+        viewport_y=norm_y,
+        target_label=target_label,
         confidence=0.74,
-        reason="mock vision planner가 화면 하단 주요 버튼을 선택함",
+        reason=reason,
     )
 
 
@@ -956,6 +1009,10 @@ async def analyze_screenshot_action(request: VisionPlannerRequest) -> VisionPlan
         "옵션 UI가 현재 화면에 보이면 그 요소만 CLICK하고, 옵션 UI가 안 보이면 반드시 WAIT를 반환하라. "
         "mode가 SMARTSTORE_OPTION_SELECTION이면 target_option을 우선 기준으로 삼아, 화면에 보이는 해당 옵션 텍스트 또는 그 옵션을 펼치는 opener를 클릭하라. "
         "target_option이 현재 화면에 없으면 해당 옵션 목록을 열 수 있는 toggle/button을 클릭하고, 그래도 불명확하면 WAIT를 반환하라. "
+        "mode가 SMARTSTORE_PURCHASE_BUTTON이면 스마트스토어 상품 상세에서 옵션 선택이 이미 반영된 뒤의 구매 버튼만 대상으로 삼아라. "
+        "\"구매하기\", \"바로구매\", \"바로 구매\", \"N구매하기\", \"N구매\", \"Buy Now\", \"지금 구매\" 텍스트가 있는 버튼만 CLICK하고, "
+        "\"쿠폰 받기\", \"혜택\", \"장바구니\", \"선물하기\", \"리뷰\", \"배송\", \"가격\" 영역은 절대 클릭하지 마라. "
+        "구매 버튼이 현재 화면에 보이지 않으면 반드시 WAIT를 반환하라. "
     )
 
     screenshot_base64 = request.screenshot_data_url.split(",", 1)[1]
@@ -1099,7 +1156,8 @@ async def analyze_screenshot_action(request: VisionPlannerRequest) -> VisionPlan
                 "단, mode가 SEARCH_RESULTS_PRODUCT이면 targetOption의 title/price/productId에 맞는 상품명 링크 텍스트 중앙만 클릭한다. "
                 "이미지, 가격 숫자, 구매정보, 광고 배지, 구매 버튼은 클릭하지 않는다. "
                 "mode가 SMARTSTORE_OPTION_PRESENCE이면 옵션 UI만 클릭하고 쿠폰/혜택/구매/장바구니/선물하기는 클릭하지 않는다. "
-                "mode가 SMARTSTORE_OPTION_SELECTION이면 targetOption에 맞는 옵션 또는 opener를 우선 찾는다."
+                "mode가 SMARTSTORE_OPTION_SELECTION이면 targetOption에 맞는 옵션 또는 opener를 우선 찾는다. "
+                "mode가 SMARTSTORE_PURCHASE_BUTTON이면 옵션이 이미 선택된 뒤의 구매 버튼만 클릭하고 쿠폰/혜택/장바구니/리뷰는 절대 클릭하지 않는다."
             )),
         ]
         retry_response = await client.aio.models.generate_content(

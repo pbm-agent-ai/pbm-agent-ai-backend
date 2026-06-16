@@ -526,7 +526,14 @@ class ProductSelectionConsumerTest {
         verify(monitoringSubscriptionService).createOrUpdateFromSelection(
                 anyLong(), anyString(), anyInt(), anyString(), eq(prod3), any()
         );
-        verify(subscriptionMonitoringService).process(100L);    // 최저가 p2만 process
+        // 즉시 충족 시 process() 미호출 (이중 이벤트 발행 방지)
+        verify(subscriptionMonitoringService, never()).process(anyLong());
+        // 대신 직접 TRIGGERED 전환 + AUTO_PAYMENT_START 알림
+        verify(subscriptionMonitoringService).publishAutoPaymentStartAlert(
+                eq(subPurchased),
+                any(SubscriptionMonitoringService.NormalizedProductSnapshot.class),
+                any(BigDecimal.class)
+        );
 
         verify(priceValidationResultEventPublisher).publish(resultEventCaptor.capture());
         PriceValidationResultEvent resultEvent = resultEventCaptor.getValue();
@@ -589,7 +596,13 @@ class ProductSelectionConsumerTest {
         // when
         productSelectionConsumer.consume(event);
 
-        // then
+        // then: 즉시 충족 시 process() 미호출, 직접 TRIGGERED 전환
+        verify(subscriptionMonitoringService, never()).process(anyLong());
+        verify(subscriptionMonitoringService).publishAutoPaymentStartAlert(
+                eq(sub),
+                any(SubscriptionMonitoringService.NormalizedProductSnapshot.class),
+                any(BigDecimal.class)
+        );
         verify(priceValidationResultEventPublisher).publish(resultEventCaptor.capture());
         assertThat(resultEventCaptor.getValue().payload().nextStatus()).isEqualTo("BROWSER_PURCHASE_IN_PROGRESS");
         assertThat(resultEventCaptor.getValue().payload().triggeredProducts()).hasSize(1);

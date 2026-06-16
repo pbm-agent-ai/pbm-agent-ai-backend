@@ -1,0 +1,30 @@
+{
+  "runId": "1084a84e-1923-42df-b963-d8520b7c008e",
+  "stepIndex": 7,
+  "currentUrl": "https://smartstore.naver.com/judigital/products/13104659249",
+  "action": "CLICK",
+  "imageWidth": 2266,
+  "imageHeight": 1544,
+  "rawX": 770.0,
+  "rawY": 959.0,
+  "normalizedX": 0.77,
+  "normalizedY": 0.959,
+  "pixelInterpretation": {
+    "x": 770,
+    "y": 959
+  },
+  "grid1000Interpretation": {
+    "x": 1744,
+    "y": 1480
+  },
+  "targetLabel": "N 구매하기",
+  "confidence": 0.9,
+  "reason": "사용자가 상품을 구매하고자 하며, 현재 페이지에서 가장 명확한 구매 관련 CTA는 \"N 구매하기\" 버튼입니다.",
+  "errorCode": null,
+  "errorMessage": null,
+  "mode": "GENERAL",
+  "targetOption": "블랙",
+  "savedAtUtc": "20260615T224534",
+  "rawPath": "/app/vision-debug/20260615T224534_1084a84e-1923-42df-b963-d8520b7c008e_step7_raw.png",
+  "annotatedPath": "/app/vision-debug/20260615T224534_1084a84e-1923-42df-b963-d8520b7c008e_step7_annotated.png"
+}

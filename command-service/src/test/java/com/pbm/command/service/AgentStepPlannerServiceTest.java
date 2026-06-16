@@ -18,6 +18,7 @@ import com.pbm.command.dto.request.AgentRunActionResultRequest;
 import com.pbm.command.dto.request.ScreenshotArtifactRequest;
 import com.pbm.command.dto.request.ToolResultRequest;
 import com.pbm.command.dto.request.InteractiveElementRequest;
+import com.pbm.command.dto.request.OptionGroupRequest;
 import com.pbm.command.dto.request.PageSnapshotRequest;
 import com.pbm.command.dto.response.ActionInstructionResponse;
 import com.pbm.command.dto.response.ProductCandidateResponse;
@@ -34,8 +35,10 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
 
 /**
  * AgentStepPlannerService 단위 테스트.
@@ -511,7 +514,7 @@ class AgentStepPlannerServiceTest {
 
         ActionInstructionResponse response = agentStepPlannerService.planNextAction(
                 "run-1", 1, commandSession, snapshot, previousActionResult, null, null,
-                ExternalStoreVisionStage.OPTION_PRESENCE, 0);
+                ExternalStoreVisionStage.OPTION_PRESENCE, 0, 0);
 
         assertThat(response.action()).isEqualTo(BrowserActionType.SCROLL);
     }
@@ -545,7 +548,7 @@ class AgentStepPlannerServiceTest {
 
         ActionInstructionResponse response = agentStepPlannerService.planNextAction(
                 "run-1", 3, commandSession, snapshot, previousActionResult, null, null,
-                ExternalStoreVisionStage.OPTION_PRESENCE, 2);
+                ExternalStoreVisionStage.OPTION_PRESENCE, 2, 0);
 
         assertThat(response.action()).isEqualTo(BrowserActionType.USE_TOOL);
         assertThat(response.toolRequest().name()).isEqualTo("CAPTURE_VISIBLE_TAB");
@@ -634,6 +637,214 @@ class AgentStepPlannerServiceTest {
 
         // 일반 상품 페이지에서는 COMPLETE가 아닌 CLICK 등의 액션이 반환되어야 한다
         assertThat(response.action()).isNotEqualTo(BrowserActionType.COMPLETE);
+    }
+
+    @Test
+    @DisplayName("AliExpress에서 사용자 응답 옵션이 실제로 반영되면 optionGroups가 남아 있어도 바로구매 CLICK을 반환한다")
+    void planNextAction_aliExpressSelectedOptionApplied_clicksPurchaseButton() {
+        CommandSession commandSession = CommandSession.createSearching(1L, "버즈4 검정색 구매해줘");
+        commandSession.toProductSelectionRequired(null, null, null, toCandidatesJson(List.of()), 300000, "AUTO_PURCHASE");
+        commandSession.toPriceValidating("[\"p1\"]");
+        commandSession.completeValidation(
+                CommandSessionStatus.BROWSER_PURCHASE_IN_PROGRESS,
+                toValidationResultJson(new SelectionValidationResultResponse(
+                        List.of(new ProductCandidateResponse("p1", "버즈4", "299000", "AliExpress", "https://www.aliexpress.com/item/1005005073493513.html", null, "KRW", "ALIEXPRESS", "버즈4")),
+                        List.of(),
+                        null,
+                        "triggered",
+                        false,
+                        List.of(),
+                        null
+                ))
+        );
+
+        PageSnapshotRequest snapshot = new PageSnapshotRequest(
+                "https://www.aliexpress.com/item/1005005073493513.html",
+                "AliExpress - Product Detail",
+                "Black 옵션 선택됨 Buy Now 버튼 표시",
+                List.of(new InteractiveElementRequest("buy-now-node", "button", "Buy Now", null, null, true, false)),
+                List.of(new OptionGroupRequest("Color", null, null, List.of("Black", "White"), "Black", false)),
+                List.of(),
+                List.of(),
+                "",
+                LocalDateTime.now()
+        );
+
+        ActionInstructionResponse response = agentStepPlannerService.planNextAction(
+                "run-ali-buy-now-1",
+                2,
+                commandSession,
+                snapshot,
+                null,
+                "Black"
+        );
+
+        assertThat(response.action()).isEqualTo(BrowserActionType.CLICK);
+        assertThat(response.target().nodeId()).isEqualTo("buy-now-node");
+    }
+
+    @Test
+    @DisplayName("AliExpress의 '바로 구매' 버튼도 공백을 무시하고 구매 버튼으로 인식한다")
+    void planNextAction_aliExpressBuyNowWithSpace_clicksPurchaseButton() {
+        CommandSession commandSession = CommandSession.createSearching(1L, "버즈4 분홍색 구매해줘");
+        commandSession.toProductSelectionRequired(null, null, null, toCandidatesJson(List.of()), 300000, "AUTO_PURCHASE");
+        commandSession.toPriceValidating("[\"p1\"]");
+        commandSession.completeValidation(
+                CommandSessionStatus.BROWSER_PURCHASE_IN_PROGRESS,
+                toValidationResultJson(new SelectionValidationResultResponse(
+                        List.of(new ProductCandidateResponse("p1", "버즈4", "299000", "AliExpress", "https://www.aliexpress.com/item/1005005073493513.html", null, "KRW", "ALIEXPRESS", "버즈4")),
+                        List.of(),
+                        null,
+                        "triggered",
+                        false,
+                        List.of(),
+                        null
+                ))
+        );
+
+        PageSnapshotRequest snapshot = new PageSnapshotRequest(
+                "https://www.aliexpress.com/item/1005005073493513.html",
+                "AliExpress - Product Detail",
+                "PINK 6801 옵션 선택됨 바로 구매 버튼 표시",
+                List.of(new InteractiveElementRequest("buy-now-space-node", "button", "바로 구매", null, null, true, false)),
+                List.of(new OptionGroupRequest("Color", null, null, List.of("PINK 6801", "Black"), "PINK 6801", false)),
+                List.of(),
+                List.of(),
+                "",
+                LocalDateTime.now()
+        );
+
+        ActionInstructionResponse response = agentStepPlannerService.planNextAction(
+                "run-ali-buy-now-space-1",
+                2,
+                commandSession,
+                snapshot,
+                null,
+                "PINK 6801"
+        );
+
+        assertThat(response.action()).isEqualTo(BrowserActionType.CLICK);
+        assertThat(response.target().nodeId()).isEqualTo("buy-now-space-node");
+    }
+
+    @Test
+    @DisplayName("AliExpress에서 옵션 반영 후 캡처가 있으면 Smartstore 모드가 아니라 GENERAL Vision fallback을 사용한다")
+    void planNextAction_aliExpressSelectedOptionApplied_usesGeneralVisionFallback() {
+        CommandSession commandSession = CommandSession.createSearching(1L, "버즈4 검정색 구매해줘");
+        PageSnapshotRequest snapshot = new PageSnapshotRequest(
+                "https://www.aliexpress.com/item/1005005073493513.html",
+                "AliExpress - Product Detail",
+                "Black 옵션 선택됨",
+                List.of(),
+                List.of(new OptionGroupRequest("Color", null, null, List.of("Black", "White"), "Black", false)),
+                List.of(),
+                List.of(),
+                "",
+                LocalDateTime.now()
+        );
+        AgentRunActionResultRequest previousActionResult = new AgentRunActionResultRequest(
+                "run-ali-vision-1",
+                1,
+                "act-1",
+                BrowserActionType.USE_TOOL,
+                ActionExecutionStatus.SUCCESS,
+                null,
+                null,
+                new ToolResultRequest(
+                        "CAPTURE_VISIBLE_TAB",
+                        true,
+                        new ScreenshotArtifactRequest("data:image/png;base64,ZmFrZQ==", "image/png", 8),
+                        null
+                ),
+                snapshot,
+                LocalDateTime.now()
+        );
+        given(aiVisionPlannerClient.analyze(any(), any(), any(), any(), any(), any(), any(), any())).willReturn(
+                new VisionPlannerInstructionPayload("CLICK", 0.32, 0.74, "바로 구매", true, List.of(), 0.91, "vision fallback 성공")
+        );
+
+        ActionInstructionResponse response = agentStepPlannerService.planNextAction(
+                "run-ali-vision-1",
+                2,
+                commandSession,
+                snapshot,
+                previousActionResult,
+                "Black"
+        );
+
+        assertThat(response.action()).isEqualTo(BrowserActionType.CLICK);
+        assertThat(response.target().viewportX()).isEqualTo(0.32);
+        assertThat(response.target().viewportY()).isEqualTo(0.74);
+        verify(aiVisionPlannerClient).analyze(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                eq("GENERAL"),
+                eq("Black")
+        );
+    }
+
+    @Test
+    @DisplayName("네이버 스마트스토어에서 옵션 반영 후 캡처가 있으면 SMARTSTORE_PURCHASE_BUTTON Vision fallback을 사용한다")
+    void planNextAction_naverSelectedOptionApplied_usesSmartstorePurchaseButtonVisionFallback() {
+        CommandSession commandSession = CommandSession.createSearching(1L, "로봇청소기 화이트 구매해줘");
+        PageSnapshotRequest snapshot = new PageSnapshotRequest(
+                "https://smartstore.naver.com/example/products/123456789",
+                "네이버 스마트스토어 - Product Detail",
+                "화이트 옵션 선택됨",
+                List.of(),
+                List.of(new OptionGroupRequest("색상", null, null, List.of("화이트", "블랙"), "화이트", false)),
+                List.of(),
+                List.of(),
+                "",
+                LocalDateTime.now()
+        );
+        AgentRunActionResultRequest previousActionResult = new AgentRunActionResultRequest(
+                "run-naver-vision-1",
+                1,
+                "act-1",
+                BrowserActionType.USE_TOOL,
+                ActionExecutionStatus.SUCCESS,
+                null,
+                null,
+                new ToolResultRequest(
+                        "CAPTURE_VISIBLE_TAB",
+                        true,
+                        new ScreenshotArtifactRequest("data:image/png;base64,ZmFrZQ==", "image/png", 8),
+                        null
+                ),
+                snapshot,
+                LocalDateTime.now()
+        );
+        given(aiVisionPlannerClient.analyze(any(), any(), any(), any(), any(), any(), any(), any())).willReturn(
+                new VisionPlannerInstructionPayload("CLICK", 0.48, 0.82, "구매하기", true, List.of(), 0.94, "purchase button selected")
+        );
+
+        ActionInstructionResponse response = agentStepPlannerService.planNextAction(
+                "run-naver-vision-1",
+                2,
+                commandSession,
+                snapshot,
+                previousActionResult,
+                "화이트"
+        );
+
+        assertThat(response.action()).isEqualTo(BrowserActionType.CLICK);
+        assertThat(response.target().viewportX()).isEqualTo(0.48);
+        assertThat(response.target().viewportY()).isEqualTo(0.82);
+        verify(aiVisionPlannerClient).analyze(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                eq("SMARTSTORE_PURCHASE_BUTTON"),
+                eq("화이트")
+        );
     }
 
     @Test

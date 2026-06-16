@@ -16,7 +16,10 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigInteger;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * PBM 결제 내역 조회 API 컨트롤러.
@@ -42,15 +45,45 @@ public class PaymentController {
      * @param userId Gateway가 주입한 사용자 ID (X-User-Id 헤더)
      * @return 사용자의 결제 요약 목록을 감싼 ApiResponse
      */
+    /** PBM 토큰 소수점: 18자리 */
+    private static final BigInteger TOKEN_DECIMALS = BigInteger.TEN.pow(18);
+
     @GetMapping
     public ApiResponse<List<PaymentSummaryResponse>> getPaymentsByUserId(
             @RequestHeader("X-User-Id") Long userId
     ) {
         log.info("결제 목록 조회 요청 - userId: {}", userId);
 
-        List<PaymentSummaryResponse> payments = paymentService.getPaymentsByUserId(userId)
-                .stream()
-                .map(PaymentSummaryResponse::from)
+        List<Payment> paymentList = paymentService.getPaymentsByUserId(userId);
+
+        // 사용자의 FEE 트랜잭션을 일괄 조회 후 subscriptionId별 합계 계산
+        List<TokenTransaction> feeTransactions = tokenTransactionRepository
+                .findByUserIdAndTypeOrderByCreatedAtDesc(userId, TokenTransactionType.FEE);
+
+        Map<Long, Integer> feeBySubscription = feeTransactions.stream()
+                .filter(tx -> tx.getSubscriptionId() != null)
+                .collect(Collectors.groupingBy(
+                        TokenTransaction::getSubscriptionId,
+                        Collectors.reducing(BigInteger.ZERO,
+                                TokenTransaction::getAmountWei,
+                                BigInteger::add)
+                )).entrySet().stream()
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> e.getValue().divide(TOKEN_DECIMALS).intValue()
+                ));
+
+        List<PaymentSummaryResponse> payments = paymentList.stream()
+                .map(payment -> {
+                    // FEE 트랜잭션 합계 우선, 없으면 Payment에 저장된 gasFeeKrw로 fallback
+                    Integer feeAmountKrw = payment.getSubscriptionId() != null
+                            ? feeBySubscription.get(payment.getSubscriptionId())
+                            : null;
+                    if (feeAmountKrw == null) {
+                        feeAmountKrw = payment.getGasFeeKrw();
+                    }
+                    return PaymentSummaryResponse.from(payment, feeAmountKrw);
+                })
                 .toList();
 
         return ApiResponse.success(payments, "결제 목록 조회 성공");

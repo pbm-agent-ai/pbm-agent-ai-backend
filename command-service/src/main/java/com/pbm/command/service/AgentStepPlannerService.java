@@ -113,7 +113,8 @@ public class AgentStepPlannerService {
                 selectedOptionValue,
                 null,
                 ExternalStoreVisionStage.NONE,
-                optionPresenceScrollCount
+                optionPresenceScrollCount,
+                0
         );
     }
 
@@ -126,7 +127,8 @@ public class AgentStepPlannerService {
             String selectedOptionValue,
             ProductCandidateResponse explicitTargetProduct,
             ExternalStoreVisionStage externalStoreVisionStage,
-            int optionPresenceScrollCount
+            int optionPresenceScrollCount,
+            int naverPurchaseVisionAttemptCount
     ) {
         ProductCandidateResponse targetProduct = explicitTargetProduct != null
                 ? explicitTargetProduct
@@ -244,6 +246,17 @@ public class AgentStepPlannerService {
                 && !selectedOptionValue.isBlank()
                 && isSelectedOptionAlreadyApplied(snapshot, selectedOptionValue);
 
+        ActionInstructionResponse aliExpressPurchaseInstruction = buildAliExpressPurchaseInstructionAfterUserSelection(
+                runId,
+                stepIndex,
+                snapshot,
+                selectedOptionValue,
+                selectedOptionAlreadyApplied
+        );
+        if (aliExpressPurchaseInstruction != null) {
+            return aliExpressPurchaseInstruction;
+        }
+
         ActionInstructionResponse searchResultsVisionInstruction = buildSearchResultsVisionFallbackInstruction(
                 runId,
                 stepIndex,
@@ -258,18 +271,17 @@ public class AgentStepPlannerService {
             return searchResultsVisionInstruction;
         }
 
-        if (!selectedOptionAlreadyApplied) {
-            ActionInstructionResponse visionInstruction = buildVisionFallbackInstruction(
-                    runId,
-                    stepIndex,
-                    commandSession,
-                    snapshot,
-                    previousActionResult,
-                    selectedOptionValue
-            );
-            if (visionInstruction != null) {
-                return visionInstruction;
-            }
+        ActionInstructionResponse visionInstruction = buildVisionFallbackInstruction(
+                runId,
+                stepIndex,
+                commandSession,
+                snapshot,
+                previousActionResult,
+                selectedOptionValue,
+                selectedOptionAlreadyApplied
+        );
+        if (visionInstruction != null) {
+            return visionInstruction;
         }
 
         // vision이 스크린샷 기반으로 시도됐으나 실패(confidence 부족 or 오류)한 경우:
@@ -277,6 +289,19 @@ public class AgentStepPlannerService {
         boolean visionAttempted = previousActionResult != null
                 && previousActionResult.toolResult() != null
                 && previousActionResult.toolResult().screenshot() != null;
+
+        // 네이버 PRODUCT_DETAIL: DOM AI 건너뛰고 Vision AI 우선 처리
+        // (네이버 스마트스토어는 구매하기 버튼이 DOM interactive elements에 잡히지 않음)
+        boolean isNaverProductDetail = currentPageType == PageType.PRODUCT_DETAIL
+                && resolvePlatformConfig(commandSession).getPlatform() == PlatformType.NAVER;
+
+        if (isNaverProductDetail) {
+            return buildNaverPurchaseVisionInstruction(
+                    runId, stepIndex, commandSession, snapshot,
+                    previousActionResult, selectedOptionValue, selectedOptionAlreadyApplied,
+                    naverPurchaseVisionAttemptCount, visionAttempted
+            );
+        }
 
         if (!visionAttempted) {
             ActionInstructionResponse aiInstruction = buildAiDomInstruction(runId, stepIndex, commandSession, snapshot, targetProduct);
@@ -299,8 +324,7 @@ public class AgentStepPlannerService {
             log.info("[AgentStepPlannerService] Vision 시도 후 실패 → DOM AI 재시도 건너뜀, SCROLL/ABORT로 직행 - runId={}, stepIndex={}", runId, stepIndex);
         }
 
-        // PRODUCT_DETAIL 페이지: AI가 버튼을 못 찾아도 메인 페이지로 이동하지 않는다.
-        // 순서: DOM AI 실패 → Vision AI 1회 시도 → SCROLL → ... → ABORT
+        // PRODUCT_DETAIL 페이지 (알리익스프레스 등 네이버 외): DOM AI 실패 → Vision AI 1회 시도 → SCROLL → ABORT
         if (currentPageType == PageType.PRODUCT_DETAIL) {
             if (stepIndex >= MAX_DOMAIN_REDIRECT_ATTEMPTS) {
                 log.error("[AgentStepPlannerService] PRODUCT_DETAIL 탐색 {}회 초과 → ABORT - runId={}", MAX_DOMAIN_REDIRECT_ATTEMPTS, runId);
@@ -308,8 +332,6 @@ public class AgentStepPlannerService {
                         "구매 버튼을 " + MAX_DOMAIN_REDIRECT_ATTEMPTS + "회 이상 탐색 실패 - 판매처 페이지를 확인해주세요.");
             }
 
-            // 직전 액션이 CLICK이면 Vision AI가 이미 시도된 것이므로 SCROLL로 탐색한다.
-            // (CAPTURE_VISIBLE_TAB → Vision AI → visionClick 사이클 완료 후 진입)
             BrowserActionType prevAction = previousActionResult != null ? previousActionResult.action() : null;
             ActionExecutionStatus prevStatus = previousActionResult != null ? previousActionResult.status() : null;
 
@@ -326,7 +348,6 @@ public class AgentStepPlannerService {
                     return ActionInstructionResponse.click(stepIndex, actionId, purchaseButton.get());
                 }
 
-                // DOM AI 실패 → Vision AI fallback: 스크린샷 요청
                 log.info("[AgentStepPlannerService] PRODUCT_DETAIL DOM AI 실패 → Vision AI fallback (CAPTURE_VISIBLE_TAB) - runId={}, stepIndex={}", runId, stepIndex);
                 return ActionInstructionResponse.useTool(stepIndex, actionId, "CAPTURE_VISIBLE_TAB", java.util.Map.of("format", "png"));
             }
@@ -522,7 +543,8 @@ public class AgentStepPlannerService {
             CommandSession commandSession,
             PageSnapshotRequest snapshot,
             AgentRunActionResultRequest previousActionResult,
-            String selectedOptionValue
+            String selectedOptionValue,
+            boolean selectedOptionAlreadyApplied
     ) {
         if (snapshot != null && detectPageType(snapshot) == PageType.SEARCH_RESULTS) {
             return null;
@@ -546,6 +568,7 @@ public class AgentStepPlannerService {
 
         try {
             // 스크린샷 결과를 받음
+            String visionMode = resolveVisionFallbackMode(snapshot, selectedOptionValue, selectedOptionAlreadyApplied);
             VisionPlannerInstructionPayload payload = aiVisionPlannerClient.analyze(
                     runId,
                     stepIndex,
@@ -553,9 +576,7 @@ public class AgentStepPlannerService {
                     snapshot == null ? null : snapshot.currentUrl(),
                     previousActionResult,
                     previousActionResult.toolResult().screenshot(),  // 스크린샷 내용
-                    selectedOptionValue == null || selectedOptionValue.isBlank()
-                            ? "GENERAL"
-                            : "SMARTSTORE_OPTION_SELECTION",
+                    visionMode,
                     selectedOptionValue
             );
 
@@ -571,6 +592,12 @@ public class AgentStepPlannerService {
             }
 
             if ("CLICK".equals(payload.action()) && payload.viewportX() != null && payload.viewportY() != null) {
+                if ("SMARTSTORE_PURCHASE_BUTTON".equals(visionMode)
+                        && !isSmartstorePurchaseButtonLabel(payload.targetLabel())) {
+                    log.warn("[AgentStepPlannerService] Smartstore 구매 버튼 모드에서 비구매 라벨 반환 → 무시 - runId={}, stepIndex={}, label={}",
+                            runId, stepIndex, payload.targetLabel());
+                    return null;
+                }
                 return ActionInstructionResponse.visionClick(
                         stepIndex,
                         buildActionId(runId, stepIndex),
@@ -593,6 +620,33 @@ public class AgentStepPlannerService {
         }
 
         return null;
+    }
+
+    private String resolveVisionFallbackMode(
+            PageSnapshotRequest snapshot,
+            String selectedOptionValue,
+            boolean selectedOptionAlreadyApplied
+    ) {
+        boolean smartstoreOptionSelection = isSmartstoreProductDetailSnapshot(snapshot)
+                && selectedOptionValue != null
+                && !selectedOptionValue.isBlank()
+                && !selectedOptionAlreadyApplied;
+
+        if (smartstoreOptionSelection) {
+            return "SMARTSTORE_OPTION_SELECTION";
+        }
+
+        boolean smartstorePurchaseButton = isSmartstoreProductDetailSnapshot(snapshot)
+                && (selectedOptionAlreadyApplied
+                || snapshot == null
+                || snapshot.optionGroups() == null
+                || snapshot.optionGroups().isEmpty());
+
+        if (smartstorePurchaseButton) {
+            return "SMARTSTORE_PURCHASE_BUTTON";
+        }
+
+        return "GENERAL";
     }
 
     private ActionInstructionResponse buildSearchResultsVisionFallbackInstruction(
@@ -907,8 +961,8 @@ public class AgentStepPlannerService {
                     snapshot != null && snapshot.optionGroups() != null ? snapshot.optionGroups().size() : -1,
                     snapshot != null && snapshot.interactiveElements() != null ? snapshot.interactiveElements().size() : -1,
                     hasVisiblePurchaseButton(snapshot),
-                    snapshot != null && snapshot.visibleTextSummary() != null && snapshot.visibleTextSummary().contains("구매하기"),
-                    snapshot != null && snapshot.rawHtml() != null && snapshot.rawHtml().contains("구매하기"));
+                    snapshot != null && containsPurchaseKeyword(snapshot.visibleTextSummary()),
+                    snapshot != null && containsPurchaseKeyword(snapshot.rawHtml()));
 
             if (pageType == PageType.PRODUCT_DETAIL
                     && "PURCHASE_EXECUTOR".equals(agentType)
@@ -1607,6 +1661,35 @@ public class AgentStepPlannerService {
         return null;
     }
 
+    private ActionInstructionResponse buildAliExpressPurchaseInstructionAfterUserSelection(
+            String runId,
+            int stepIndex,
+            PageSnapshotRequest snapshot,
+            String selectedOptionValue,
+            boolean selectedOptionAlreadyApplied
+    ) {
+        if (snapshot == null
+                || !isAliExpressProductDetailSnapshot(snapshot)
+                || selectedOptionValue == null
+                || selectedOptionValue.isBlank()
+                || !selectedOptionAlreadyApplied) {
+            return null;
+        }
+
+        Optional<InteractiveElementRequest> purchaseButton = findPurchaseButton(snapshot);
+        if (purchaseButton.isEmpty()) {
+            log.info("[AgentStepPlannerService] 사용자 응답 옵션 반영 확인됐지만 AliExpress 바로구매 버튼 미발견 - selectedOption={}",
+                    selectedOptionValue);
+            return null;
+        }
+
+        log.info("[AgentStepPlannerService] 사용자 응답 옵션 반영 확인 → AliExpress 바로구매 클릭 - selectedOption={}, nodeId={}, label={}",
+                selectedOptionValue,
+                purchaseButton.get().nodeId(),
+                purchaseButton.get().labelText());
+        return ActionInstructionResponse.click(stepIndex, buildActionId(runId, stepIndex), purchaseButton.get());
+    }
+
     private ActionInstructionResponse analyzeSmartstoreOptionSelectionVision(
             String runId,
             int stepIndex,
@@ -1979,6 +2062,100 @@ public class AgentStepPlannerService {
                 .findFirst();
     }
 
+    /**
+     * 네이버 PRODUCT_DETAIL 전용 Vision AI 구매버튼 탐색.
+     *
+     * 흐름 (최대 2회 반복):
+     *   1. CAPTURE_VISIBLE_TAB → 스크린샷 요청
+     *   2. Vision AI 분석 → 구매버튼 발견 시 visionClick 반환
+     *   3. 구매버튼 미발견 → SCROLL 반환
+     *   4. 다음 step에서 다시 1부터 (naverPurchaseVisionAttemptCount 증가)
+     *   5. 2회 초과 시 ABORT
+     */
+    private ActionInstructionResponse buildNaverPurchaseVisionInstruction(
+            String runId,
+            int stepIndex,
+            CommandSession commandSession,
+            PageSnapshotRequest snapshot,
+            AgentRunActionResultRequest previousActionResult,
+            String selectedOptionValue,
+            boolean selectedOptionAlreadyApplied,
+            int naverPurchaseVisionAttemptCount,
+            boolean visionAttempted
+    ) {
+        String actionId = buildActionId(runId, stepIndex);
+        int maxAttempts = 2;
+
+        if (!selectedOptionAlreadyApplied
+                && snapshot != null
+                && snapshot.optionGroups() != null
+                && !snapshot.optionGroups().isEmpty()) {
+            log.info("[AgentStepPlannerService] 네이버 구매버튼 Vision 생략 - 옵션 미반영 상태라 옵션 선택 대기 - runId={}, stepIndex={}",
+                    runId, stepIndex);
+            return null;
+        }
+
+        log.info("[AgentStepPlannerService] 네이버 PRODUCT_DETAIL Vision 구매버튼 탐색 - runId={}, stepIndex={}, attemptCount={}, visionAttempted={}",
+                runId, stepIndex, naverPurchaseVisionAttemptCount, visionAttempted);
+
+        // Vision AI가 스크린샷을 분석한 결과가 있는 경우 (직전 CAPTURE_VISIBLE_TAB 이후)
+        if (visionAttempted) {
+            // 스크린샷으로 Vision AI 호출
+            try {
+                VisionPlannerInstructionPayload payload = aiVisionPlannerClient.analyze(
+                        runId,
+                        stepIndex,
+                        commandSession.getOriginalCommand(),
+                        snapshot == null ? null : snapshot.currentUrl(),
+                        previousActionResult,
+                        previousActionResult.toolResult().screenshot(),
+                        "SMARTSTORE_PURCHASE_BUTTON",
+                        selectedOptionValue
+                );
+
+                log.info("[AgentStepPlannerService] 네이버 Vision 분석 결과 - runId={}, action={}, x={}, y={}, confidence={}, label={}",
+                        runId, payload.action(), payload.viewportX(), payload.viewportY(),
+                        payload.confidence(), payload.targetLabel());
+
+                if (payload.confidence() != null && payload.confidence() >= MIN_VISION_CONFIDENCE
+                        && "CLICK".equals(payload.action())
+                        && payload.viewportX() != null && payload.viewportY() != null) {
+                    if (!isSmartstorePurchaseButtonLabel(payload.targetLabel())) {
+                        log.warn("[AgentStepPlannerService] 네이버 구매버튼 Vision 비구매 라벨 반환 → 무시 - runId={}, stepIndex={}, label={}",
+                                runId, stepIndex, payload.targetLabel());
+                        return ActionInstructionResponse.scroll(stepIndex, actionId, "500");
+                    }
+                    log.info("[AgentStepPlannerService] 네이버 Vision 구매버튼 발견 → visionClick - runId={}, x={}, y={}, label={}",
+                            runId, payload.viewportX(), payload.viewportY(), payload.targetLabel());
+                    return ActionInstructionResponse.visionClick(
+                            stepIndex, actionId,
+                            payload.viewportX(), payload.viewportY(),
+                            payload.targetLabel()
+                    );
+                }
+            } catch (Exception e) {
+                log.warn("[AgentStepPlannerService] 네이버 Vision 분석 실패 - runId={}, error={}", runId, e.getMessage());
+            }
+
+            // Vision AI가 구매버튼을 못 찾음 → 시도 횟수 확인 후 스크롤 또는 ABORT
+            if (naverPurchaseVisionAttemptCount >= maxAttempts) {
+                log.error("[AgentStepPlannerService] 네이버 구매버튼 Vision 탐색 {}회 초과 → ABORT - runId={}", maxAttempts, runId);
+                return ActionInstructionResponse.abort(stepIndex, actionId,
+                        "네이버 구매 버튼을 " + maxAttempts + "회 Vision 탐색 실패 - 판매처 페이지를 확인해주세요.");
+            }
+
+            // 스크롤 후 다음 시도로 (AgentRunService에서 카운터 증가)
+            log.info("[AgentStepPlannerService] 네이버 Vision 구매버튼 미발견 → SCROLL 후 재시도 - runId={}, attemptCount={}",
+                    runId, naverPurchaseVisionAttemptCount);
+            return ActionInstructionResponse.scroll(stepIndex, actionId, "500");
+        }
+
+        // 스크린샷이 아직 없는 경우 → CAPTURE_VISIBLE_TAB 요청
+        log.info("[AgentStepPlannerService] 네이버 PRODUCT_DETAIL → Vision AI (CAPTURE_VISIBLE_TAB) - runId={}, stepIndex={}, attemptCount={}",
+                runId, stepIndex, naverPurchaseVisionAttemptCount);
+        return ActionInstructionResponse.useTool(stepIndex, actionId, "CAPTURE_VISIBLE_TAB", java.util.Map.of("format", "png"));
+    }
+
     private boolean isOptionSelectionNotRequired(PageSnapshotRequest snapshot) {
         return snapshot == null
                 || snapshot.optionGroups() == null
@@ -2004,7 +2181,7 @@ public class AgentStepPlannerService {
                         element.labelText(),
                         element.isVisible(),
                         element.isEnabled()))
-                .filter(text -> text.contains("구매") || text.toLowerCase().contains("buy"))
+                .filter(text -> containsPurchaseKeyword(text) || normalize(text).contains("구매"))
                 .limit(10)
                 .toList();
 
@@ -2016,18 +2193,10 @@ public class AgentStepPlannerService {
                     String role = element.role() == null ? "" : element.role().toLowerCase();
                     String label = element.labelText() == null ? "" : element.labelText().toLowerCase();
                     boolean clickableRole = role.equals("button") || role.equals("a") || role.equals("link");
-                    boolean includeKeyword = label.contains("구매하기")
-                            || label.contains("바로구매")
-                            || label.contains("buy now")
-                            || label.contains("지금 구매");
-                    boolean excludeKeyword = label.contains("결제하기")
-                            || label.contains("주문하기")
-                            || label.contains("pay")
-                            || label.contains("결제완료")
-                            || label.contains("장바구니")
-                            || label.contains("add to cart");
+                    boolean includeKeyword = containsPurchaseKeyword(label);
+                    boolean excludeKeyword = containsExcludedPurchaseKeyword(label);
 
-                    if (includeKeyword || label.contains("구매")) {
+                    if (includeKeyword || normalize(label).contains("구매")) {
                         log.info("[AgentStepPlannerService] findPurchaseButton 후보 판정 - nodeId={}, role={}, label={}, clickableRole={}, includeKeyword={}, excludeKeyword={}, visible={}, enabled={}",
                                 element.nodeId(), role, label, clickableRole, includeKeyword, excludeKeyword, element.isVisible(), element.isEnabled());
                     }
@@ -2041,20 +2210,48 @@ public class AgentStepPlannerService {
                     String label = element.labelText() == null ? "" : element.labelText().toLowerCase();
 
                     boolean clickableRole = role.equals("button") || role.equals("a") || role.equals("link");
-                    boolean includeKeyword = label.contains("구매하기")
-                            || label.contains("바로구매")
-                            || label.contains("buy now")
-                            || label.contains("지금 구매");
-                    boolean excludeKeyword = label.contains("결제하기")
-                            || label.contains("주문하기")
-                            || label.contains("pay")
-                            || label.contains("결제완료")
-                            || label.contains("장바구니")
-                            || label.contains("add to cart");
+                    boolean includeKeyword = containsPurchaseKeyword(label);
+                    boolean excludeKeyword = containsExcludedPurchaseKeyword(label);
 
                     return clickableRole && includeKeyword && !excludeKeyword;
                 })
                 .findFirst();
+    }
+
+    private boolean containsPurchaseKeyword(String value) {
+        String normalized = normalize(value);
+        if (normalized == null || normalized.isBlank()) {
+            return false;
+        }
+
+        return normalized.contains("구매하기")
+                || normalized.contains("바로구매")
+                || normalized.contains("지금구매")
+                || normalized.contains("n구매하기")
+                || normalized.contains("n구매")
+                || normalized.contains("buynow");
+    }
+
+    private boolean containsExcludedPurchaseKeyword(String value) {
+        String normalized = normalize(value);
+        if (normalized == null || normalized.isBlank()) {
+            return false;
+        }
+
+        return normalized.contains("결제하기")
+                || normalized.contains("주문하기")
+                || normalized.contains("pay")
+                || normalized.contains("결제완료")
+                || normalized.contains("장바구니")
+                || normalized.contains("addtocart");
+    }
+
+    private boolean isSmartstorePurchaseButtonLabel(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+
+        return containsPurchaseKeyword(value) && !containsExcludedPurchaseKeyword(value);
     }
 
     private String findDesiredOption(String normalizedCommand, OptionGroupRequest optionGroup) {

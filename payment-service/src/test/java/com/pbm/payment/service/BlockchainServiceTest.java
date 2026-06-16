@@ -28,17 +28,20 @@ import static org.mockito.Mockito.*;
  * BlockchainService 단위 테스트.
  * <p>
  * Web3j를 Mock으로 대체하여 실제 블록체인 네트워크 없이
- * 동적 gas price 조회(+ 20% buffer) 및 fallback 동작을 검증한다.
+ * 동적 gas price 조회(+ 50% buffer) 및 fallback 동작을 검증한다.
  * <p>
  * 검증 대상:
- * - sendTransaction 경로에서 동적 gas price + 20% buffer 반영 (revokeSessionKey 사용, waitForReceipt 미호출)
- * - ethGasPrice() 조회 실패 시 fallback + 20% buffer 동작
+ * - sendTransaction 경로에서 동적 gas price + 50% buffer 반영 (revokeSessionKey 사용, waitForReceipt 미호출)
+ * - ethGasPrice() 조회 실패 시 fallback 6 Gwei 동작
  */
 @ExtendWith(MockitoExtension.class)
 class BlockchainServiceTest {
 
     @Mock
     private Web3j web3j;
+
+    @Mock
+    private Web3j fallbackWeb3j;
 
     @Mock
     private Credentials masterCredentials;
@@ -52,19 +55,19 @@ class BlockchainServiceTest {
     /** Hardhat 테스트 계정 #0 (유효한 EOA 개인키) */
     private static final String TEST_PRIVATE_KEY = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-    /** 20% buffer 적용 헬퍼: getGasPrice() 내부 로직과 동일한 계산 */
+    /** 50% buffer 적용 헬퍼: getGasPrice() 내부 로직과 동일한 계산 */
     private BigInteger applyBuffer(BigInteger baseGasPrice) {
-        return baseGasPrice.multiply(BigInteger.valueOf(120)).divide(BigInteger.valueOf(100));
+        return baseGasPrice.multiply(BigInteger.valueOf(150)).divide(BigInteger.valueOf(100));
     }
 
     @Test
-    @DisplayName("ethGasPrice()로 조회한 gas price + 20% buffer가 sendTransaction 트랜잭션에 반영된다")
+    @DisplayName("ethGasPrice()로 조회한 gas price + 50% buffer가 sendTransaction 트랜잭션에 반영된다")
     void testDynamicGasPriceUsedInSendTransaction() throws Exception {
-        // given - 네트워크 gas price = 8 Gwei → 20% buffer 적용 시 9.6 Gwei
+        // given - 네트워크 gas price = 8 Gwei → 50% buffer 적용 시 12 Gwei
         BigInteger baseGasPrice = BigInteger.valueOf(8_000_000_000L);
         BigInteger expectedGasPrice = applyBuffer(baseGasPrice);
         prepareEthGasPriceMock(baseGasPrice);
-        prepareNonceMock(BigInteger.TEN);
+        prepareNonceMock(BigInteger.TEN, BigInteger.TEN);
 
         ArgumentCaptor<String> rawTxCaptor = ArgumentCaptor.forClass(String.class);
         prepareSendRawTransactionMock(rawTxCaptor, "0xrevoke-tx-hash");
@@ -92,11 +95,11 @@ class BlockchainServiceTest {
     }
 
     @Test
-    @DisplayName("ethGasPrice() 조회 실패 시 fallback(5 Gwei) + 20% buffer(6 Gwei)로 트랜잭션 생성")
+    @DisplayName("ethGasPrice() 조회 실패 시 fallback 6 Gwei로 트랜잭션 생성")
     void testGasPriceFallbackOnFailure() throws Exception {
         // given - ethGasPrice()가 RuntimeException 발생
         prepareEthGasPriceMockFailure();
-        prepareNonceMock(BigInteger.ONE);
+        prepareNonceMock(BigInteger.ONE, BigInteger.ONE);
 
         ArgumentCaptor<String> rawTxCaptor = ArgumentCaptor.forClass(String.class);
         prepareSendRawTransactionMock(rawTxCaptor, "0xfallback-tx");
@@ -109,13 +112,39 @@ class BlockchainServiceTest {
         String txHash = blockchainService.revokeSessionKey(
                 walletAddress, aiAgentAddress, userCredentials);
 
-        // then - fallback(5 Gwei) + 20% buffer = 6 Gwei 검증
-        BigInteger fallbackGasPrice = applyBuffer(BigInteger.valueOf(5_000_000_000L));
+        // then - fallback(6 Gwei) 그대로 사용 검증
+        BigInteger fallbackGasPrice = BigInteger.valueOf(6_000_000_000L);
         String capturedHex = rawTxCaptor.getValue();
         assertThat(capturedHex).isNotBlank();
         SignedRawTransaction decoded = (SignedRawTransaction) TransactionDecoder.decode(capturedHex);
         assertThat(decoded.getGasPrice()).isEqualTo(fallbackGasPrice);
         assertThat(txHash).isEqualTo("0xfallback-tx");
+    }
+
+    @Test
+    @DisplayName("사용자 EOA에 pending nonce gap이 있으면 latest nonce와 상향 gas price로 replacement tx를 생성한다")
+    void testUserEoaNonceGapUsesLatestNonceAndBumpedGasPrice() throws Exception {
+        BigInteger baseGasPrice = BigInteger.valueOf(10_000_000_000L);
+        BigInteger bufferedGasPrice = applyBuffer(baseGasPrice);
+        BigInteger expectedReplacementGasPrice = bufferedGasPrice.multiply(BigInteger.TWO);
+        prepareEthGasPriceMock(baseGasPrice);
+        prepareNonceMock(BigInteger.valueOf(7), BigInteger.valueOf(8));
+
+        ArgumentCaptor<String> rawTxCaptor = ArgumentCaptor.forClass(String.class);
+        prepareSendRawTransactionMock(rawTxCaptor, "0xreplacement-tx");
+
+        Credentials userCredentials = Credentials.create(TEST_PRIVATE_KEY);
+        String walletAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+        String aiAgentAddress = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+
+        String txHash = blockchainService.revokeSessionKey(
+                walletAddress, aiAgentAddress, userCredentials);
+
+        assertThat(txHash).isEqualTo("0xreplacement-tx");
+        String capturedHex = rawTxCaptor.getValue();
+        SignedRawTransaction decoded = (SignedRawTransaction) TransactionDecoder.decode(capturedHex);
+        assertThat(decoded.getNonce()).isEqualTo(BigInteger.valueOf(7));
+        assertThat(decoded.getGasPrice()).isEqualTo(expectedReplacementGasPrice);
     }
 
     // ──────────────── Mock 헬퍼 ────────────────
@@ -140,14 +169,22 @@ class BlockchainServiceTest {
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
-    private void prepareNonceMock(BigInteger nonce) throws Exception {
-        EthGetTransactionCount response = mock(EthGetTransactionCount.class);
-        when(response.getTransactionCount()).thenReturn(nonce);
+    private void prepareNonceMock(BigInteger latestNonce, BigInteger pendingNonce) throws Exception {
+        EthGetTransactionCount latestResponse = mock(EthGetTransactionCount.class);
+        when(latestResponse.getTransactionCount()).thenReturn(latestNonce);
 
-        Request request = mock(Request.class);
-        when(request.send()).thenReturn(response);
+        Request latestRequest = mock(Request.class);
+        when(latestRequest.send()).thenReturn(latestResponse);
 
-        doReturn(request).when(web3j)
+        EthGetTransactionCount pendingResponse = mock(EthGetTransactionCount.class);
+        when(pendingResponse.getTransactionCount()).thenReturn(pendingNonce);
+
+        Request pendingRequest = mock(Request.class);
+        when(pendingRequest.send()).thenReturn(pendingResponse);
+
+        doReturn(latestRequest).when(web3j)
+                .ethGetTransactionCount(anyString(), eq(DefaultBlockParameterName.LATEST));
+        doReturn(pendingRequest).when(web3j)
                 .ethGetTransactionCount(anyString(), eq(DefaultBlockParameterName.PENDING));
     }
 

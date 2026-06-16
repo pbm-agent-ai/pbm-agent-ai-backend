@@ -6,6 +6,7 @@ NAVER_MOCK_ENABLED=true 환경변수 설정 시 실제 API 호출 없이 고정�
 """
 
 import os
+import re
 import logging
 from typing import Optional
 
@@ -49,6 +50,11 @@ def _is_catalog_link(link: str | None) -> bool:
     return "/catalog/" in normalized
 
 
+def _strip_html_tags(text: str) -> str:
+    """HTML 태그를 제거한다. 네이버 API는 검색 키워드에 <b> 태그를 붙여 반환한다."""
+    return re.sub(r"<[^>]+>", "", text)
+
+
 def _normalize_items(raw_items: list[dict]) -> list[NaverShoppingItem]:
     """네이버 API 원본 응답을 정규화된 스키마로 변환한다.
 
@@ -63,7 +69,7 @@ def _normalize_items(raw_items: list[dict]) -> list[NaverShoppingItem]:
             continue
 
         normalized.append(NaverShoppingItem(
-            title=item.get("title", ""),
+            title=_strip_html_tags(item.get("title", "")),
             lprice=item.get("lprice", "0"),
             hprice=item.get("hprice", ""),
             mallName=item.get("mallName", ""),

@@ -27,6 +27,9 @@ public class Web3Config {
     @Value("${blockchain.rpc-url}")
     private String rpcUrl;
 
+    @Value("${blockchain.fallback-rpc-url:https://ethereum-sepolia-rpc.publicnode.com}")
+    private String fallbackRpcUrl;
+
     @Value("${blockchain.private-key}")
     private String privateKey;
 
@@ -45,23 +48,15 @@ public class Web3Config {
      */
     @Bean
     public Web3j web3j() {
-        log.info("Web3j 초기화 - RPC URL: {}", rpcUrl);
-        // OkHttpClient에 타임아웃 설정 — 미설정 시 RPC 응답 지연으로 스레드가 무한 대기함
-        OkHttpClient okHttpClient = new OkHttpClient.Builder()
-                .connectTimeout(10, TimeUnit.SECONDS)   // TCP 연결 타임아웃
-                .readTimeout(30, TimeUnit.SECONDS)      // 응답 읽기 타임아웃
-                .writeTimeout(30, TimeUnit.SECONDS)     // 요청 전송 타임아웃
-                .build();
-        Web3j web3j = Web3j.build(new HttpService(rpcUrl, okHttpClient));
+        return buildWeb3jClient("primary", rpcUrl);
+    }
 
-        try {
-            String clientVersion = web3j.web3ClientVersion().send().getWeb3ClientVersion();
-            log.info("블록체인 연결 성공 - 클라이언트: {}", clientVersion);
-        } catch (Exception e) {
-            log.warn("블록체인 연결 확인 실패 (서비스는 계속 시작됨): {}", e.getMessage());
-        }
-
-        return web3j;
+    /**
+     * Primary RPC에만 보이는 local pending tx를 진단하기 위한 보조 Web3j 클라이언트.
+     */
+    @Bean(name = "fallbackWeb3j")
+    public Web3j fallbackWeb3j() {
+        return buildWeb3jClient("fallback", fallbackRpcUrl);
     }
 
     /**
@@ -75,5 +70,25 @@ public class Web3Config {
         Credentials credentials = Credentials.create(privateKey);
         log.info("마스터 지갑 주소(Owner): {}", credentials.getAddress());
         return credentials;
+    }
+
+    private Web3j buildWeb3jClient(String label, String targetRpcUrl) {
+        log.info("Web3j 초기화 - {} RPC URL: {}", label, targetRpcUrl);
+
+        OkHttpClient okHttpClient = new OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .build();
+        Web3j web3j = Web3j.build(new HttpService(targetRpcUrl, okHttpClient));
+
+        try {
+            String clientVersion = web3j.web3ClientVersion().send().getWeb3ClientVersion();
+            log.info("블록체인 연결 성공 - {} 클라이언트: {}", label, clientVersion);
+        } catch (Exception e) {
+            log.warn("{} RPC 연결 확인 실패 (서비스는 계속 시작됨): {}", label, e.getMessage());
+        }
+
+        return web3j;
     }
 }

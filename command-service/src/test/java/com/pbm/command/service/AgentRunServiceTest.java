@@ -7,6 +7,7 @@ import com.pbm.command.domain.BrowserActionType;
 import com.pbm.command.domain.BrowserDevice;
 import com.pbm.command.domain.CommandSession;
 import com.pbm.command.domain.ExternalStoreVisionStage;
+import com.pbm.command.domain.CommandSessionStatus;
 import com.pbm.command.dto.request.AgentRunActionResultRequest;
 import com.pbm.command.dto.request.AgentRunStepRequest;
 import com.pbm.command.dto.request.PageSnapshotRequest;
@@ -115,6 +116,84 @@ class AgentRunServiceTest {
 
         assertThatThrownBy(() -> agentRunService.createRun(1L, "missing-cmd"))
                 .isInstanceOf(CommandSessionNotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("결제 상품명은 triggeredProducts의 title을 우선 사용한다")
+    void resolveCheckoutProductName_prefersTriggeredProductTitle() {
+        CommandSession session = CommandSession.builder()
+                .commandId("cmd-1")
+                .userId(1L)
+                .originalCommand("버즈4 30만원 이하면 구매해줘")
+                .status(CommandSessionStatus.CHECKOUT_REACHED)
+                .validationResultJson("""
+                        {
+                          "triggeredProducts": [
+                            {
+                              "productId": "p1",
+                              "title": "에코벡스 T90",
+                              "lprice": "145400",
+                              "mallName": "AliExpress",
+                              "productUrl": "https://example.com/p1",
+                              "imageUrl": "https://example.com/p1.webp",
+                              "currency": "KRW",
+                              "platform": "ALIEXPRESS",
+                              "searchKeyword": "에코벡스 T90"
+                            }
+                          ],
+                          "monitoringProducts": [],
+                          "purchasedProductId": "p1",
+                          "summaryMessage": "ok",
+                          "confirmationRequired": false,
+                          "duplicateProducts": [],
+                          "confirmationMessage": null
+                        }
+                        """)
+                .build();
+
+        assertThat(agentRunService.resolveCheckoutProductName(session)).isEqualTo("에코벡스 T90");
+    }
+
+    @Test
+    @DisplayName("triggeredProducts가 없으면 selectedProductIds에 매칭된 후보 title을 사용한다")
+    void resolveCheckoutProductName_usesSelectedCandidateTitleWhenTriggeredMissing() {
+        CommandSession session = CommandSession.builder()
+                .commandId("cmd-1")
+                .userId(1L)
+                .originalCommand("버즈4 30만원 이하면 구매해줘")
+                .status(CommandSessionStatus.CHECKOUT_REACHED)
+                .candidatesJson("""
+                        [
+                          {
+                            "productId": "p1",
+                            "title": "에코벡스 T90",
+                            "lprice": "145400",
+                            "mallName": "AliExpress",
+                            "productUrl": "https://example.com/p1",
+                            "imageUrl": "https://example.com/p1.webp",
+                            "currency": "KRW",
+                            "platform": "ALIEXPRESS",
+                            "searchKeyword": "에코벡스 T90"
+                          },
+                          {
+                            "productId": "p2",
+                            "title": "에코백스 T50",
+                            "lprice": "149000",
+                            "mallName": "AliExpress",
+                            "productUrl": "https://example.com/p2",
+                            "imageUrl": "https://example.com/p2.webp",
+                            "currency": "KRW",
+                            "platform": "ALIEXPRESS",
+                            "searchKeyword": "에코백스 T50"
+                          }
+                        ]
+                        """)
+                .selectedProductIdsJson("""
+                        ["p2"]
+                        """)
+                .build();
+
+        assertThat(agentRunService.resolveCheckoutProductName(session)).isEqualTo("에코백스 T50");
     }
 
     @Test
@@ -284,7 +363,7 @@ class AgentRunServiceTest {
 
         given(agentRunRepository.findByRunId(run.getRunId())).willReturn(Optional.of(run));
         given(commandSessionRepository.findByCommandId("cmd-1")).willReturn(Optional.of(session));
-        given(agentStepPlannerService.planNextAction(run.getRunId(), 0, session, request.snapshot(), null, null, null, ExternalStoreVisionStage.NONE, 0)).willReturn(instruction);
+        given(agentStepPlannerService.planNextAction(run.getRunId(), 0, session, request.snapshot(), null, null, null, ExternalStoreVisionStage.NONE, 0, 0)).willReturn(instruction);
 
         AgentRunStepResponse response = agentRunService.processStep(run.getRunId(), "device-1", request);
 
@@ -321,7 +400,7 @@ class AgentRunServiceTest {
 
         given(agentRunRepository.findByRunId(run.getRunId())).willReturn(Optional.of(run));
         given(commandSessionRepository.findByCommandId("cmd-1")).willReturn(Optional.of(session));
-        given(agentStepPlannerService.planNextAction(run.getRunId(), 1, session, request.snapshot(), request.previousActionResult(), null, null, ExternalStoreVisionStage.NONE, 0)).willReturn(instruction);
+        given(agentStepPlannerService.planNextAction(run.getRunId(), 1, session, request.snapshot(), request.previousActionResult(), null, null, ExternalStoreVisionStage.NONE, 0, 0)).willReturn(instruction);
 
         AgentRunStepResponse response = agentRunService.processStep(run.getRunId(), "device-1", request);
 
